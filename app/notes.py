@@ -326,6 +326,7 @@ class App:
         self.store = st.Store()
         self.store.tagger = note_tags   # 색인에 태그도 함께 기억
         self.snap = sn.Snapshots(self.store)   # 복원 지점
+        self.store.on_change = self.snap.preserve   # 노트를 바꾸기 직전에 그 내용을 복원 지점용으로 보관
         try:
             self.store.purge_trash()   # 휴지통에 보관 기간(기본 30일)이 지난 항목은 완전히 지운다
         except OSError:
@@ -622,7 +623,7 @@ class App:
     def show_snapshots(self):
         """파일 > 복원 지점: 어느 시점의 모든 노트를 기억해 두었다가 그 상태로 되돌린다"""
         top = self.tool_window("복원 지점", "800x520")
-        tk.Label(top, text="복원 지점은 그 시점의 모든 노트를 기억해 둡니다(그림·첨부는 제외). 고르면 노트를 그 시점으로 되돌리고, 그 뒤에 새로 생긴 노트는 휴지통으로 보냅니다.",
+        tk.Label(top, text="복원 지점은 그 시점의 노트 목록을 기억해 두고, 앱이 노트를 바꾸기 직전에 바뀌기 전 내용만 따로 보관합니다(그림·첨부는 제외). 고르면 노트를 그 시점으로 되돌리고, 그 뒤에 새로 생긴 노트는 휴지통으로 보냅니다. 앱 밖에서 고친 노트는 되돌릴 수 없어 건드리지 않습니다.",
                  bg=C["bg"], fg=C["muted"], font=(self.ui, 9), anchor="w", justify="left", wraplength=760, padx=16, pady=10).pack(fill="x")
         cfgrow = tk.Frame(top, bg=C["bg"])
         cfgrow.pack(side="bottom", fill="x", padx=16, pady=(0, 6))
@@ -667,10 +668,12 @@ class App:
             pid = sel[0]
 
             def after_diff(d):
-                if not (d["change"] or d["add"] or d["remove"]):
+                if not (d["change"] or d["add"] or d["remove"] or d["lost"]):
                     return messagebox.showinfo(APP, "지금 노트가 이 복원 지점과 같습니다.", parent=top)
                 if not messagebox.askyesno(APP, f"이 시점으로 되돌릴까요?\n\n  내용을 되돌릴 노트  {len(d['change']):,}개\n  지워졌던 것을 되살릴 노트  {len(d['add']):,}개\n"
-                                                 f"  그 뒤에 생긴 노트(휴지통으로 보냄)  {len(d['remove']):,}개\n\n되돌리기 직전 상태도 복원 지점으로 남기므로 다시 돌아올 수 있습니다.", parent=top):
+                                                 f"  그 뒤에 생긴 노트(휴지통으로 보냄)  {len(d['remove']):,}개\n"
+                                                 + (f"  앱 밖에서 고쳐서 되돌릴 수 없는 노트(그대로 둠)  {len(d['lost']):,}개\n" if d["lost"] else "")
+                                                 + "\n되돌리기 직전 상태도 복원 지점으로 남기므로 다시 돌아올 수 있습니다.", parent=top):
                     return
                 self.flush()
 
@@ -679,7 +682,8 @@ class App:
                         self.close_note()
                         self.reload_notes()
                         refresh()
-                        messagebox.showinfo(APP, "되돌렸습니다.\n" + f"내용 {res[0]:,}개 · 되살림 {res[1]:,}개 · 휴지통 {res[2]:,}개", parent=top)
+                        messagebox.showinfo(APP, "되돌렸습니다.\n" + f"내용 {res[0]:,}개 · 되살림 {res[1]:,}개 · 휴지통 {res[2]:,}개"
+                                            + (f"\n되돌릴 수 없어 그대로 둔 노트 {res[3]:,}개" if res[3] else ""), parent=top)
                     self.run_task("복원 중", lambda prog, cancel: self.snap.restore(pid, prog, cancel), done, text="노트를 되돌리는 중…")
                 self.checkpoint("복원 직전", go)
             self.run_task("비교 중", lambda prog, cancel: self.snap.diff(pid, prog, cancel), after_diff, text="지금 노트와 비교하는 중…")

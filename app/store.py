@@ -261,6 +261,12 @@ class Store:
         self.root = os.path.abspath(root)
         self._jlast = {}   # 변경 이력에 노트별로 마지막으로 적은 시각
 
+    def before_change(self, path):
+        """노트 파일(또는 폴더)을 바꾸거나 지우거나 옮기기 직전에 부른다: 복원 지점이 그 바뀌기 전 내용을 보관해 둔다(on_change)"""
+        cb = getattr(self, "on_change", None)
+        if cb:
+            cb(path)
+
     def set_root(self, root):
         self.root = os.path.abspath(root)
         os.makedirs(self.root, exist_ok=True)
@@ -380,6 +386,7 @@ class Store:
         os.makedirs(d)
         self.hide_dir(self.trash_dir)
         try:
+            self.before_change(path)
             shutil.move(path, os.path.join(d, "item"))
             with open(os.path.join(d, "meta.json"), "w", encoding="utf-8") as f:
                 json.dump({"rel": rel, "deleted": time.time(), "dir": os.path.isdir(os.path.join(d, "item"))}, f)
@@ -404,6 +411,7 @@ class Store:
                 rel = os.path.relpath(p, into)
                 dst = os.path.join(d, "item", rel)
                 os.makedirs(os.path.dirname(dst), exist_ok=True)
+                self.before_change(p)
                 shutil.move(p, dst)
                 moved.append((p, dst))
             with open(os.path.join(d, "meta.json"), "w", encoding="utf-8") as f:
@@ -513,6 +521,7 @@ class Store:
         moved = []
         try:
             for x in names:
+                self.before_change(os.path.join(p, x))
                 shutil.move(os.path.join(p, x), os.path.join(d, "item", x))
                 moved.append(x)
             with open(os.path.join(d, "meta.json"), "w", encoding="utf-8") as f:
@@ -691,6 +700,7 @@ class Store:
                 self.snapshot(path, body, v["keep"], 0 if force else v["minutes"])
             except OSError:
                 pass   # 버전 기록 실패가 저장을 막지 않게
+        self.before_change(path)
         with open(path, "w", encoding="utf-8", newline="\n") as f:
             f.write(body)
         self.index_one(path, body)
@@ -709,6 +719,7 @@ class Store:
             if not ok:
                 raise ValueError("이 노트에는 생성 시각을 적어 둘 머리말(created)이 없어서 바꿀 수 없습니다.")
         if new != body:
+            self.before_change(path)
             with open(path, "w", encoding="utf-8", newline="\n") as fh:
                 fh.write(new)
         if updated is not None:
@@ -727,6 +738,7 @@ class Store:
             n = f"{base} ({i})"
             i += 1
         target = os.path.join(d, md_name(n))
+        self.before_change(path)
         os.rename(path, target)
         self.move_history(path, target)
         self.journal("rename", path, to=target)
@@ -747,6 +759,7 @@ class Store:
         while os.path.exists(target):
             target = os.path.join(d, md_name(f"{base} ({i})"))
             i += 1
+        self.before_change(path)
         os.rename(path, target)
         self.move_history(path, target)
         self.journal("move", path, to=target)
@@ -873,6 +886,7 @@ class Store:
             text = n.read()
             body = pat.sub(fix, text)
             if body != text:
+                self.before_change(n["path"])
                 with open(n["path"], "w", encoding="utf-8", newline="\n") as f:
                     f.write(body)
                 changed += 1
