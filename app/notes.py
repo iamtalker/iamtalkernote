@@ -747,6 +747,14 @@ class App:
             b.pack(side="left")
             self.tip(b, hint)
             self.mode_btns[m] = b
+        # 문법 해설 체크박스(위키나루처럼): 퀵바를 없애면서 같이 사라졌던 것을 제목줄에 되살렸다
+        sb = tk.Checkbutton(head, text="문법", variable=self.v["syntax"], command=self.on_view_toggle, relief="flat", bd=0,
+                            takefocus=False, bg=C["bg"], fg=C["text"], activebackground=C["soft"], selectcolor=C["bg"],
+                            cursor="hand2", font=(self.ui, 10))
+        sb.pack(side="right", padx=(4, 6))
+        sb.bind("<Enter>", lambda e: sb.config(bg=C["soft"]), add="+")
+        sb.bind("<Leave>", lambda e: sb.config(bg=C["bg"]), add="+")
+        self.tip(sb, "문법 해설 사이드바 보이기/숨기기 (Ctrl+/)")
         self.title_entry = tk.Entry(head, textvariable=self.title_var, relief="flat", bd=0, font=self.fonts["title"],
                                     bg=C["bg"], fg=C["text"], insertbackground=C["accent"], width=8)
         self.title_entry.pack(side="left", fill="x", expand=True, ipady=3)
