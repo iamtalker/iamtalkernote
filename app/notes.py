@@ -343,6 +343,8 @@ class App:
         self.dirty = self.loading = self.quiet = False
         self.save_job = self.render_job = self.search_job = None
         self.imgs, self.img_q, self.photos = {}, queue.Queue(), []
+        self.multi = {}       # 목록에서 Shift/Ctrl+클릭으로 고른 노트들 {경로: 노트} (한 개만 고르면 비어 있다)
+        self.anchor = None    # Shift+클릭 범위의 시작 노트 경로
         self.img_files = {}   # 렌더링 화면 속 그림 이름 → 원본 파일 경로(우클릭 "파일 위치 열기"용)
         self.links = {}
         self.clip_q = queue.Queue()
@@ -1095,6 +1097,8 @@ class App:
         L.tag_lower("selcard")
         L.tag_raise("hl")
         L.bind("<Button-1>", self.on_list_click)
+        L.bind("<Escape>", lambda e: self.clear_multi())
+        L.bind("<Delete>", lambda e: self.trash_multi() if self.multi else None)
         L.bind("<Button-3>", self.on_list_menu)
         self.listmenu = tk.Menu(self.root, tearoff=0)
         self.movemenu = tk.Menu(self.listmenu, tearoff=0)
@@ -1540,6 +1544,8 @@ class App:
             text += f"  ·  # {self.tag}"
         self.count.config(text=text)
         L = self.lst
+        if not keep_scroll:
+            self.multi.clear()
         top = L.yview()[0] if keep_scroll else 0.0   # 자동 저장 때만 스크롤을 유지하고, 정렬·검색·노트북을 바꾸면 맨 위부터
         want = max(LIST_CHUNK, self.rendered) if keep_scroll else LIST_CHUNK
         L.config(state="normal")
@@ -1607,11 +1613,72 @@ class App:
     def mark_selected(self):
         L = self.lst
         L.tag_remove("selcard", "1.0", "end")
-        if self.cur:
+        if self.multi:   # 여러 개를 골랐으면 고른 것 모두
+            for a, b, n in self.cards:
+                if n["path"] in self.multi:
+                    L.tag_add("selcard", f"{a}.0", f"{b + 1}.0")
+        elif self.cur:
             for a, b, n in self.cards:
                 if n["path"] == self.cur["path"]:
                     L.tag_add("selcard", f"{a}.0", f"{b + 1}.0")
                     break
+
+    def clear_multi(self):
+        if self.multi:
+            self.multi.clear()
+            self.mark_selected()
+            self.status.config(text="")
+
+    def pick_multi(self, items):
+        """items: 고른 노트들. 한 개 이하면 다중 선택을 끝낸다"""
+        self.multi = {n["path"]: n for n in items} if len(items) > 1 else {}
+        self.mark_selected()
+        self.status.config(text=f"노트 {len(self.multi)}개 선택됨 (우클릭: 휴지통·이동, Esc: 해제)" if self.multi else "")
+
+    def select_range(self, n):
+        """Shift+클릭: 시작 노트(anchor)부터 클릭한 노트까지 모두 고른다"""
+        start = self.anchor or (self.cur["path"] if self.cur else None)
+        order = [c[2] for c in self.cards]
+        paths = [x["path"] for x in order]
+        if start not in paths:
+            self.anchor = n["path"]
+            return self.pick_multi([n])
+        i, j = paths.index(start), paths.index(n["path"])
+        self.pick_multi(order[min(i, j):max(i, j) + 1])
+
+    def toggle_multi(self, n):
+        """Ctrl+클릭: 이 노트를 고른 목록에 넣거나 뺀다"""
+        cur = dict(self.multi) if self.multi else ({self.cur["path"]: self.cur} if self.cur else {})
+        if n["path"] in cur:
+            del cur[n["path"]]
+        else:
+            cur[n["path"]] = n
+        self.anchor = n["path"]
+        self.pick_multi(list(cur.values()))
+
+    def trash_multi(self):
+        items = list(self.multi.values())
+        if not items or not messagebox.askyesno(APP, f"고른 노트 {len(items)}개를 휴지통으로 보낼까요?\n({self.store.trash_days}일 동안 보관하며 복원할 수 있습니다)", parent=self.root):
+            return
+        self.multi.clear()
+        self.trash_notes([n["path"] for n in items])
+
+    def move_multi(self, nb):
+        items = list(self.multi.values())
+        self.flush()
+        cur_path = self.cur["path"] if self.cur else None
+        fail = 0
+        for n in items:
+            try:
+                self.store.move(n["path"], nb)
+            except OSError:
+                fail += 1
+        self.multi.clear()
+        if cur_path in {n["path"] for n in items}:
+            self.cur = None
+        self.reload_notes()
+        if fail:
+            messagebox.showerror(APP, f"{fail}개 노트를 옮기지 못했습니다.", parent=self.root)
 
     def card_at(self, e):
         line = int(self.lst.index(f"@{e.x},{e.y}").split(".")[0])
@@ -1622,7 +1689,13 @@ class App:
 
     def on_list_click(self, e):
         n = self.card_at(e)
-        if n:
+        if n and e.state & 0x1:       # Shift+클릭: 범위 선택(노트는 열지 않는다)
+            self.select_range(n)
+        elif n and e.state & 0x4:     # Ctrl+클릭: 하나씩 넣고 빼기
+            self.toggle_multi(n)
+        elif n:
+            self.anchor = n["path"]
+            self.clear_multi()
             self.open_note(n)
         # 클릭하면 키보드(PageUp/PageDown)가 목록에 먹히게. 노트를 여는 동안 옮겨 간 포커스를 되찾는다.
         self.lst.focus_set()
@@ -1634,6 +1707,9 @@ class App:
         n = self.card_at(e)
         if not n:
             return
+        if self.multi and n["path"] in self.multi:   # 여러 개를 고른 채 그 안에서 우클릭
+            return self.multi_menu(e)
+        self.clear_multi()
         self.open_note(n)
         self.ctx_note = n
         lm, mm = self.listmenu, self.movemenu
@@ -1649,6 +1725,20 @@ class App:
         lm.add_command(label="파일 위치 열기", command=lambda: subprocess.Popen(["explorer", "/select,", os.path.normpath(n["path"])]))
         lm.add_separator()
         lm.add_command(label="삭제", command=self.delete_note)
+        lm.tk_popup(e.x_root, e.y_root)
+        return "break"
+
+    def multi_menu(self, e):
+        lm, mm = self.listmenu, self.movemenu
+        lm.delete(0, "end")
+        mm.delete(0, "end")
+        for key in [""] + self.store.notebooks():
+            label = ("    " * key.count("/") + (self.nb_short(key) if key else self.store.root_name))
+            mm.add_command(label=label, command=lambda k=key: self.move_multi(k))
+        lm.add_cascade(label=f"노트 {len(self.multi)}개를 노트북으로 이동", menu=mm)
+        lm.add_command(label=f"노트 {len(self.multi)}개 휴지통으로", command=self.trash_multi)
+        lm.add_separator()
+        lm.add_command(label="선택 해제", command=self.clear_multi)
         lm.tk_popup(e.x_root, e.y_root)
         return "break"
 
