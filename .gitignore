@@ -1,0 +1,17 @@
+# 실행 파일은 저장소가 아니라 GitHub Releases 로 배포한다
+*.exe
+dist/
+build/
+*.spec
+
+# 파이썬 캐시
+__pycache__/
+*.pyc
+
+# 처음 만들었던 Electron 판(보관용, node_modules 가 커서 올리지 않는다)
+electron-version/
+
+# 노트·색인 등 사용자 데이터는 이 폴더에 두지 않지만, 혹시 몰라서
+index-*.db*
+.history/
+config.json

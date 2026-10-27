@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Joplin Clipper Plus - 설정</title>
+<style>
+  body { font-family: -apple-system, Segoe UI, Arial, sans-serif; width: 420px; padding: 16px; color: #222; }
+  h1 { font-size: 16px; margin: 0 0 12px; }
+  label { display: block; font-size: 12px; font-weight: 600; margin: 12px 0 4px; }
+  input, select { width: 100%; box-sizing: border-box; padding: 6px 8px; font-size: 13px; border: 1px solid #ccc; border-radius: 4px; }
+  button { margin-top: 14px; padding: 7px 14px; font-size: 13px; border: none; border-radius: 4px; background: #1a73e8; color: #fff; cursor: pointer; }
+  button.secondary { background: #eee; color: #333; margin-left: 8px; }
+  #status { margin-top: 10px; font-size: 12px; }
+  .ok { color: #1a7f37; }
+  .err { color: #c62828; }
+  .hint { font-size: 11px; color: #666; margin-top: 4px; }
+  .rule-row { border: 1px solid #ddd; border-radius: 6px; padding: 4px 10px 10px; margin-top: 10px; }
+  details.rules-help { font-size: 12px; margin-top: 8px; }
+  details.rules-help summary { cursor: pointer; font-weight: 600; }
+  details.rules-help code { background: #f3f3f3; padding: 0 3px; border-radius: 3px; }
+  details.rules-help ol { padding-left: 20px; }
+</style>
+</head>
+<body>
+  <h1>Joplin Clipper Plus (iamtalkernote 연결) — 설정</h1>
+
+  <label for="port">웹 클리퍼 포트 (iamtalkernote 옵션 > 웹 클리퍼에 표시된 값)</label>
+  <input id="port" placeholder="41200" />
+  <div class="hint">iamtalkernote 앱 → 도구 → 옵션 → 웹 클리퍼에서 "웹 클리퍼 서비스 사용"이 켜져 있는지 확인하세요. (진짜 조플린을 쓴다면 포트 41184와 조플린의 토큰)</div>
+
+  <label for="token">인증 토큰 (Authorization token)</label>
+  <input id="token" type="password" autocomplete="off" placeholder="iamtalkernote 옵션 > 웹 클리퍼의 토큰을 붙여 넣으세요" />
+
+  <label for="defMode">기본 클리핑 방법</label>
+  <select id="defMode">
+    <option value="article">📄 Article (본문만)</option>
+    <option value="full">🖼 Full Page (전체 페이지)</option>
+    <option value="selection">✂️ Selection (선택 영역)</option>
+    <option value="bookmark">🔖 Bookmark (링크만)</option>
+    <option value="webtoon">📜 Webtoon (큰 이미지 전부)</option>
+  </select>
+
+  <label for="defNotebook">기본 노트북</label>
+  <select id="defNotebook"><option value="">(조플린 기본 노트북)</option></select>
+  <div class="hint">팝업이 이 값으로 미리 선택된 채 열려서, 아이콘을 누르고 Clip만 누르면 저장됩니다. 팝업에서 그때그때 바꿀 수도 있습니다. 노트북 목록을 불러오려면 위의 토큰이 필요합니다(조플린이 실행 중이어야 합니다).</div>
+
+  <button id="save">저장</button>
+  <button id="test" class="secondary">연결 테스트</button>
+  <div id="status"></div>
+
+  <h1 style="margin-top:28px">사이트 규칙 (선택)</h1>
+  <div class="hint" style="margin-top:-4px">사이트별 규칙은 팝업의 🎯 버튼으로 만들고, 여기서 목록을 보고 고칩니다. 자세한 설명은 편집창 안에 있습니다.</div>
+  <div id="siteRules"></div>
+
+  <script src="site-rules.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>

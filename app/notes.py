@@ -1,0 +1,2410 @@
+"""iamtalkernote — 위키나루 기반 마크다운 노트 앱 (표준 라이브러리 tkinter).
+
+    pythonw iamtalkernote.pyw          (콘솔 창 없이)      또는   python notes.py
+
+조플린처럼: 메뉴줄(파일·편집·보기·이동·도구·도움말) · 노트북/태그 사이드바 · 노트 목록 · 서식 도구줄이 있는 에디터.
+위키나루의 마크다운 렌더링·문법 해설, 폴더검색의 검색, 조플린 클리퍼 플러스(웹 클리퍼) 연동.
+노트는 .md 파일로 저장된다.
+"""
+import base64
+import bisect
+import hashlib
+import math
+import os
+import queue
+import re
+import secrets
+import subprocess
+import sys
+import threading
+import time
+import tkinter as tk
+import tkinter.font as tkfont
+import webbrowser
+from urllib.parse import unquote
+from tkinter import colorchooser, filedialog, messagebox, simpledialog, ttk
+
+HERE = getattr(sys, "_MEIPASS", None) or os.path.dirname(os.path.abspath(__file__))
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+
+import bulk  # noqa: E402
+import clipserver  # noqa: E402
+import editor as ed  # noqa: E402   (위키나루: 서식 도구·그림 불러오기)
+import preview  # noqa: E402
+import search  # noqa: E402
+import store as st  # noqa: E402
+import wikiconv  # noqa: E402
+
+APP = "iamtalkernote"
+LIST_CHUNK = 100   # 노트 목록은 이만큼씩 이어서 그린다(스크롤하면 계속)
+ALL = "*"
+FMT = "markdown"
+
+# 밝고 차분한 색 하나(보라) + 슬레이트 회색
+C = dict(ed.THEME)
+C.update(bg="#ffffff", panel="#f6f7f9", line="#e6e8ec", text="#1f2937", muted="#8a93a2", sub="#4b5563",
+         accent="#7c3aed", accent_d="#6d28d9", soft="#efe9fe", hover="#eceef2", seg="#eceef2",
+         danger_bg="#fee2e2", danger="#b91c1c", sel="#ddd6fe", code="#f3f4f6", mark="#fde68a")
+C.update(thumb="#cfd4dc", thumb_h="#aab1bd", on_accent="#ffffff", accent_h="#8b4cf0")
+BASE = dict(C)   # 기본(라이트 보라) 값. 테마를 바꿀 때마다 여기서 다시 시작한다
+
+DEFAULT_THEME = "라이트 보라"
+_DARK = dict(bg="#1f2128", panel="#181a20", line="#32353f", text="#e6e8ee", muted="#8d95a5", sub="#b7bdc9",
+             hover="#2a2d36", seg="#2a2d36", code="#272a33", mark="#6f5f12", danger_bg="#4a1f24", danger="#f87171",
+             thumb="#454a57", thumb_h="#5b6170")
+THEMES = {   # BASE 와 다른 값만 적는다
+    "라이트 보라": {},
+    "라이트 파랑": dict(accent="#2563eb", accent_d="#1d4ed8", soft="#dbeafe", sel="#bfdbfe"),
+    "라이트 초록": dict(accent="#059669", accent_d="#047857", soft="#d1fae5", sel="#a7f3d0"),
+    "라이트 분홍": dict(accent="#db2777", accent_d="#be185d", soft="#fce7f3", sel="#fbcfe8"),
+    "세피아": dict(bg="#fbf5e9", panel="#f3ead8", line="#e4d7bd", text="#3b2f20", muted="#8c7b62", sub="#5d4e3a",
+                 accent="#b45309", accent_d="#92400e", soft="#f5e2c3", hover="#efe4cb", seg="#efe4cb", sel="#ecd3a5",
+                 code="#f0e6d0", mark="#f7d774", thumb="#d8c9aa", thumb_h="#bba980"),
+    "다크 보라": dict(_DARK, accent="#a78bfa", accent_d="#8b5cf6", soft="#2f2a52", sel="#4a3f85"),
+    "다크 파랑": dict(_DARK, accent="#60a5fa", accent_d="#3b82f6", soft="#1f3556", sel="#2f5384"),
+}
+
+
+def _rgb(h):
+    h = h.lstrip("#")
+    return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def blend(a, b, t):
+    """a 와 b 를 섞는다 (t=0 이면 a, 1 이면 b)"""
+    x, y = _rgb(a), _rgb(b)
+    return "#%02x%02x%02x" % tuple(round(x[i] * (1 - t) + y[i] * t) for i in range(3))
+
+
+def luminance(h):
+    r, g, b = (v / 255 for v in _rgb(h))
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def compute_theme(name, accent=None):
+    """테마 이름(과 직접 고른 강조색)으로 색 사전을 만든다(화면은 건드리지 않는다)"""
+    t = dict(BASE)
+    t.update(THEMES.get(name, {}))
+    if accent:
+        dark = luminance(t["bg"]) < 0.5
+        t["accent"] = accent
+        t["accent_d"] = blend(accent, "#000000", 0.25)
+        t["soft"] = blend(accent, t["bg"], 0.78 if dark else 0.88)
+        t["sel"] = blend(accent, t["bg"], 0.6 if dark else 0.72)
+    t["accent_h"] = blend(t["accent"], "#ffffff", 0.18)
+    t["on_accent"] = "#ffffff" if luminance(t["accent"]) < 0.6 else "#1f2937"
+    return t
+
+
+def apply_theme(name, accent=None):
+    """전역 색(C)을 바꾼다. 이미 만들어진 화면은 App.rebuild_ui 로 다시 그려야 반영된다."""
+    t = compute_theme(name if name in THEMES else DEFAULT_THEME, accent)
+    C.clear()
+    C.update(t)
+    Btn.refresh_kinds()
+
+
+UI = "TkDefaultFont"   # App 이 맑은 고딕 등으로 바꾼다
+TAG_LINE = re.compile(r"^[ \t]*(?:태그|tags?)[ \t]*[:：][ \t]*(.+)$", re.I | re.M)
+CODE_RE = re.compile(r"```.*?```|`[^`\n]*`", re.S)
+
+
+HASH_FAST = re.compile(r"#([A-Za-z_가-힣][\w가-힣\-]*)")
+BAD_PREV = set("#&/(=-.:[")   # 이런 글자 바로 뒤의 #는 태그가 아니다(주소의 #앵커, 제목 등)
+
+
+def hashtags(text):
+    """본문 속 #태그. '#' 가 있는 자리만 훑어서 빠르다."""
+    out = []
+    for m in HASH_FAST.finditer(text):
+        i = m.start()
+        if i:
+            p = text[i - 1]
+            if p.isalnum() or p == "_" or p in BAD_PREV:
+                continue
+        out.append(m.group(1))
+    return out
+
+
+def note_tags(body):
+    """태그: 머리말 tags, '태그: a, b' 줄, 본문 속 #해시태그(코드·제목 제외).
+    대부분의 노트에는 태그가 없으므로, 필요할 때만 무거운 처리를 한다."""
+    tags = set(st.parse_meta(body)["tags"])
+    if "태그" in body or "tag" in body or "Tag" in body or "TAG" in body:
+        for m in TAG_LINE.finditer(body):
+            for t in re.split(r"[,\s]+", m.group(1)):
+                t = t.strip().lstrip("#")
+                # 링크·괄호·긴 조각은 태그가 아니다(블로그의 'Tags: [블로그](주소)' 같은 줄)
+                if t and len(t) <= 30 and not re.search(r"[\[\]()/<>]", t):
+                    tags.add(t)
+    if "#" in body and hashtags(body):
+        # 후보가 있을 때만 코드·그림 덩어리를 걷어 내고 다시 확인(코드 속 #은 태그가 아니므로)
+        tags.update(hashtags(CODE_RE.sub(" ", st.DATA_IMG.sub(" ", body))))
+    return tags
+
+
+# 문법 해설 사이드바에 더 넣은 서식 (렌더러가 실제로 그리는 것만)
+WRAP_X = {"sup": ("<sup>", "</sup>", "위첨자"), "sub": ("<sub>", "</sub>", "아래첨자"), "wiki": ("[[", "]]", "노트 제목"),
+          "auto": ("<", ">", "https://"), "math": ("$", "$", "수식"), "tag": ("#", "", "태그")}
+LINE_X = {"task": ("- [ ] ", r"^[-*+] \[[ xX]\] ")}
+PLACEHOLDER_X = {"task": "할 일"}
+TPL = {   # 이름: (넣을 글({} 자리에 고른 글), {} 기본 글)
+    "code_lang": ("```python\n{}\n```", "코드"),
+    "math_block": ("$$\n{}\n$$", "수식"),
+    "details": ("<details>\n<summary>제목</summary>\n\n{}\n\n</details>", "내용"),
+    "toc": ("[toc]", ""),
+}
+
+
+def syntax_entries():
+    """[(묶음, 이름, 쓰는 모양, 동작)]"""
+    H = lambda lv: ed.set_heading("제목", lv, FMT)  # noqa: E731
+    return [
+        *[("제목", f"제목 {lv}", H(lv), ("heading", lv)) for lv in range(1, 7)],
+        ("글자", "굵게", "**글**", ("wrap", "b")),
+        ("글자", "기울임", "*글*", ("wrap", "i")),
+        ("글자", "취소선", "~~글~~", ("wrap", "s")),
+        ("글자", "코드", "`글`", ("wrap", "code")),
+        ("글자", "위 첨자", "x<sup>2</sup>", ("wrap", "sup")),
+        ("글자", "아래 첨자", "H<sub>2</sub>O", ("wrap", "sub")),
+        ("목록·인용", "글머리 목록", "- 항목", ("line", "ul")),
+        ("목록·인용", "번호 목록", "1. 항목", ("line", "ol")),
+        ("목록·인용", "체크 목록", "- [ ] 할 일", ("line", "task")),
+        ("목록·인용", "인용", "> 글", ("line", "quote")),
+        ("목록·인용", "들여쓰기", "  - 하위 항목", ("indent", 1)),
+        ("목록·인용", "내어쓰기", "한 단계 올림", ("indent", -1)),
+        ("넣기", "링크", "[글](주소)", ("wrap", "link")),
+        ("넣기", "노트 링크", "[[노트 제목]]", ("wrap", "wiki")),
+        ("넣기", "자동 링크", "<https://…>", ("wrap", "auto")),
+        ("넣기", "그림", "![글](그림.png)", ("wrap", "img")),
+        ("넣기", "유튜브 영상", "[▶ 유튜브에서 보기](<https://…", ("wrap", "video")),
+        ("넣기", "표", "| 제목1 | 제목2 | …", ("block", "table")),
+        ("넣기", "가로줄", "---", ("block", "hr")),
+        ("넣기", "코드 블록", "``` …", ("block", "codeblock")),
+        ("넣기", "언어 지정 코드", "```python …", ("tpl", "code_lang")),
+        ("확장", "수식 (줄 안)", "$a^2$", ("wrap", "math")),
+        ("확장", "수식 (블록)", "$$ … $$", ("tpl", "math_block")),
+        ("확장", "접기", "<details> …", ("tpl", "details")),
+        ("확장", "목차", "[toc]", ("tpl", "toc")),
+        ("확장", "각주", "[^1] … [^1]: 내용", ("footnote",)),
+        ("확장", "날짜·시간", time.strftime("%Y-%m-%d %H:%M"), ("datetime",)),
+        ("확장", "태그", "#태그", ("wrap", "tag")),
+    ]
+
+
+class Btn(tk.Frame):
+    """납작한 버튼(위키나루 방식): 평소엔 배경과 한 몸, 마우스를 올리면 연보라, 누르면 진해지면서 1px 눌린다.
+    kind: ghost · icon · tab(보기 탭) · primary · danger · nav(왼쪽 메뉴)"""
+    KINDS = {}
+
+    @classmethod
+    def refresh_kinds(cls):
+        cls.KINDS = {
+            "ghost": dict(bg=C["bg"], fg=C["sub"], hbg=C["soft"], hfg=C["accent"], pbg=C["sel"], abg=C["soft"], afg=C["accent"]),
+            "icon": dict(bg=C["bg"], fg=C["text"], hbg=C["soft"], hfg=C["text"], pbg=C["sel"], abg=C["soft"], afg=C["accent"]),
+            "tab": dict(bg=C["bg"], fg=C["muted"], hbg=C["soft"], hfg=C["accent"], pbg=C["sel"], abg=C["soft"], afg=C["accent"]),
+            "primary": dict(bg=C["accent"], fg=C["on_accent"], hbg=C["accent_h"], hfg=C["on_accent"], pbg=C["accent_d"],
+                            abg=C["accent_d"], afg=C["on_accent"]),
+            "danger": dict(bg=C["bg"], fg=C["muted"], hbg=C["danger_bg"], hfg=C["danger"], pbg=C["danger_bg"], abg=C["danger_bg"], afg=C["danger"]),
+            "nav": dict(bg=C["panel"], fg=C["sub"], hbg=C["hover"], hfg=C["text"], pbg=C["line"], abg=C["soft"], afg=C["accent"]),
+        }
+
+    def __init__(self, parent, text, command=None, kind="ghost", bg=None, bold=False, padx=12, pady=4, font=None, **kw):
+        k = dict(self.KINDS[kind])
+        if bg and kind != "primary":
+            k["bg"] = bg
+        self.k, self.kind, self.command = k, kind, command
+        self.on = self.hover = self.pressed = False
+        self.enabled = True
+        super().__init__(parent, bg=k["bg"])
+        self.label = tk.Label(self, text=text, bg=k["bg"], fg=k["fg"], cursor="hand2", padx=padx, pady=pady,
+                              font=font or ((UI, 10, "bold") if bold else (UI, 10)), bd=0, **kw)
+        self.label.pack(fill="both", expand=True, padx=(0, 1), pady=(0, 1))
+        for w in (self, self.label):
+            w.bind("<Enter>", lambda e: self.set_hover(True))
+            w.bind("<Leave>", lambda e: self.set_hover(False))
+            w.bind("<ButtonPress-1>", self.press)
+            w.bind("<ButtonRelease-1>", self.release)
+        self.paint()
+
+    def configure(self, cnf=None, **kw):
+        fwd = {a: kw.pop(a) for a in ("text", "font", "wraplength") if a in kw}
+        if fwd:
+            self.label.configure(**fwd)
+        if cnf or kw:
+            super().configure(cnf, **kw)
+
+    config = configure
+
+    def set_hover(self, v):
+        self.hover = v
+        self.paint()
+
+    def press(self, e):
+        if self.enabled:
+            self.pressed = True
+            self.paint()
+
+    def release(self, e):
+        was = self.pressed
+        self.pressed = False
+        self.paint()
+        if was and self.enabled and self.command:
+            x, y = self.winfo_pointerx() - self.winfo_rootx(), self.winfo_pointery() - self.winfo_rooty()
+            if 0 <= x < self.winfo_width() and 0 <= y < self.winfo_height():
+                self.command()
+
+    def look(self, face, fg, pressed=False):
+        self.config(bg=face)
+        # 누르는 동안엔 글자가 아래-오른쪽으로 1px 밀려 눌린 느낌이 난다
+        self.label.pack_configure(padx=(1, 0) if pressed else (0, 1), pady=(1, 0) if pressed else (0, 1))
+        self.label.config(bg=face, fg=fg)
+
+    def paint(self):
+        k = self.k
+        if not self.enabled:
+            self.look(k["bg"], C["line"])
+            self.label.config(cursor="arrow")
+            return
+        self.label.config(cursor="hand2")
+        if self.pressed:
+            self.look(k["pbg"], k["afg"] if self.kind in ("primary", "danger", "tab", "nav", "ghost") else k["hfg"], True)
+        elif self.on:
+            self.look(k["abg"], k["afg"])
+        elif self.hover:
+            self.look(k["hbg"], k["hfg"])
+        else:
+            self.look(k["bg"], k["fg"])
+
+    def set_on(self, on):
+        self.on = on
+        self.paint()
+
+
+
+Btn.refresh_kinds()
+
+
+def autohide(sb, target):
+    """내용이 넘칠 때만 스크롤바가 나타난다."""
+    def setter(lo, hi):
+        if float(lo) <= 0.0 and float(hi) >= 1.0:
+            sb.pack_forget()
+        else:
+            sb.pack(side="right", fill="y", before=target)
+        sb.set(lo, hi)
+    return setter
+
+
+class App:
+    def __init__(self):
+        global UI
+        theme = st.read_config().get("theme", {})
+        apply_theme(theme.get("name", DEFAULT_THEME), theme.get("accent"))
+        self.root = tk.Tk()
+        self.root.title(APP)
+        self.root.geometry("1440x860")
+        self.root.minsize(900, 520)
+        self.root.configure(bg=C["bg"])
+        try:
+            self.root.iconbitmap(os.path.join(HERE, "assets", "icon.ico"))
+        except tk.TclError:
+            pass
+        fams = set(tkfont.families())
+        UI = self.ui = next((f for f in ("맑은 고딕", "Malgun Gothic", "Segoe UI") if f in fams), "TkDefaultFont")
+        self.mono = next((f for f in ("D2Coding", "Consolas", "Courier New") if f in fams), "TkFixedFont")
+        self.size = 11
+        self.style_ttk()
+
+        view = st.read_config().get("view", {})
+        self.show = {k: bool(view.get(k, d)) for k, d in (("notebooks", True), ("list", True), ("tags", False), ("syntax", True))}
+        self.mode = view.get("mode") if view.get("mode") in ("edit", "split", "view") else "split"
+        self.store = st.Store()
+        self.store.tagger = note_tags   # 색인에 태그도 함께 기억
+        self.nb = ALL                  # '*' 모든 노트 · '' 기본 · 그 밖은 노트북 폴더 이름
+        self.tag = None                # 태그로 거르는 중이면 그 태그
+        self.nb_keys, self.tag_keys = [], []
+        self.all_notes, self.notes, self.results, self.words = [], [], [], []
+        self.cards = []                # 목록에 그려진 카드 → note
+        self.rendered, self.card_starts, self.next_line = 0, [], 1   # 목록에 그려 놓은 노트 수 / 카드 시작 줄 / 다음 카드 줄
+        self.sort, self.asc = "relevance", False
+        self.cur = None                # 열어 둔 노트(dict)
+        self.hist, self.hpos = [], -1  # 이동 > 뒤로/앞으로
+        self.declined = set()          # 그림 분리 제안을 거절한 노트
+        self.snap_done = False         # 노트를 연 뒤 이전 내용을 버전으로 남겼는가
+        self.load_gen = 0              # 배경 읽기 구분용
+        self.load_prog = (0, 0)        # 처음 색인을 만들 때의 진행(읽은 수, 총 수)
+        self.dirty = self.loading = self.quiet = False
+        self.save_job = self.render_job = self.search_job = None
+        self.imgs, self.img_q, self.photos = {}, queue.Queue(), []
+        self.links = {}
+        self.clip_q = queue.Queue()
+        self.srv = self.port = None
+        self.nb_menu_target = self.ctx_note = None
+
+        self.make_fonts()
+        self.build_menu()
+        self.build()
+        self.start_clipper()
+        self.root.protocol("WM_DELETE_WINDOW", self.quit)
+        self.bind_keys()
+        self.set_mode(self.mode)
+        self.relayout()
+        self.reload_notes(background=True)
+        self.root.after(600, self.poll_clip)
+
+    # ------------------------------------------------------------ 글꼴·ttk 모양
+    def font_cfg(self):
+        """글꼴 설정(기본: 목록 10pt 보통, 노트 11pt 보통)"""
+        c = st.read_config().get("fonts", {})
+
+        def num(key, default, lo, hi):
+            try:
+                return max(lo, min(hi, int(float(c.get(key, default)))))
+            except (TypeError, ValueError):
+                return default
+        return {"list_size": num("list_size", 10, 8, 20), "list_bold": bool(c.get("list_bold", False)),
+                "note_size": num("note_size", 11, 8, 28), "note_bold": bool(c.get("note_bold", False))}
+
+    def set_fonts(self, ls, lb, ns, nb):
+        def num(v, d, lo, hi):
+            try:
+                return max(lo, min(hi, int(float(v))))
+            except (TypeError, ValueError):
+                return d
+        st.write_config(fonts={"list_size": num(ls, 10, 8, 20), "list_bold": bool(lb),
+                               "note_size": num(ns, 11, 8, 28), "note_bold": bool(nb)})
+        self.rebuild_ui()
+        self.show_options("fonts")
+
+    def make_fonts(self):
+        fc = self.font_cfg()
+        self.size = sz = fc["note_size"]
+        self.note_bold = fc["note_bold"]
+        fam = self.ui
+        F = lambda **kw: tkfont.Font(family=kw.pop("family", fam), size=kw.pop("size", sz), **kw)  # noqa: E731
+        self.fonts = {"base": F(weight="bold" if fc["note_bold"] else "normal"), "b": F(weight="bold"), "i": F(slant="italic"), "bi": F(weight="bold", slant="italic"),
+                      "mono": F(family=self.mono, size=max(sz - 1, 8)), "small": F(size=max(sz - 3, 7)),
+                      "title": F(size=sz + 6, weight="bold"), "meta": F(size=max(fc["list_size"] - 2, 7)),
+                      "card": F(size=fc["list_size"], weight="bold" if fc["list_bold"] else "normal"), "tb_b": F(size=sz - 1, weight="bold"),
+                      "tb_i": F(size=sz - 1, slant="italic"), "tb_s": F(size=sz - 1, overstrike=True)}
+        self.hfonts = {n: F(weight="bold", size=sz + max(8 - 2 * n, 0) + (3 if n == 1 else 0)) for n in range(1, 7)}
+
+    def style_ttk(self):
+        s = ttk.Style()
+        s.theme_use("clam")
+        s.configure("Flat.Treeview", background=C["panel"], fieldbackground=C["panel"], foreground=C["text"],
+                    rowheight=30, borderwidth=0, relief="flat", font=(self.ui, 10), indent=16)
+        s.layout("Flat.Treeview", [("Treeview.treearea", {"sticky": "nswe"})])
+        s.map("Flat.Treeview", background=[("selected", C["soft"])], foreground=[("selected", C["accent"])])
+        s.configure("Syntax.Treeview", background=C["bg"], fieldbackground=C["bg"], foreground=C["text"], rowheight=28,
+                    borderwidth=0, font=(self.ui, 10))
+        s.layout("Syntax.Treeview", [("Treeview.treearea", {"sticky": "nswe"})])
+        s.map("Syntax.Treeview", background=[("selected", C["bg"])], foreground=[("selected", C["text"])])
+        for orient in ("Vertical", "Horizontal"):
+            name = f"{orient}.TScrollbar"
+            s.layout(name, [(f"{orient}.Scrollbar.trough", {"sticky": "nswe", "children": [
+                (f"{orient}.Scrollbar.thumb", {"expand": "1", "sticky": "nswe"})]})])
+            s.configure(name, troughcolor=C["bg"], background=C["thumb"], bordercolor=C["bg"], lightcolor=C["thumb"],
+                        darkcolor=C["thumb"], gripcount=0, width=9, relief="flat")
+            s.map(name, background=[("active", C["thumb_h"])])
+        s.configure("TCombobox", fieldbackground=C["bg"], background=C["bg"], bordercolor=C["line"], arrowsize=12,
+                    lightcolor=C["bg"], darkcolor=C["bg"], padding=3, foreground=C["text"])
+        s.map("TCombobox", fieldbackground=[("readonly", C["bg"])], foreground=[("readonly", C["text"])])
+        for opt, val in (("background", C["bg"]), ("foreground", C["text"]), ("selectBackground", C["soft"]), ("selectForeground", C["accent"])):
+            self.root.option_add(f"*TCombobox*Listbox.{opt}", val)
+
+    # ------------------------------------------------------------ 메뉴줄 (조플린: 파일 편집 보기 이동 도구 도움말)
+    def build_menu(self):
+        mb = tk.Menu(self.root)
+        self.v = {k: tk.BooleanVar(value=self.show[k]) for k in self.show}
+        self.v_mode = tk.StringVar(value=self.mode)
+        act = lambda a: (lambda: self.run_action(a))  # noqa: E731
+
+        m = tk.Menu(mb, tearoff=0)
+        m.add_command(label="새 노트", accelerator="Ctrl+N", command=self.new_note)
+        m.add_command(label="새 노트북", accelerator="Ctrl+Shift+N", command=self.add_notebook)
+        m.add_command(label="새 하위 노트북", command=self.add_subnotebook)
+        m.add_separator()
+        m.add_command(label="종료", accelerator="Alt+F4", command=self.quit)
+        mb.add_cascade(label="파일", menu=m, underline=0)
+
+        m = tk.Menu(mb, tearoff=0)
+        m.add_command(label="실행 취소", accelerator="Ctrl+Z", command=lambda: self.text_do("edit_undo"))
+        m.add_command(label="다시 실행", accelerator="Ctrl+Y", command=lambda: self.text_do("edit_redo"))
+        m.add_separator()
+        m.add_command(label="잘라내기", accelerator="Ctrl+X", command=lambda: self.text.event_generate("<<Cut>>"))
+        m.add_command(label="복사", accelerator="Ctrl+C", command=lambda: self.text.event_generate("<<Copy>>"))
+        m.add_command(label="붙여넣기", accelerator="Ctrl+V", command=lambda: self.text.event_generate("<<Paste>>"))
+        m.add_command(label="모두 선택", accelerator="Ctrl+A", command=lambda: (self.text.tag_add("sel", "1.0", "end-1c"), self.text.focus_set()))
+        m.add_separator()
+        m.add_command(label="굵게", accelerator="Ctrl+B", command=act(("wrap", "b")))
+        m.add_command(label="기울임꼴", accelerator="Ctrl+I", command=act(("wrap", "i")))
+        m.add_command(label="취소선", command=act(("wrap", "s")))
+        m.add_command(label="링크 만들기", accelerator="Ctrl+K", command=act(("wrap", "link")))
+        m.add_command(label="코드", command=act(("wrap", "code")))
+        m.add_separator()
+        m.add_command(label="번호 매기기 목록", command=act(("line", "ol")))
+        m.add_command(label="글머리 기호 목록", command=act(("line", "ul")))
+        m.add_command(label="인용", command=act(("line", "quote")))
+        h = tk.Menu(m, tearoff=0)
+        for lv in (1, 2, 3, 4):
+            h.add_command(label=f"제목 {lv}", command=act(("heading", lv)))
+        h.add_command(label="본문", command=act(("heading", 0)))
+        m.add_cascade(label="제목", menu=h)
+        m.add_command(label="가로줄", command=act(("block", "hr")))
+        m.add_command(label="표", command=act(("block", "table")))
+        m.add_command(label="코드 블록", command=act(("block", "codeblock")))
+        m.add_command(label="날짜 및 시간 삽입", accelerator="Ctrl+Shift+T", command=self.insert_datetime)
+        m.add_separator()
+        m.add_command(label="모든 노트에서 검색", accelerator="Ctrl+Shift+F", command=self.focus_search)
+        m.add_separator()
+        m.add_command(label="노트 속성…", command=self.show_properties)
+        m.add_command(label="노트 버전…", command=self.show_versions)
+        mb.add_cascade(label="편집", menu=m, underline=0)
+
+        m = tk.Menu(mb, tearoff=0)
+        m.add_checkbutton(label="노트북 보기", variable=self.v["notebooks"], command=self.on_view_toggle)
+        m.add_checkbutton(label="태그 보기", variable=self.v["tags"], command=self.on_view_toggle)
+        m.add_checkbutton(label="노트 목록 보기", accelerator="Ctrl+Shift+L", variable=self.v["list"], command=self.on_view_toggle)
+        m.add_checkbutton(label="문법 해설 보기", accelerator="Ctrl+/", variable=self.v["syntax"], command=self.on_view_toggle)
+        m.add_separator()
+        for key, label in (("edit", "마크다운만"), ("split", "마크다운 + 렌더링"), ("view", "렌더링만")):
+            m.add_radiobutton(label=label, value=key, variable=self.v_mode, command=lambda k=key: self.set_mode(k))
+        m.add_command(label="편집기 레이아웃 전환", accelerator="Ctrl+L", command=lambda: self.cur and self.cycle_mode())
+        m.add_separator()
+        f = tk.Menu(m, tearoff=0)
+        f.add_command(label="사이드바", command=lambda: self.nbtree.focus_set())
+        f.add_command(label="노트 목록", command=lambda: self.lst.focus_set())
+        f.add_command(label="노트 제목", command=lambda: self.cur and self.title_entry.focus_set())
+        f.add_command(label="노트 본문", command=lambda: self.cur and self.text.focus_set())
+        m.add_cascade(label="포커스", menu=f)
+        mb.add_cascade(label="보기", menu=m, underline=0)
+
+        m = tk.Menu(mb, tearoff=0)
+        m.add_command(label="뒤로", accelerator="Ctrl+-", command=lambda: self.go(-1))
+        m.add_command(label="앞으로", accelerator="Ctrl++", command=lambda: self.go(1))
+        mb.add_cascade(label="이동", menu=m, underline=0)
+
+        m = tk.Menu(mb, tearoff=0)
+        m.add_command(label="옵션…", accelerator="Ctrl+,", command=lambda: self.show_options("general"))
+        m.add_separator()
+        m.add_command(label="폴더 설정… (노트·리소스 폴더)", command=lambda: self.show_options("folders"))
+        m.add_separator()
+        m.add_command(label="글꼴·크기…", command=lambda: self.show_options("fonts"))
+        m.add_command(label="테마·색상…", command=lambda: self.show_options("theme"))
+        m.add_command(label="노트 버전 설정…", command=lambda: self.show_options("versions"))
+        m.add_command(label="웹 클리퍼 설정…", command=lambda: self.show_options("clipper"))
+        mb.add_cascade(label="설정", menu=m, underline=0)
+
+        m = tk.Menu(mb, tearoff=0)
+        m.add_command(label="검색 문법", command=self.help_search)
+        m.add_command(label=f"{APP} 정보", command=lambda: messagebox.showinfo(
+            APP, "위키나루 기반 마크다운 노트 앱\n노트는 .md 파일로 저장됩니다.\n\n저장 폴더: " + self.store.root, parent=self.root))
+        mb.add_cascade(label="도움말", menu=m, underline=0)
+        self.root.config(menu=mb)
+
+    def help_search(self):
+        messagebox.showinfo("검색 문법", "공백 = AND\n회의록 AND (예산 OR 일정) NOT 취소\n\"정확한 구절\"\n"
+                            "& | ! 기호도 AND OR NOT 으로 쓸 수 있습니다(대문자만 연산자로 인식).\n\n"
+                            "태그는 본문의 #태그, 또는 '태그: a, b' 줄에서 모읍니다.", parent=self.root)
+
+    def text_do(self, name):
+        try:
+            getattr(self.text, name)()
+        except tk.TclError:
+            pass
+
+    def focus_search(self):
+        if not self.show["list"]:
+            self.v["list"].set(True)
+            self.on_view_toggle()
+        self.search_entry.focus_set()
+        self.search_entry.select_range(0, "end")
+
+    def insert_datetime(self):
+        if self.cur:
+            self.text.insert("insert", time.strftime("%Y-%m-%d %H:%M"))
+            self.text.focus_set()
+
+    # ------------------------------------------------------------ 화면 만들기
+    def build(self):
+        self.pane = tk.PanedWindow(self.root, orient="horizontal", sashwidth=4, sashrelief="flat", bg=C["line"], bd=0)
+        self.pane.pack(fill="both", expand=True)
+        self.widths = {"left": 230, "list": 360, "syntax": 300}
+        self.build_left()
+        self.build_list()
+        self.build_editor()
+        self.build_sidebar()
+
+    def on_view_toggle(self):
+        for k, var in self.v.items():
+            self.show[k] = bool(var.get())
+        self.save_view()
+        self.relayout()
+        if self.show["tags"]:
+            self.reload_tags()
+
+    def save_view(self):
+        cfg = dict(self.show)
+        cfg["mode"] = self.mode
+        st.write_config(view=cfg)
+
+    def relayout(self):
+        """보기 설정에 맞게 칸을 다시 놓는다(폭은 사용자가 끈 그대로 둔다)."""
+        managed = [str(p) for p in self.pane.panes()]
+        for key, w in (("left", self.leftf), ("list", self.listf), ("syntax", self.sidebar)):
+            if str(w) in managed and w.winfo_width() > 1:
+                self.widths[key] = max(w.winfo_width(), 150)
+        for w in (self.leftf, self.listf, self.editf, self.sidebar):
+            if str(w) in managed:
+                self.pane.forget(w)
+        if self.show["notebooks"] or self.show["tags"]:
+            self.pane.add(self.leftf, minsize=150, width=self.widths["left"], stretch="never")
+        if self.show["list"]:
+            self.pane.add(self.listf, minsize=240, width=self.widths["list"], stretch="never")
+        self.pane.add(self.editf, minsize=360, stretch="always")
+        if self.show["syntax"]:
+            self.pane.add(self.sidebar, minsize=220, width=self.widths["syntax"], stretch="never")
+        inner = [str(p) for p in self.left_pane.panes()]
+        for w in (self.nb_sec, self.tag_sec):
+            if str(w) in inner:
+                self.left_pane.forget(w)
+        if self.show["notebooks"]:
+            self.left_pane.add(self.nb_sec, minsize=90, stretch="always")
+        if self.show["tags"]:
+            self.left_pane.add(self.tag_sec, minsize=90, stretch="always")
+
+    # -- 1단: 노트북 + 태그
+    def section_head(self, parent, title, action=None):
+        h = tk.Frame(parent, bg=C["panel"])
+        h.pack(fill="x", padx=14, pady=(14, 4))
+        tk.Label(h, text=title, bg=C["panel"], fg=C["muted"], font=(self.ui, 9, "bold")).pack(side="left")
+        if action:
+            Btn(h, "＋", action, kind="ghost", bg=C["panel"], padx=6, pady=0).pack(side="right")
+
+    def fit_count(self, tree, texts):
+        """숫자 칸의 폭을 가장 긴 숫자에 맞춘다(고정 폭이면 13,902 같은 큰 수가 잘린다)"""
+        f = tkfont.Font(family=self.ui, size=10)
+        w = max([f.measure(t) for t in texts] + [24]) + 28
+        tree.column("n", width=w, minwidth=w, stretch=False)
+
+    def make_tree(self, parent):
+        wrap = tk.Frame(parent, bg=C["panel"])
+        wrap.pack(fill="both", expand=True, padx=6, pady=(0, 6))
+        tree = ttk.Treeview(wrap, style="Flat.Treeview", columns=("n",), show="tree", selectmode="browse")
+        tree.column("#0", stretch=True, width=140)
+        tree.column("n", width=40, anchor="e", stretch=False)
+        tree.pack(side="left", fill="both", expand=True)
+        sb = ttk.Scrollbar(wrap, orient="vertical", command=tree.yview)
+        tree.config(yscrollcommand=autohide(sb, tree))
+        return tree
+
+    def build_left(self):
+        f = self.leftf = tk.Frame(self.pane, bg=C["panel"])
+        self.left_pane = tk.PanedWindow(f, orient="vertical", sashwidth=4, sashrelief="flat", bg=C["line"], bd=0)
+        self.left_pane.pack(fill="both", expand=True)
+        self.nb_sec = tk.Frame(self.left_pane, bg=C["panel"])
+        self.section_head(self.nb_sec, "노트북", self.add_notebook)
+        self.nbtree = self.make_tree(self.nb_sec)
+        self.nbtree.bind("<<TreeviewSelect>>", self.on_nb_select)
+        self.nbtree.bind("<Delete>", lambda e: self.delete_notebook())
+        self.nbtree.bind("<Button-3>", self.on_nb_menu)
+        self.nbmenu = tk.Menu(self.root, tearoff=0)
+        self.tag_sec = tk.Frame(self.left_pane, bg=C["panel"])
+        self.section_head(self.tag_sec, "태그")
+        self.tagtree = self.make_tree(self.tag_sec)
+        self.tagtree.bind("<ButtonRelease-1>", self.on_tag_click)
+        self.root_label = tk.Label(f, text="", bg=C["panel"], fg=C["muted"], font=(self.ui, 8), anchor="w", padx=14, pady=6)
+        self.root_label.pack(side="bottom", fill="x", before=self.left_pane)
+
+    # -- 2단: 검색 + 목록
+    def build_list(self):
+        f = self.listf = tk.Frame(self.pane, bg=C["bg"])
+        top = tk.Frame(f, bg=C["bg"])
+        top.pack(fill="x", padx=14, pady=(14, 8))
+        Btn(top, "＋ 새 노트", self.new_note, kind="primary", bold=True, pady=6).pack(side="right", padx=(8, 0))
+        box = tk.Frame(top, bg=C["panel"], highlightthickness=1, highlightbackground=C["line"], highlightcolor=C["accent"])
+        box.pack(side="left", fill="x", expand=True)
+        self.q = tk.StringVar()
+        self.q.trace_add("write", lambda *a: (self.schedule_search(), self.update_placeholder()))
+        self.search_entry = tk.Entry(box, textvariable=self.q, relief="flat", bd=0, bg=C["panel"], fg=C["text"],
+                                     insertbackground=C["accent"], font=(self.ui, 10))
+        self.search_entry.pack(fill="x", padx=10, pady=7)
+        self.ph = tk.Label(box, text="검색  (예: 회의록 AND 예산)", bg=C["panel"], fg=C["muted"], font=(self.ui, 10))
+        self.ph.bind("<Button-1>", lambda e: self.search_entry.focus_set())
+        bar = tk.Frame(f, bg=C["bg"])
+        bar.pack(fill="x", padx=10, pady=(0, 2))
+        self.sort_names = {"relevance": "관련도순", "time": "수정순", "ctime": "생성순", "title": "제목순"}
+        self.sort_btns = {k: Btn(bar, v, lambda k=k: self.sort_by(k), padx=6, pady=3) for k, v in self.sort_names.items()}
+        self.b_date = Btn(bar, "기간", self.toggle_date, padx=6, pady=3)
+        for b in (*self.sort_btns.values(), self.b_date):
+            b.pack(side="left", padx=1)
+        self.tip(self.sort_btns["time"], "마지막으로 고친 시각 순 (조플린 내보내기 노트는 머리말의 updated)")
+        self.tip(self.sort_btns["ctime"], "만든 시각 순 (조플린 내보내기 노트는 머리말의 created)")
+        self.date_row = tk.Frame(f, bg=C["bg"])
+        self.d_from, self.d_to = tk.StringVar(), tk.StringVar()
+        for v in (self.d_from, self.d_to):
+            v.trace_add("write", lambda *a: self.schedule_search())
+        for var in (self.d_from, self.d_to):
+            tk.Entry(self.date_row, textvariable=var, width=11, relief="flat", bd=0, bg=C["panel"], fg=C["text"],
+                     highlightthickness=1, highlightbackground=C["line"], highlightcolor=C["accent"],
+                     font=(self.ui, 9)).pack(side="left", padx=(14 if var is self.d_from else 4, 0), ipady=3)
+            if var is self.d_from:
+                tk.Label(self.date_row, text="~", bg=C["bg"], fg=C["muted"]).pack(side="left", padx=(4, 0))
+        Btn(self.date_row, "지우기", lambda: (self.d_from.set(""), self.d_to.set("")), padx=8, pady=2).pack(side="left", padx=6)
+        tk.Label(self.date_row, text="예) 2021.01.01", bg=C["bg"], fg=C["muted"], font=(self.ui, 8)).pack(side="left")
+        self.count = tk.Label(f, text="", anchor="w", bg=C["bg"], fg=C["muted"], font=(self.ui, 9), padx=16)
+        self.count.pack(fill="x", pady=(6, 4))
+        tk.Frame(f, height=1, bg=C["line"]).pack(fill="x")
+        body = tk.Frame(f, bg=C["bg"])
+        body.pack(fill="both", expand=True)
+        self.lst = tk.Text(body, wrap="word", cursor="arrow", relief="flat", bd=0, highlightthickness=0, bg=C["bg"],
+                           fg=C["text"], font=self.fonts["base"], padx=0, pady=0, state="disabled", exportselection=False)
+        sb = ttk.Scrollbar(body, orient="vertical", command=self.lst.yview)
+        hide = autohide(sb, self.lst)
+
+        def on_scroll(lo, hi):
+            hide(lo, hi)
+            if float(hi) > 0.9 and self.rendered < len(self.results):
+                self.root.after_idle(self.more_cards)
+        self.lst.config(yscrollcommand=on_scroll)
+        self.lst.pack(side="left", fill="both", expand=True)
+        L = self.lst
+        L.tag_configure("title", font=self.fonts["card"], lmargin1=18, lmargin2=18, spacing1=10, rmargin=14)
+        L.tag_configure("meta", font=self.fonts["meta"], foreground=C["muted"], lmargin1=18, lmargin2=18, rmargin=14, spacing1=1)
+        L.tag_configure("snip", font=self.fonts["meta"], foreground=C["sub"], lmargin1=18, lmargin2=18, rmargin=14, spacing1=3, spacing3=10)
+        L.tag_configure("pad", spacing3=10)
+        L.tag_configure("sep", font=("TkDefaultFont", 1), background=C["line"])
+        L.tag_configure("selcard", background=C["soft"])
+        L.tag_configure("hl", background=C["mark"])
+        L.tag_lower("selcard")
+        L.tag_raise("hl")
+        L.bind("<Button-1>", self.on_list_click)
+        L.bind("<Button-3>", self.on_list_menu)
+        self.listmenu = tk.Menu(self.root, tearoff=0)
+        self.movemenu = tk.Menu(self.listmenu, tearoff=0)
+        self.update_placeholder()
+
+    def update_placeholder(self):
+        if self.q.get():
+            self.ph.place_forget()
+        else:
+            self.ph.place(x=10, rely=0.5, anchor="w")
+
+    # -- 3단: 에디터 (제목줄 + 서식 도구줄, 조플린식)
+    def tip(self, widget, text):
+        """툴바 아이콘에 올리면 뜨는 말풍선(위키나루와 같은 방식)"""
+        target = getattr(widget, "label", widget)
+        tt = {"win": None, "job": None}
+
+        def show():
+            w = tk.Toplevel(target)
+            w.wm_overrideredirect(True)
+            w.wm_geometry(f"+{target.winfo_rootx() + 4}+{target.winfo_rooty() + target.winfo_height() + 4}")
+            tk.Label(w, text=text, background=C["text"], foreground="white", padx=8, pady=3, font=(self.ui, 9)).pack()
+            tt["win"] = w
+
+        def enter(_):
+            tt["job"] = target.after(450, show)
+
+        def leave(_):
+            if tt["job"]:
+                target.after_cancel(tt["job"])
+                tt["job"] = None
+            if tt["win"]:
+                tt["win"].destroy()
+                tt["win"] = None
+        target.bind("<Enter>", enter, add="+")
+        target.bind("<Leave>", leave, add="+")
+        target.bind("<ButtonPress>", leave, add="+")
+
+    def pane_head(self, parent, name, badge):
+        h = tk.Frame(parent, bg=C["panel"])
+        h.pack(fill="x", padx=10, pady=(8, 5))
+        tk.Label(h, text=name, bg=C["panel"], fg=C["text"], font=(self.ui, 10, "bold")).pack(side="left")
+        tk.Label(h, text=badge, bg=C["panel"], fg=C["muted"], font=(self.ui, 9)).pack(side="left", padx=8)
+
+    # -- 3단: 에디터 (위키나루 방식: 제목 + 보기 탭, 납작한 아이콘 툴바, 머리글이 있는 두 패널)
+    def build_editor(self):
+        f = self.editf = tk.Frame(self.pane, bg=C["bg"])
+        self.empty = tk.Label(f, text="노트를 선택하거나 새로 만드세요\nCtrl+N", bg=C["bg"], fg=C["muted"], font=(self.ui, 11), justify="center")
+        self.main = tk.Frame(f, bg=C["bg"])
+        head = tk.Frame(self.main, bg=C["bg"])
+        head.pack(fill="x", padx=18, pady=(14, 6))
+        self.title_var = tk.StringVar()
+        info = Btn(head, "ⓘ", self.show_properties, kind="icon", padx=8, pady=2, font=(self.ui, 13))
+        info.pack(side="right", padx=(6, 0))
+        self.tip(info, "노트 속성")
+        # 보기 탭 (좌우 분할 / 렌더링만 / 원문만)
+        seg = tk.Frame(head, bg=C["line"], padx=1, pady=1)
+        seg.pack(side="right", padx=(8, 0))
+        self.mode_btns = {}
+        for m, label, hint in (("split", "좌우 분할", "마크다운과 렌더링을 나란히"), ("view", "렌더링만", "렌더링 결과만 크게"),
+                               ("edit", "원문만", "마크다운 원문만 크게(집중 편집)")):
+            b = Btn(seg, label, lambda m=m: self.set_mode(m), kind="tab", padx=9, pady=3)
+            b.pack(side="left")
+            self.tip(b, hint)
+            self.mode_btns[m] = b
+        self.title_entry = tk.Entry(head, textvariable=self.title_var, relief="flat", bd=0, font=self.fonts["title"],
+                                    bg=C["bg"], fg=C["text"], insertbackground=C["accent"], width=8)
+        self.title_entry.pack(side="left", fill="x", expand=True, ipady=3)
+        self.title_entry.bind("<Return>", lambda e: (self.commit_title(), self.text.focus_set()))
+        self.title_entry.bind("<FocusOut>", lambda e: self.commit_title())
+
+        tk.Frame(self.main, height=1, bg=C["line"]).pack(fill="x")
+        self.status = tk.Label(self.main, text="", anchor="w", bg=C["bg"], fg=C["muted"], font=(self.ui, 9), padx=18, pady=4)
+        self.status.pack(side="bottom", fill="x")
+        tk.Frame(self.main, height=1, bg=C["line"]).pack(side="bottom", fill="x")
+        self.body = tk.Frame(self.main, bg=C["panel"])
+        self.body.pack(fill="both", expand=True)
+        self.body.grid_rowconfigure(0, weight=1)
+        ring = dict(highlightthickness=2, highlightbackground=C["line"], highlightcolor=C["accent"], relief="flat", bd=0)
+
+        self.edit_frame = tk.Frame(self.body, bg=C["panel"])
+        self.pane_head(self.edit_frame, "마크다운", "편집")
+        box = tk.Frame(self.edit_frame, bg=C["panel"])
+        box.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        self.text = tk.Text(box, wrap="word", undo=True, maxundo=-1, font=(self.mono, self.size) + (("bold",) if self.note_bold else ()), padx=14, pady=10,
+                            tabs=("1c",), bg=C["bg"], fg=C["text"], insertbackground=C["accent"],
+                            selectbackground=C["sel"], selectforeground=C["text"], spacing2=3, **ring)
+        sb1 = ttk.Scrollbar(box, orient="vertical", command=self.text.yview)
+        self.text.config(yscrollcommand=autohide(sb1, self.text))
+        self.text.pack(side="left", fill="both", expand=True)
+        self.text.bind("<<Modified>>", self.on_modified)
+
+        self.view_frame = tk.Frame(self.body, bg=C["panel"])
+        self.pane_head(self.view_frame, "렌더링", "읽기 전용")
+        box2 = tk.Frame(self.view_frame, bg=C["panel"])
+        box2.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        self.view = tk.Text(box2, wrap="word", state="disabled", font=self.fonts["base"], padx=18, pady=12, cursor="arrow",
+                            bg=C["bg"], fg=C["text"], selectbackground=C["sel"], selectforeground=C["text"], spacing2=3, **ring)
+        sb2 = ttk.Scrollbar(box2, orient="vertical", command=self.view.yview)
+        self.view.config(yscrollcommand=autohide(sb2, self.view))
+        self.view.pack(side="left", fill="both", expand=True)
+        self.configure_tags()
+        self.view.bind("<Button-1>", self.on_view_click)
+        self.show_empty(True)
+
+    def show_empty(self, on):
+        if on:
+            self.main.pack_forget()
+            self.empty.pack(fill="both", expand=True)
+        else:
+            self.empty.pack_forget()
+            self.main.pack(fill="both", expand=True)
+
+    def configure_tags(self):
+        v, f = self.view, self.fonts
+        v.tag_configure("b", font=f["b"])
+        v.tag_configure("i", font=f["i"])
+        v.tag_configure("bi", font=f["bi"])
+        v.tag_configure("u", underline=True)
+        v.tag_configure("s", overstrike=True)
+        v.tag_configure("sup", offset=5, font=f["small"])
+        v.tag_configure("sub", offset=-3, font=f["small"])
+        v.tag_configure("code", font=f["mono"], background=C["code"])
+        v.tag_configure("codeblock", font=f["mono"], background=C["code"], lmargin1=8, lmargin2=8)
+        v.tag_configure("math", font=f["mono"])
+        v.tag_configure("raw", font=f["mono"], foreground=C["muted"], background="#fef3c7")
+        v.tag_configure("chip", foreground="#92400e", background="#fef3c7")
+        v.tag_configure("muted", foreground=C["muted"])
+        v.tag_configure("link", underline=True, foreground=C["accent"])
+        v.tag_configure("fnref")
+        v.tag_configure("quote", foreground=C["muted"])
+        v.tag_configure("hr", foreground=C["line"])
+        for n in range(1, 7):
+            v.tag_configure(f"h{n}", font=self.hfonts[n], spacing1=6, spacing3=2)
+        for n in range(1, preview.MAX_LEVEL + 1):
+            v.tag_configure(f"M{n}", lmargin1=20 * n, lmargin2=20 * n)
+            v.tag_configure(f"B{n}", lmargin1=20 * (n - 1) + 6, lmargin2=20 * n)
+        v.tag_raise("link")
+        v.tag_raise("code")
+        v.tag_bind("link", "<Enter>", lambda e: v.config(cursor="hand2"))
+        v.tag_bind("link", "<Leave>", lambda e: v.config(cursor="arrow"))
+
+    # -- 4단: 문법 해설 (위키나루)
+    def build_sidebar(self):
+        f = self.sidebar = tk.Frame(self.pane, bg=C["bg"])
+        hd = tk.Frame(f, bg=C["bg"])
+        hd.pack(fill="x", pady=(12, 0))
+        close = Btn(hd, "✕", self.toggle_syntax, kind="icon", padx=8, pady=1)
+        close.pack(side="right", padx=8)
+        self.tip(close, "문법 해설 닫기 (Ctrl+/)")
+        tk.Label(hd, text="문법 해설", anchor="w", font=(self.ui, 11, "bold"), padx=16, bg=C["bg"], fg=C["text"]).pack(side="left")
+        tk.Label(f, text="마크다운", anchor="w", font=(self.ui, 9), padx=16, bg=C["bg"], fg=C["muted"]).pack(fill="x", pady=(0, 8))
+        tk.Label(f, text="누르면 커서 자리에 넣고, 글을 고르고 누르면 감쌉니다.\nCtrl+B 굵게 · Ctrl+I 기울임 · Ctrl+K 링크",
+                 justify="left", fg=C["muted"], bg=C["bg"], font=(self.ui, 8), padx=16, pady=8, anchor="w").pack(side="bottom", fill="x")
+        tk.Frame(f, height=1, bg=C["line"]).pack(side="bottom", fill="x")
+        wrap = tk.Frame(f, bg=C["bg"])
+        wrap.pack(fill="both", expand=True, padx=(8, 0))
+        self.tree = ttk.Treeview(wrap, columns=("name",), style="Syntax.Treeview", selectmode="none", show="tree")
+        self.tree.column("#0", width=170, minwidth=100, stretch=True)
+        self.tree.column("name", width=90, minwidth=60, stretch=False, anchor="e")
+        tsb = ttk.Scrollbar(wrap, orient="vertical", command=self.tree.yview)
+        self.tree.config(yscrollcommand=autohide(tsb, self.tree))
+        self.tree.pack(side="left", fill="both", expand=True)
+        self.tree.tag_configure("group", foreground=C["accent"], font=(self.ui, 9, "bold"))
+        self.tree.tag_configure("item", foreground=C["text"])
+        self.tree.bind("<ButtonRelease-1>", self.on_sidebar_click)
+        self.actions = {}
+        group, parent = None, ""
+        for g, name, example, action in syntax_entries():
+            if g != group:
+                group = g
+                parent = self.tree.insert("", "end", text=g, open=True, values=("",), tags=("group",))
+            self.actions[self.tree.insert(parent, "end", text=example, values=(name,), tags=("item",))] = action
+
+    def toggle_syntax(self):
+        self.v["syntax"].set(not self.show["syntax"])
+        self.on_view_toggle()
+
+    def on_sidebar_click(self, e):
+        action = self.actions.get(self.tree.identify_row(e.y))
+        if action:
+            self.run_action(action)
+        self.tree.selection_remove(*self.tree.selection())
+
+    # ------------------------------------------------------------ 노트북·태그
+    def nb_label(self, key):
+        """노트북 경로 → 보여 줄 이름 (하위 노트북은 '업무 › 프로젝트')"""
+        if not key or key == ALL:
+            return self.store.root_name if key == "" else "모든 노트"
+        return " › ".join(wikiconv.markdown.md_title(p + ".md") for p in key.split("/"))
+
+    def nb_short(self, key):
+        return wikiconv.markdown.md_title(key.split("/")[-1] + ".md")
+
+    def in_nb(self, n):
+        """지금 고른 노트북에 속한 노트인가 (하위 노트북의 노트 포함)"""
+        if self.nb == ALL:
+            return True
+        if self.nb == "":
+            return n["nb"] == ""
+        return n["nb"] == self.nb or n["nb"].startswith(self.nb + "/")
+
+    def reload_notebooks(self):
+        names = self.store.notebooks()
+        if self.nb not in (ALL, "") and self.nb not in names:
+            self.nb = ALL
+        self.nb_keys = [ALL, ""] + names
+        direct = {}
+        for n in self.all_notes:
+            direct[n["nb"]] = direct.get(n["nb"], 0) + 1
+        total = lambda key: sum(c for k, c in direct.items() if k == key or k.startswith(key + "/"))  # noqa: E731
+        self.quiet = True
+        self.nbtree.delete(*self.nbtree.get_children())
+        idx = {key: i for i, key in enumerate(self.nb_keys)}
+        for i, key in enumerate(self.nb_keys):
+            if key == ALL:
+                label, count, parent = "모든 노트", len(self.all_notes), ""
+            elif key == "":
+                label, count, parent = self.store.root_name, direct.get("", 0), ""
+            else:
+                label, count = self.nb_short(key), total(key)
+                # 최상위 노트북은 저장 폴더 항목(scrapbook) 아래에 들여써서 보여 준다
+                parent = f"nb{idx[key.rsplit('/', 1)[0]]}" if "/" in key else f"nb{idx['']}"
+            self.nbtree.insert(parent, "end", iid=f"nb{i}", text="  " + label, values=(f"{count:,}",), open=True)
+        self.nbtree.selection_set(f"nb{idx[self.nb]}")
+        texts = []
+
+        def collect(parent=""):
+            for c in self.nbtree.get_children(parent):
+                texts.append(self.nbtree.set(c, "n"))
+                collect(c)
+        collect()
+        self.fit_count(self.nbtree, texts)
+        self.quiet = False
+        self.root_label.config(text=self.store.root)
+
+    def reload_tags(self):
+        if not self.show["tags"]:
+            return   # 태그 보기를 켤 때 만든다(태그가 많으면 느리다)
+        counts = {}
+        for n in self.all_notes:
+            for t in n["tags"]:
+                counts[t] = counts.get(t, 0) + 1
+        self.tag_keys = sorted(counts, key=lambda t: (-counts[t], t.lower()))
+        self.quiet = True
+        self.tagtree.delete(*self.tagtree.get_children())
+        for i, t in enumerate(self.tag_keys):
+            self.tagtree.insert("", "end", iid=f"tg{i}", text="  # " + t, values=(f"{counts[t]:,}",))
+        if self.tag in self.tag_keys:
+            self.tagtree.selection_set(f"tg{self.tag_keys.index(self.tag)}")
+        self.fit_count(self.tagtree, [f"{c:,}" for c in list(counts.values())[:200]])
+        self.quiet = False
+
+    def on_tag_click(self, e):
+        row = self.tagtree.identify_row(e.y)
+        if not row:
+            return
+        tag = self.tag_keys[int(row[2:])]
+        self.tag = None if tag == self.tag else tag   # 선택된 태그를 다시 누르면 해제
+        if self.tag is None:
+            self.tagtree.selection_remove(*self.tagtree.selection())
+        self.refresh()
+
+    def on_nb_select(self, e=None):
+        if self.quiet:
+            return
+        sel = self.nbtree.selection()
+        if not sel:
+            return
+        key = self.nb_keys[int(sel[0][2:])]
+        if key == self.nb:
+            return
+        self.flush()
+        self.nb = key
+        self.close_note()
+        self.reload_notes()
+
+    def on_nb_menu(self, e):
+        row = self.nbtree.identify_row(e.y)
+        if not row:
+            return
+        key = self.nb_keys[int(row[2:])]
+        self.nb_menu_target = key
+        m = self.nbmenu
+        m.delete(0, "end")
+        if key == ALL:   # '모든 노트'는 노트북이 아니므로 최상위에 새 노트북을 만든다
+            m.add_command(label="새 노트북 만들기", command=self.add_notebook)
+        else:            # 저장 폴더(최상위)도 노트북처럼 상위가 될 수 있다
+            m.add_command(label="하위 노트북 만들기", command=lambda: self.add_notebook(parent=key, show_parent=True))
+        if key != ALL:
+            m.add_command(label="저장 폴더 전체 삭제(휴지통)" if key == "" else "노트북 삭제(휴지통)", command=self.delete_notebook)
+        m.tk_popup(e.x_root, e.y_root)
+
+    def add_subnotebook(self):
+        """고른 노트북(저장 폴더 자체 포함) 안에 하위 노트북을 만든다. '모든 노트'를 골랐으면 최상위에 만든다."""
+        parent = "" if self.nb == ALL else self.nb
+        self.add_notebook(parent=parent, show_parent=self.nb != ALL)
+
+    def add_notebook(self, parent="", show_parent=False):
+        where = f"\n상위: {self.nb_label(parent)}" if (parent or show_parent) else ""
+        name = simpledialog.askstring("새 하위 노트북" if (parent or show_parent) else "새 노트북", "노트북 이름" + where, parent=self.root)
+        if not name or not name.strip():
+            return
+        try:
+            folder = self.store.create_notebook(name, parent)
+        except OSError as ex:
+            return messagebox.showerror(APP, f"노트북을 만들지 못했습니다.\n{ex}")
+        self.flush()
+        self.close_note()
+        self.nb = folder
+        self.reload_notes()
+
+    def delete_notebook(self):
+        key = self.nb_menu_target
+        if key is None:
+            sel = self.nbtree.selection()
+            key = self.nb_keys[int(sel[0][2:])] if sel else None
+        self.nb_menu_target = None
+        if key in (None, ALL):
+            return
+        if key == "":
+            return self.delete_root()
+        if not messagebox.askyesno(APP, f"노트북 \"{self.nb_label(key)}\"을(를) 휴지통으로 보낼까요?\n(하위 노트북과 안의 노트도 함께 갑니다)", parent=self.root):
+            return
+        self.flush()
+        try:
+            self.store.delete_notebook(key)
+        except OSError as ex:
+            return messagebox.showerror(APP, str(ex))
+        if self.nb == key or self.nb.startswith(key + "/"):
+            self.nb = ALL
+        self.close_note()
+        self.reload_notes()
+
+    def delete_root(self):
+        """저장 폴더(scrapbook) 자체를 통째로 휴지통으로 보낸다. 빈 폴더는 다시 만들어 앱이 계속 동작하게 한다."""
+        root = self.store.root
+        books = self.store.notebooks()
+        inside = os.path.normcase(os.path.abspath(self.store.media_dir)).startswith(os.path.normcase(os.path.abspath(root)) + os.sep)
+        msg = (f"저장 폴더 \"{self.store.root_name}\" 전체를 휴지통으로 보낼까요?\n\n{root}\n\n"
+               f"안의 노트 {len(self.all_notes)}개, 노트북 {len(books)}개"
+               + (", 리소스 폴더(그림)" if inside else "") + ", 노트 버전 기록이 모두 함께 갑니다.\n"
+               + ("" if inside else "(리소스 폴더는 저장 폴더 밖에 있어서 그대로 남습니다.)\n")
+               + "\n휴지통에서 복원할 수 있습니다.")
+        if not messagebox.askyesno(APP, msg, icon="warning", parent=self.root):
+            return
+        self.flush()
+        try:
+            self.store.delete_root()
+        except (OSError, ValueError) as ex:
+            return messagebox.showerror(APP, str(ex), parent=self.root)
+        self.hist, self.hpos = [], -1
+        self.nb, self.tag = ALL, None
+        self.close_note()
+        self.reload_notes()
+        self.status.config(text="저장 폴더를 휴지통으로 보냈습니다. 빈 폴더를 다시 만들어 두었습니다.")
+
+    def choose_root(self):
+        d = filedialog.askdirectory(parent=self.root, initialdir=self.store.root, title="노트를 저장할 폴더")
+        if not d:
+            return False
+        self.flush()
+        self.store.set_root(d)
+        self.nb, self.tag = ALL, None
+        self.hist, self.hpos = [], -1
+        self.close_note()
+        self.reload_notes()
+        return True
+
+    # ------------------------------------------------------------ 목록: 불러오기·검색·그리기
+    def reload_notes(self, background=False):
+        """저장 폴더의 노트를 다시 읽는다. background=True 면 창을 먼저 보이고 뒤에서 읽는다(노트가 많을 때 시작이 느려지지 않게)."""
+        self.load_gen += 1
+        gen = self.load_gen
+        if not background:
+            return self.apply_loaded(self.read_all_notes())
+        self.count.config(text="노트를 불러오는 중…")
+        q = queue.Queue()
+
+        def work():
+            try:
+                q.put(("ok", self.read_all_notes()))
+            except Exception as ex:  # noqa: BLE001
+                q.put(("err", str(ex)))
+        threading.Thread(target=work, daemon=True).start()
+
+        def poll():
+            try:
+                kind, val = q.get_nowait()
+            except queue.Empty:
+                d, t = self.load_prog
+                if t:
+                    self.count.config(text=f"처음 한 번 색인을 만드는 중… {d:,} / {t:,}")
+                return self.root.after(80, poll)
+            if gen != self.load_gen:
+                return    # 그 사이에 다른 읽기가 있었으면 버린다
+            if kind == "ok":
+                self.apply_loaded(val)
+            else:
+                self.count.config(text="노트를 불러오지 못했습니다: " + val)
+        self.root.after(80, poll)
+
+    def read_all_notes(self):
+        self.load_prog = (0, 0)
+        return self.store.list_notes(ALL, tagger=note_tags, progress=lambda d, t: setattr(self, "load_prog", (d, t)))
+
+    def apply_loaded(self, loaded):
+        keep = self.cur["path"] if self.cur else None
+        self.all_notes = loaded
+        self.notes = [n for n in self.all_notes if self.in_nb(n)]
+        self.cur = next((n for n in self.notes if n["path"] == keep), None) if keep else None
+        self.reload_notebooks()
+        self.reload_tags()
+        self.refresh()
+
+    def schedule_search(self):
+        if self.search_job:
+            self.root.after_cancel(self.search_job)
+        self.search_job = self.root.after(180, self.refresh)
+
+    def refresh(self, keep_page=False):
+        """검색·정렬을 다시 하고 목록을 그린다. keep_page=True 는 자동 저장 때처럼 보던 자리를 유지"""
+        self.search_job = None
+        pool = [n for n in self.notes if self.tag in n["tags"]] if self.tag else self.notes
+        self.results, self.words = search.run(pool, self.q.get(), self.sort, self.asc, self.d_from.get(), self.d_to.get(), index=self.store)
+        self.draw_list(keep_scroll=keep_page)
+
+    def draw_list(self, keep_scroll=False):
+        total = len(self.results)
+        searching = self.q.get().strip() or self.d_from.get().strip() or self.d_to.get().strip() or self.tag
+        text = f"{len(self.notes):,}개 중 {total:,}개 찾음" if searching else f"{total:,}개의 노트"
+        if self.tag:
+            text += f"  ·  # {self.tag}"
+        self.count.config(text=text)
+        L = self.lst
+        top = L.yview()[0] if keep_scroll else 0.0   # 자동 저장 때만 스크롤을 유지하고, 정렬·검색·노트북을 바꾸면 맨 위부터
+        want = max(LIST_CHUNK, self.rendered) if keep_scroll else LIST_CHUNK
+        L.config(state="normal")
+        L.delete("1.0", "end")
+        L.config(state="disabled")
+        self.cards, self.card_starts, self.rendered, self.next_line = [], [], 0, 1
+        self.append_cards(want)
+        L.yview_moveto(top)
+        self.mark_selected()
+        for k, b in self.sort_btns.items():
+            arrow = ""
+            if self.sort == k:   # 제목순은 기본이 가나다(오름차순)라서 화살표 뜻이 반대
+                arrow = " ↑" if (self.asc != (k == "title")) else " ↓"
+            b.config(text=self.sort_names[k] + arrow)
+            b.set_on(self.sort == k)
+
+    def append_cards(self, count=LIST_CHUNK):
+        """검색 결과의 다음 count 개를 목록 아래에 이어 붙인다"""
+        chunk = self.results[self.rendered:self.rendered + count]
+        if not chunk:
+            return
+        L = self.lst
+        first_line = self.next_line
+        L.config(state="normal")
+        for n in chunk:
+            a = self.next_line
+            L.insert("end", n["title"] + "\n", "title")
+            shown_t = n.get("ctime", n["mtime"]) if self.sort == "ctime" else n["mtime"]   # 생성순이면 생성 시각을 보여 준다
+            meta = time.strftime("%Y.%m.%d %H:%M", time.localtime(shown_t))
+            if self.nb == ALL or n["nb"] != self.nb:   # 모든 노트이거나 하위 노트북의 노트면 어느 노트북인지 보여 준다
+                meta += "   " + self.nb_label(n["nb"])
+            if self.words:   # 검색 중일 때만 일치한 부분을 보여 준다
+                L.insert("end", meta + "\n", "meta")
+                L.insert("end", search.snippet(n.read(), self.words) + "\n", "snip")
+                lines = 3
+            else:            # 평소에는 제목과 날짜만
+                L.insert("end", meta + "\n", ("meta", "pad"))
+                lines = 2
+            L.insert("end", "\n", "sep")
+            b = a + lines - 1
+            self.cards.append((a, b, n))
+            self.card_starts.append(a)
+            self.next_line = b + 2
+        self.rendered += len(chunk)
+        for w in self.words:   # 방금 붙인 부분에서만 검색어를 강조
+            if not w:
+                continue
+            pos = f"{first_line}.0"
+            while True:
+                pos = L.search(w, pos, "end", nocase=True)
+                if not pos:
+                    break
+                end = f"{pos}+{len(w)}c"
+                L.tag_add("hl", pos, end)
+                pos = end
+        L.config(state="disabled")
+
+    def more_cards(self):
+        """스크롤이 목록 끝에 가까워지면 다음 노트들을 이어서 그린다"""
+        if self.rendered >= len(self.results) or self.lst.yview()[1] < 0.85:
+            return
+        self.append_cards()
+        self.mark_selected()
+
+    def mark_selected(self):
+        L = self.lst
+        L.tag_remove("selcard", "1.0", "end")
+        if self.cur:
+            for a, b, n in self.cards:
+                if n["path"] == self.cur["path"]:
+                    L.tag_add("selcard", f"{a}.0", f"{b + 1}.0")
+                    break
+
+    def card_at(self, e):
+        line = int(self.lst.index(f"@{e.x},{e.y}").split(".")[0])
+        i = bisect.bisect_right(self.card_starts, line) - 1
+        if i >= 0 and line <= self.cards[i][1]:
+            return self.cards[i][2]
+        return None
+
+    def on_list_click(self, e):
+        n = self.card_at(e)
+        if n:
+            self.open_note(n)
+        # 클릭하면 키보드(PageUp/PageDown)가 목록에 먹히게. 노트를 여는 동안 옮겨 간 포커스를 되찾는다.
+        self.lst.focus_set()
+        self.root.after_idle(self.lst.focus_set)
+        return "break"
+
+    def on_list_menu(self, e):
+        """노트 우클릭 메뉴 (조플린: 삭제 · 노트북으로 이동 · 링크 복사 …)"""
+        n = self.card_at(e)
+        if not n:
+            return
+        self.open_note(n)
+        self.ctx_note = n
+        lm, mm = self.listmenu, self.movemenu
+        lm.delete(0, "end")
+        mm.delete(0, "end")
+        for key in [""] + self.store.notebooks():
+            label = ("    " * key.count("/") + (self.nb_short(key) if key else self.store.root_name))
+            mm.add_command(label=label, command=lambda k=key: self.move_note(n, k), state="disabled" if key == n["nb"] else "normal")
+        lm.add_cascade(label="노트북으로 이동", menu=mm)
+        lm.add_command(label="노트 링크 복사", command=lambda: (self.root.clipboard_clear(), self.root.clipboard_append(f"[[{n['title']}]]")))
+        lm.add_command(label="노트 속성…", command=self.show_properties)
+        lm.add_command(label="노트 버전…", command=self.show_versions)
+        lm.add_command(label="파일 위치 열기", command=lambda: subprocess.Popen(["explorer", "/select,", os.path.normpath(n["path"])]))
+        lm.add_separator()
+        lm.add_command(label="삭제", command=self.delete_note)
+        lm.tk_popup(e.x_root, e.y_root)
+        return "break"
+
+    def move_note(self, n, nb):
+        self.flush()
+        try:
+            new = self.store.move(n["path"], nb)
+        except OSError as ex:
+            return messagebox.showerror(APP, f"노트를 옮기지 못했습니다.\n{ex}")
+        if self.cur and self.cur["path"] == n["path"]:
+            self.cur = None
+        self.reload_notes()
+        moved = next((x for x in self.all_notes if x["path"] == new), None)
+        if moved and moved in self.notes:
+            self.open_note(moved)
+
+    def sort_by(self, mode):
+        if self.sort == mode:
+            self.asc = not self.asc
+        else:
+            self.sort, self.asc = mode, False
+        self.refresh()
+
+    def toggle_date(self):
+        if self.date_row.winfo_ismapped():
+            self.date_row.pack_forget()
+        else:
+            self.date_row.pack(fill="x", before=self.count, pady=(6, 0))
+        self.b_date.set_on(self.date_row.winfo_ismapped())
+
+    # ------------------------------------------------------------ 노트 열기·저장
+    def set_text(self, text):
+        self.loading = True
+        self.text.delete("1.0", "end")
+        self.text.insert("1.0", text)
+        self.text.edit_reset()
+        self.text.edit_modified(False)
+        self.loading = False
+
+    def open_note(self, n, record=True):
+        self.flush()
+        if self.cur is not None and self.cur is not n and not self.dirty:
+            self.cur.pop("body", None)   # 연 적 있는 노트의 본문이 계속 쌓이지 않게
+        self.cur = n
+        if record and not (self.hist and self.hpos >= 0 and self.hist[self.hpos] == n["path"]):
+            del self.hist[self.hpos + 1:]
+            self.hist.append(n["path"])
+            self.hpos = len(self.hist) - 1
+        self.snap_done = False
+        self.show_empty(False)
+        self.title_var.set(n["title"])
+        # 한 줄이 아주 긴 글(base64 그림 등)은 줄바꿈 계산이 수십 초 걸려서 줄바꿈을 끈다
+        longest = max((len(x) for x in n["body"].split("\n")), default=0)
+        self.text.config(wrap="none" if longest > 20000 else "word")
+        self.set_text(n["body"])
+        self.text.yview_moveto(0)
+        self.dirty = False
+        self.update_status()
+        self.render()
+        self.mark_selected()
+        count, size = st.embedded_images(n["body"])
+        if count and size > 200_000 and n["path"] not in self.declined:
+            self.root.after(150, lambda: self.offer_split(n, count, size))
+
+    def offer_split(self, n, count, size):
+        """본문에 통째로 박힌 그림을 _resources 파일로 분리할지 묻는다(분리해도 그림은 그대로)"""
+        if self.cur is not n:
+            return
+        self.declined.add(n["path"])
+        msg = (f"이 노트에는 그림 {count}개({size / 1_000_000:.1f}MB)가 글자로 본문에 박혀 있어 열 때 느립니다.\n\n"
+               "그림을 리소스 폴더의 파일로 분리할까요?\n(그림은 그대로 보이고 노트는 작아집니다)")
+        if not messagebox.askyesno(APP, msg, parent=self.root):
+            return
+        body, moved = self.store.extract_images(self.text.get("1.0", "end-1c"), n["nb"])
+        self.text.config(wrap="word")
+        self.set_text(body)
+        self.dirty = True
+        self.flush()
+        self.render()
+        self.status.config(text=f"그림 {moved}개를 리소스 폴더로 옮겼습니다")
+
+    def go(self, step):
+        """이동 > 뒤로 / 앞으로 (본 노트 기록)"""
+        pos = self.hpos + step
+        while 0 <= pos < len(self.hist):
+            path = self.hist[pos]
+            n = next((x for x in self.all_notes if x["path"] == path), None)
+            if n:
+                if n not in self.notes:
+                    self.nb = ALL
+                    self.reload_notes()
+                    n = next((x for x in self.notes if x["path"] == path), None)
+                self.hpos = pos
+                return self.open_note(n, record=False)
+            pos += step
+
+    def close_note(self):
+        self.cur = None
+        self.dirty = False
+        self.show_empty(True)
+
+    def on_modified(self, e=None):
+        if not self.text.edit_modified():
+            return
+        self.text.edit_modified(False)
+        if self.loading or not self.cur:
+            return
+        self.dirty = True
+        if self.save_job:
+            self.root.after_cancel(self.save_job)
+        self.save_job = self.root.after(600, self.flush)
+        if self.mode != "edit":
+            if self.render_job:
+                self.root.after_cancel(self.render_job)
+            self.render_job = self.root.after(200 if len(self.text.get("1.0", "end")) < 40000 else 700, self.render)
+
+    def flush(self):
+        if self.save_job:
+            self.root.after_cancel(self.save_job)
+            self.save_job = None
+        if not (self.cur and self.dirty):
+            return
+        body = self.text.get("1.0", "end-1c")
+        try:
+            # 노트를 연 뒤 첫 저장은 간격과 상관없이 이전 내용을 버전으로 남긴다
+            written = self.store.save(self.cur["path"], body, force=not self.snap_done)
+        except OSError as ex:
+            return self.status.config(text="저장 실패: " + str(ex))
+        self.snap_done = True
+        self.dirty = False
+        old_tags = self.cur.get("tags", set())
+        self.cur["body"] = written
+        self.cur["mtime"] = time.time()
+        self.cur["tags"] = note_tags(body)
+        self.cur.pop("_hay", None)
+        if self.cur["tags"] != old_tags:
+            self.reload_tags()
+        self.refresh(keep_page=True)
+        self.update_status("저장됨 " + time.strftime("%H:%M:%S"))
+
+    def update_status(self, extra=""):
+        if self.cur:
+            tags = "   ".join("# " + t for t in sorted(self.cur.get("tags", ()))[:6])
+            self.status.config(text=f"{self.nb_label(self.cur['nb'])}/{os.path.basename(self.cur['path'])}   ·   "
+                                    f"{len(self.cur['body']):,}자" + (f"   ·   {tags}" if tags else "")
+                                    + (f"   ·   {extra}" if extra else ""))
+
+    def commit_title(self):
+        if not self.cur:
+            return
+        new = self.title_var.get().strip()
+        if new == self.cur["title"]:
+            return
+        self.flush()
+        try:
+            title, path = self.store.rename(self.cur["path"], new)
+        except OSError as ex:
+            self.title_var.set(self.cur["title"])
+            return messagebox.showerror(APP, f"제목을 바꾸지 못했습니다.\n{ex}")
+        self.title_var.set(title)
+        old = self.cur["path"]
+        self.cur["title"], self.cur["path"] = title, path
+        self.cur.pop("_hay", None)
+        self.hist = [path if p == old else p for p in self.hist]
+        self.reload_notes()
+        self.update_status()
+
+    def new_note(self):
+        self.flush()
+        self.q.set("")
+        self.d_from.set("")
+        self.d_to.set("")
+        self.tag = None
+        nb = "" if self.nb == ALL else self.nb
+        try:
+            made = self.store.create_note(nb)
+        except OSError as ex:
+            return messagebox.showerror(APP, f"노트를 만들지 못했습니다.\n{ex}")
+        self.close_note()
+        self.reload_notes()
+        n = next((x for x in self.notes if x["path"] == made["path"]), None)
+        if n:
+            self.open_note(n)
+            self.title_entry.focus_set()
+            self.title_entry.select_range(0, "end")
+
+    def delete_note(self):
+        if not self.cur or not messagebox.askyesno(APP, "이 노트를 휴지통으로 보낼까요?", parent=self.root):
+            return
+        if self.save_job:
+            self.root.after_cancel(self.save_job)
+            self.save_job = None
+        path = self.cur["path"]
+        self.dirty = False
+        try:
+            self.store.delete_note(path)
+        except OSError as ex:
+            return messagebox.showerror(APP, str(ex))
+        self.hist = [p for p in self.hist if p != path]
+        self.hpos = min(self.hpos, len(self.hist) - 1)
+        self.close_note()
+        self.reload_notes()
+
+    # ------------------------------------------------------------ 보기 모드·렌더링 (위키나루)
+    def set_mode(self, m):
+        self.mode = m
+        self.v_mode.set(m)
+        for k, b in self.mode_btns.items():
+            b.set_on(k == m)
+        for w in (self.edit_frame, self.view_frame):
+            w.grid_forget()
+        if m in ("edit", "split"):
+            self.edit_frame.grid(row=0, column=0, sticky="nsew")
+        if m in ("view", "split"):
+            self.view_frame.grid(row=0, column=1 if m == "split" else 0, sticky="nsew")
+        two = m == "split"
+        self.body.grid_columnconfigure(0, weight=1, uniform="pane" if two else "")
+        self.body.grid_columnconfigure(1, weight=1 if two else 0, uniform="pane" if two else "")
+        self.save_view()
+        self.render()
+
+    def cycle_mode(self):
+        self.set_mode({"edit": "split", "split": "view", "view": "edit"}[self.mode])
+
+    def render(self):
+        self.render_job = None
+        if not self.cur or self.mode == "edit":
+            return
+        title = self.title_var.get()
+        try:
+            doc = wikiconv.parse(self.text.get("1.0", "end-1c"), bulk.SYNTAX[FMT], title)
+            segs = preview.layout(doc)
+        except Exception as ex:  # noqa: BLE001  (읽기 도구가 못 읽은 글도 편집은 계속할 수 있게)
+            return self.status.config(text="렌더링 오류: " + str(ex))
+        self.draw_view(segs)
+
+    def draw_view(self, segs):
+        v = self.view
+        top = v.yview()[0]
+        v.config(state="normal")
+        v.delete("1.0", "end")
+        self.links.clear()
+        self.photos.clear()
+        for t, tags, extra in segs:
+            tg = list(tags)
+            if "b" in tg and "i" in tg:
+                tg.append("bi")
+            if extra and extra[0] == "link":
+                key = "L%d" % len(self.links)
+                self.links[key] = extra[1:]
+                tg.append(key)
+            if extra and extra[0] == "img" and self.show_image(extra[1], extra[3] if len(extra) > 3 else 0):
+                if len(extra) > 5:   # 링크로 감싼 그림(썸네일 등): 그림을 누르면 그 링크가 열린다
+                    key = "L%d" % len(self.links)
+                    self.links[key] = extra[4:6]
+                    v.tag_add(key, "end-2c", "end-1c")
+                    v.tag_add("link", "end-2c", "end-1c")
+                continue
+            if extra and extra[0] == "img" and len(extra) > 5:   # 링크로 감싼 그림을 아직/못 불러왔으면 글자 칩이 링크 노릇을 한다
+                key = "L%d" % len(self.links)
+                self.links[key] = extra[4:6]
+                tg += [key, "link"]
+            v.insert("end", t, tuple(tg))
+        v.config(state="disabled")
+        v.yview_moveto(top)
+
+    def data_image(self, src):
+        """data:image/...;base64,… 주소 → 화면에 쓸 PhotoImage(실패하면 None). GIF·PNG 는 바로, 그 밖(JPEG 등)은 PNG 로 바꿔서"""
+        m = re.match(r"(?is)^data:image/([a-z0-9.+-]+)[^,]*;base64,(.*)$", src.strip())
+        if not m:
+            return None
+        kind, payload = m.group(1).lower(), re.sub(r"\s+", "", m.group(2))
+        try:
+            if kind in ("gif", "png"):
+                return tk.PhotoImage(data=payload)
+            raw = base64.b64decode(payload)
+            path = os.path.join(ed.image_cache_dir(), hashlib.sha1(raw).hexdigest()[:20] + "." + ("jpg" if kind in ("jpeg", "jpg") else kind))
+            if not os.path.isfile(path):
+                with open(path, "wb") as f:
+                    f.write(raw)
+            return tk.PhotoImage(file=ed.local_image_png(path))
+        except (tk.TclError, OSError, ValueError):
+            return None
+
+    def find_local_image(self, src):
+        """노트 속 그림 주소 → 실제 파일 경로(없으면 None). 상대 경로, %인코딩, file:///, 조플린 ':/아이디' 를 다 받는다."""
+        if src.lower().startswith("file:///"):
+            src = src[8:]
+        m = re.match(r"^:/([0-9a-fA-F]{32})", src)
+        if m:   # 조플린 내부 주소 → 리소스 폴더의 <아이디>.* 파일
+            media = self.store.media_dir
+            hits = [f for f in os.listdir(media) if f.lower().startswith(m.group(1).lower())] if os.path.isdir(media) else []
+            return os.path.join(media, hits[0]) if hits else None
+        src = unquote(src.split("#")[0])
+        if src.startswith("?"):
+            return None
+        base = os.path.dirname(self.cur["path"]) if self.cur else self.store.root
+        cands = [os.path.normpath(os.path.join(base, src.replace("/", os.sep)))]
+        cands.append(os.path.normpath(os.path.join(base, src.split("?")[0].replace("/", os.sep))))
+        cands.append(os.path.join(self.store.media_dir, os.path.basename(src.split("?")[0])))   # 노트가 옮겨져 링크가 어긋났을 때
+        return next((c for c in cands if os.path.isfile(c)), None)
+
+    def photo_from_file(self, path):
+        """그림 파일 → PhotoImage. 형식은 확장자가 아니라 내용으로 알아본다. PNG·GIF 는 바로, 그 밖(JPEG·BMP·WebP 등)은 PNG 로 바꿔서"""
+        kind = ed.sniff_image(path)
+        try:
+            if kind in ("png", "gif"):
+                try:
+                    return tk.PhotoImage(file=path)
+                except tk.TclError:   # Tk 가 못 읽는 PNG(16비트 등)
+                    pass
+            return tk.PhotoImage(file=ed.local_image_png(path))
+        except (tk.TclError, OSError):
+            return None
+
+    def show_image(self, src, width=0):
+        """그림으로 보여 준다: 같은 폴더·리소스 폴더의 파일, http(s) 주소, 본문에 박힌 data: 그림. 안 되면 글자 칩으로 남는다."""
+        src = src.strip()
+        if src[:5].lower() == "data:":   # 노트 본문에 base64 로 박힌 그림
+            img = self.data_image(src)
+            return self.put_image(img, width) if img is not None else False
+        if re.match(r"(?i)^https?://", src):
+            path = self.remote_image(src)
+            if not path:
+                return False
+            img = self.photo_from_file(path)
+        else:
+            if re.match(r"(?i)^[a-z][a-z0-9+.-]+:", src) and not re.match(r"(?i)^(file:///|:/)", src):
+                return False   # mailto: 같은 그림이 아닌 주소
+            path = self.find_local_image(src)
+            if not path:
+                return False
+            img = self.photo_from_file(path)
+        return self.put_image(img, width) if img is not None else False
+
+    def put_image(self, img, width=0):
+        """그림을 렌더링 화면에 넣는다. HTML 의 width 가 있으면 그 너비에 가깝게(정수 배로만 줄일 수 있다), 없으면 너무 클 때만 줄인다"""
+        if width and img.width() > width:
+            img = img.subsample(max(1, round(img.width() / width)))
+        elif img.width() > ed.IMG_MAX_W:
+            img = img.subsample(math.ceil(img.width() / ed.IMG_MAX_W))
+        self.photos.append(img)
+        self.view.image_create("end", image=img)
+        return True
+
+    def remote_image(self, url):
+        s = self.imgs.get(url)
+        if s is None:
+            self.imgs[url] = ("pending",)
+
+            def job():
+                try:
+                    self.img_q.put((url, "ok", ed.fetch_image(url)))
+                except Exception as ex:  # noqa: BLE001
+                    self.img_q.put((url, "fail", str(getattr(ex, "reason", None) or ex)))
+            threading.Thread(target=job, daemon=True).start()
+            self.root.after(150, self.poll_images)
+            return None
+        return s[1] if s[0] == "ok" else None
+
+    def poll_images(self):
+        changed = False
+        try:
+            while True:
+                url, kind, val = self.img_q.get_nowait()
+                self.imgs[url] = (kind, val)
+                changed = True
+        except queue.Empty:
+            pass
+        if changed:
+            self.render()
+        if any(v[0] == "pending" for v in self.imgs.values()):
+            self.root.after(200, self.poll_images)
+
+    def on_view_click(self, e):
+        self.view.focus_set()   # 클릭하면 키보드(PageUp/PageDown, 방향키)가 이 화면에 먹히게
+        idx = self.view.index(f"@{e.x},{e.y}")
+        for t in self.view.tag_names(idx):
+            if t in self.links:
+                kind, target = self.links[t]
+                return self.follow(kind, target)
+
+    def open_url(self, url):
+        """주소를 연다. 유튜브 영상은 설정에 따라 작은 재생 창(Edge 앱 창, 주소창 없음)으로, 아니면 기본 브라우저로."""
+        if sys.platform == "win32" and st.read_config().get("video_open", "app") == "app" and wikiconv.tree.youtube_id(url):
+            for exe in (os.path.expandvars(r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe"),
+                        os.path.expandvars(r"%ProgramFiles%\Microsoft\Edge\Application\msedge.exe")):
+                if os.path.isfile(exe):
+                    subprocess.Popen([exe, f"--app={url}", "--window-size=980,640"])
+                    return
+        webbrowser.open(url)
+
+    def follow(self, kind, target):
+        if kind == "url":
+            if re.match(r"(?i)^(https?|ftp|mailto):", target):
+                self.open_url(target)
+            return
+        # 위키 링크 [[문서]] → 같은 노트북의 같은 이름 노트
+        want = target.split("#")[0].strip().lower()
+        pool = [n for n in self.all_notes if n["title"].lower() == want]
+        pool.sort(key=lambda n: n["nb"] != (self.cur["nb"] if self.cur else ""))
+        if pool:
+            path = pool[0]["path"]
+            if pool[0] not in self.notes:
+                self.nb = ALL
+                self.reload_notes()
+            return self.open_note(next(n for n in self.notes if n["path"] == path))
+        if messagebox.askyesno(APP, f"\"{target}\" 노트가 없습니다. 새로 만들까요?", parent=self.root):
+            nb = self.cur["nb"] if self.cur else ""
+            made = self.store.create_note(nb, target.split("#")[0].strip() or "제목 없음")
+            self.reload_notes()
+            n = next((x for x in self.notes if x["path"] == made["path"]), None)
+            if n:
+                self.open_note(n)
+
+    # ------------------------------------------------------------ 서식 도구 (위키나루)
+    def sel_range(self, whole_lines=False):
+        t = self.text
+        if t.tag_ranges("sel"):
+            a, b = t.index("sel.first"), t.index("sel.last")
+        else:
+            a = b = t.index("insert")
+        if whole_lines:
+            if b != a and t.index(f"{b} linestart") == b:   # 줄 맨 앞에서 끝난 선택은 그 줄을 빼기
+                b = t.index(f"{b} - 1c")
+            a, b = t.index(f"{a} linestart"), t.index(f"{b} lineend")
+        return a, b
+
+    def replace(self, a, b, new, s=None, e=None):
+        t = self.text
+        t.edit_separator()
+        t.config(autoseparators=False)   # 지우기+넣기를 되돌리기 한 번으로
+        t.delete(a, b)
+        t.insert(a, new)
+        t.config(autoseparators=True)
+        t.edit_separator()
+        if s is not None:
+            t.tag_remove("sel", "1.0", "end")
+            t.tag_add("sel", f"{a}+{s}c", f"{a}+{e}c")
+            t.mark_set("insert", f"{a}+{e}c")
+        t.focus_set()
+
+    def run_action(self, action):
+        if not self.cur:
+            return
+        if self.mode == "view":
+            self.set_mode("split")
+        kind, *rest = action
+        arg = rest[0] if rest else None
+        if kind == "wrap":
+            before, after, default = WRAP_X.get(arg) or (*ed.WRAP[FMT][arg], ed.WRAP_DEFAULT[arg])
+            a, b = self.sel_range()
+            new, s, e = ed.wrap_text(self.text.get(a, b), before, after, default)
+            self.replace(a, b, new, s, e)
+        elif kind == "line":
+            spec = LINE_X.get(arg) or ed.LINE[FMT][arg]
+            holder = PLACEHOLDER_X.get(arg) or ed.PLACEHOLDER[arg]
+            a, b = self.sel_range(True)
+            lines = self.text.get(a, b).split("\n")
+            if not any(ln.strip() for ln in lines):   # 빈 줄: 표시와 자리 글을 넣고 그 글을 골라 둔다
+                head = spec[0].format(n=1)
+                new = "\n".join([head + holder] + lines[1:])
+                self.replace(a, b, new, len(head), len(head) + len(holder))
+            else:
+                new = "\n".join(ed.toggle_prefix(lines, *spec))
+                self.replace(a, b, new, 0, len(new))
+        elif kind == "heading":
+            a, b = self.sel_range(True)
+            lines = self.text.get(a, b).split("\n")
+            if arg > 0 and not any(ln.strip() for ln in lines):
+                new = ed.set_heading("제목", arg, FMT)
+                s = new.index("제목")
+                self.replace(a, b, new, s, s + 2)
+            else:
+                new = "\n".join(ed.set_heading(ln, arg, FMT) if ln.strip() else ln for ln in lines)
+                self.replace(a, b, new, 0, len(new))
+        elif kind == "indent":
+            a, b = self.sel_range(True)
+            lines = self.text.get(a, b).split("\n")
+            if arg > 0:
+                new = "\n".join(("  " + ln) if ln.strip() else ln for ln in lines)
+            else:
+                new = "\n".join(re.sub(r"^(  |\t)", "", ln, count=1) for ln in lines)
+            self.replace(a, b, new, 0, len(new))
+        elif kind == "tpl":
+            tpl, default = TPL[arg]
+            a, b = self.sel_range()
+            sel = self.text.get(a, b)
+            line_empty = not self.text.get(f"{a} linestart", f"{a} lineend").strip()
+            body = sel or default
+            out = tpl.replace("{}", body, 1)
+            at_a, at_b, pre = (a, b, "") if (sel or line_empty) else (self.text.index(f"{a} lineend"),) * 2 + ("\n\n",)
+            if "{}" in tpl and body:
+                s0 = len(pre) + out.index(body)
+                self.replace(at_a, at_b, pre + out + ("" if sel else "\n"), s0, s0 + len(body))
+            else:
+                self.replace(at_a, at_b, pre + out + ("" if sel else "\n"))
+        elif kind == "datetime":
+            self.insert_datetime()
+        elif kind == "footnote":
+            t = self.text
+            nums = [int(x) for x in re.findall(r"\[\^(\d+)\]", t.get("1.0", "end-1c"))]
+            n = (max(nums) + 1) if nums else 1
+            t.edit_separator()
+            t.insert("insert", f"[^{n}]")
+            whole = t.get("1.0", "end-1c")
+            tail = "" if whole.endswith("\n\n") else ("\n" if whole.endswith("\n") else "\n\n")
+            t.insert("end-1c", f"{tail}[^{n}]: 각주 내용")
+            end = t.index("end-1c")
+            t.edit_separator()
+            t.tag_remove("sel", "1.0", "end")
+            t.tag_add("sel", f"{end} - 5c", end)
+            t.mark_set("insert", end)
+            t.see(end)
+            t.focus_set()
+        elif kind == "block":
+            if arg == "codeblock":
+                a, b = self.sel_range()
+                body = self.text.get(a, b) or "코드"
+                self.replace(a, b, ed.BLOCK["codeblock"][FMT].replace("{}", body, 1))
+            else:
+                a, _ = self.sel_range()
+                at = self.text.index(f"{a} lineend")
+                empty = not self.text.get(f"{a} linestart", at).strip()
+                self.replace(at, at, ("" if empty else "\n\n") + ed.BLOCK[arg][FMT] + "\n")
+
+    # ------------------------------------------------------------ 웹 클리퍼 서버
+    def start_clipper(self):
+        if self.srv or not st.read_config().get("clipEnabled", True):
+            return
+        self.srv, self.port = clipserver.start(self.store, st.clipper_token, lambda: self.clip_q.put(1))
+
+    def stop_clipper(self):
+        if self.srv:
+            try:
+                self.srv.shutdown()
+                self.srv.server_close()
+            except Exception:  # noqa: BLE001
+                pass
+        self.srv = self.port = None
+
+    def poll_clip(self):
+        got = False
+        try:
+            while True:
+                self.clip_q.get_nowait()
+                got = True
+        except queue.Empty:
+            pass
+        if got:
+            self.reload_notes()
+            self.status.config(text="웹 클리퍼에서 새 노트가 들어왔습니다 " + time.strftime("%H:%M:%S"))
+        self.root.after(600, self.poll_clip)
+
+    # ------------------------------------------------------------ 노트 속성 (조플린의 ⓘ)
+    def show_properties(self):
+        if not self.cur:
+            return messagebox.showinfo(APP, "먼저 노트를 여세요.", parent=self.root)
+        self.flush()
+        n = self.cur
+        meta = st.parse_meta(n["body"])
+        top = tk.Toplevel(self.root)
+        top.title("노트 속성")
+        top.configure(bg=C["bg"])
+        top.transient(self.root)
+        top.resizable(False, False)
+        top.geometry(f"+{self.root.winfo_x() + 160}+{self.root.winfo_y() + 90}")
+        f = tk.Frame(top, bg=C["bg"], padx=26, pady=20)
+        f.pack()
+        tk.Label(f, text="노트 속성", bg=C["bg"], fg=C["text"], font=(self.ui, 14, "bold")).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 14))
+        fmt = lambda t: time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(t))  # noqa: E731
+        state = {"r": 1}
+
+        def row(label, value="", btn=None, link=None, copyable=False):
+            r = state["r"]
+            state["r"] += 1
+            tk.Label(f, text=label, bg=C["bg"], fg=C["muted"], font=(self.ui, 10, "bold"), anchor="nw", width=9).grid(row=r, column=0, sticky="nw", pady=5)
+            if copyable:
+                var = tk.StringVar(value=value)
+                tk.Entry(f, textvariable=var, state="readonly", width=46, relief="flat", bd=0, bg=C["panel"], readonlybackground=C["panel"],
+                         fg=C["text"], highlightthickness=1, highlightbackground=C["line"], font=(self.ui, 9)).grid(row=r, column=1, sticky="w", pady=4, ipady=3)
+            else:
+                v = tk.Label(f, text=value or "—", bg=C["bg"], fg=C["accent"] if link else C["text"], anchor="w", justify="left",
+                             wraplength=360, font=(self.ui, 10, "underline") if link else (self.ui, 10), cursor="hand2" if link else "")
+                v.grid(row=r, column=1, sticky="w", pady=5)
+                if link:
+                    v.bind("<Button-1>", lambda e: link())
+            if btn:
+                Btn(f, btn[0], btn[1], padx=8, pady=1).grid(row=r, column=2, sticky="w", padx=(8, 0))
+
+        def edit_time(kind):
+            label = "갱신됨" if kind == "updated" else "생성됨"
+            cur_t = n["mtime"] if kind == "updated" else n.get("ctime", n["mtime"])
+            ans = simpledialog.askstring(f"{label} 변경", "형식: 2023-03-21 20:24:00", initialvalue=fmt(cur_t), parent=top)
+            if not ans:
+                return
+            t = st.parse_time(ans)
+            if t is None:
+                return messagebox.showerror(APP, "날짜를 읽지 못했습니다. 예: 2023-03-21 20:24:00", parent=top)
+            try:
+                self.store.set_dates(n["path"], updated=t if kind == "updated" else None, created=t if kind == "created" else None)
+            except (OSError, ValueError) as ex:
+                return messagebox.showerror(APP, str(ex), parent=top)
+            path = n["path"]
+            top.destroy()
+            self.reload_notes()
+            again = next((x for x in self.notes if x["path"] == path), None)
+            if again:
+                self.open_note(again, record=False)
+                self.show_properties()
+
+        def copy(text):
+            self.root.clipboard_clear()
+            self.root.clipboard_append(text)
+        url = st.note_source(n["body"], meta)
+        nvers = len(self.store.versions(n["path"]))
+        row("제목", n["title"])
+        row("위치", self.nb_label(n["nb"]))
+        row("파일", n["path"], ("복사", lambda: copy(n["path"])), copyable=True)
+        row("갱신됨", fmt(n["mtime"]), ("✎", lambda: edit_time("updated")))
+        row("생성됨", fmt(n.get("ctime", n["mtime"])), ("✎", lambda: edit_time("created")) if meta["created"] else None)
+        if meta["fm"] and (meta["updated"] or meta["created"]):
+            row("날짜 출처", "노트 머리말(front matter)의 날짜")
+        else:
+            row("날짜 출처", "파일의 수정·생성 시각")
+        row("URL", url, link=(lambda: webbrowser.open(url)) if url else None)
+        if meta["author"]:
+            row("작성자", meta["author"])
+        tags = sorted(n.get("tags", ()))
+        row("태그", "   ".join("# " + t for t in tags))
+        text = n["body"]
+        row("크기", f"{len(text):,}자 · {text.count(chr(10)) + 1:,}줄")
+        row("노트 역사", f"이전 버전 {nvers}개 보기" if nvers else "저장된 이전 버전 없음",
+            link=(lambda: (top.destroy(), self.show_versions())) if nvers else None)
+        row("마크업", "Markdown")
+        bf = tk.Frame(f, bg=C["bg"])
+        bf.grid(row=state["r"], column=0, columnspan=3, sticky="e", pady=(16, 0))
+        Btn(bf, "닫기", top.destroy, kind="primary", padx=22, pady=5).pack()
+        top.bind("<Escape>", lambda e: top.destroy())
+
+    # ------------------------------------------------------------ 노트 버전
+    def apply_body(self, body):
+        """본문을 통째로 바꾸고(복원 등) 저장한다. 이전 내용은 호출하는 쪽에서 버전으로 남긴 뒤다."""
+        n = self.cur
+        self.set_text(body)
+        self.store.save(n["path"], body, versioned=False)
+        self.dirty = False
+        n["body"], n["mtime"], n["tags"] = body, time.time(), note_tags(body)
+        n.pop("_hay", None)
+        self.reload_tags()
+        self.refresh(keep_page=True)
+        self.render()
+        self.update_status("복원됨 " + time.strftime("%H:%M:%S"))
+
+    def show_versions(self):
+        """편집 > 노트 버전…: 이 노트의 이전 내용을 보고, 골라서 되돌린다."""
+        if not self.cur:
+            return messagebox.showinfo(APP, "먼저 노트를 여세요.", parent=self.root)
+        self.flush()
+        n = self.cur
+        top = tk.Toplevel(self.root)
+        top.title("노트 버전 — " + n["title"])
+        top.configure(bg=C["bg"])
+        top.transient(self.root)
+        top.geometry(f"860x540+{self.root.winfo_x() + 90}+{self.root.winfo_y() + 60}")
+        top.minsize(640, 400)
+        left = tk.Frame(top, bg=C["panel"], width=250)
+        left.pack(side="left", fill="y")
+        left.pack_propagate(False)
+        tk.Label(left, text="저장된 버전", bg=C["panel"], fg=C["text"], font=(self.ui, 11, "bold"), anchor="w", padx=16, pady=14).pack(fill="x")
+        lb = tk.Listbox(left, bg=C["panel"], fg=C["text"], relief="flat", bd=0, highlightthickness=0, activestyle="none",
+                        selectbackground=C["soft"], selectforeground=C["accent"], font=(self.ui, 10), exportselection=False)
+        lb.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        right = tk.Frame(top, bg=C["bg"])
+        right.pack(side="left", fill="both", expand=True)
+        info = tk.Label(right, text="", anchor="w", bg=C["bg"], fg=C["muted"], font=(self.ui, 9), padx=16, pady=10, justify="left")
+        info.pack(fill="x")
+        btns = tk.Frame(right, bg=C["bg"])
+        btns.pack(side="bottom", fill="x", padx=16, pady=12)
+        pv = tk.Text(right, wrap="word", state="disabled", relief="flat", bd=0, highlightthickness=0, bg=C["panel"], fg=C["text"],
+                     font=(self.mono, 10), padx=14, pady=10)
+        pv.pack(fill="both", expand=True, padx=16)
+        vs = []
+
+        def fill():
+            nonlocal vs
+            vs = self.store.versions(n["path"])
+            lb.delete(0, "end")
+            for ts, size, _ in vs:
+                lb.insert("end", time.strftime("%Y.%m.%d  %H:%M:%S", time.localtime(ts)) + f"   {size:,}B")
+            if vs:
+                lb.selection_set(0)
+                show(None)
+            else:
+                v = st.version_settings()
+                info.config(text="저장된 버전이 없습니다." if v["keep"] else "노트 버전 기록이 꺼져 있습니다. 설정 > 노트 버전 설정에서 켤 수 있습니다.")
+                pv.config(state="normal")
+                pv.delete("1.0", "end")
+                pv.config(state="disabled")
+
+        def show(e):
+            sel = lb.curselection()
+            if not sel:
+                return
+            ts, size, fp = vs[sel[0]]
+            text = self.store.read_version(fp)
+            info.config(text=f"{time.strftime('%Y.%m.%d %H:%M:%S', time.localtime(ts))} 의 내용  ·  지금 {len(n['body']):,}자 / 이 버전 {len(text):,}자")
+            pv.config(state="normal", wrap="none" if max((len(x) for x in text.split("\n")), default=0) > 20000 else "word")
+            pv.delete("1.0", "end")
+            pv.insert("1.0", text[:200000] + ("\n\n… (이하 생략)" if len(text) > 200000 else ""))
+            pv.config(state="disabled")
+
+        def restore():
+            sel = lb.curselection()
+            if not sel:
+                return
+            ts, _, fp = vs[sel[0]]
+            if not messagebox.askyesno(APP, f"{time.strftime('%Y.%m.%d %H:%M:%S', time.localtime(ts))} 버전으로 되돌릴까요?\n"
+                                            "(지금 내용은 새 버전으로 남겨 두므로 다시 돌아올 수 있습니다)", parent=top):
+                return
+            body = self.store.read_version(fp)
+            self.store.snapshot(n["path"], body, max(1, st.version_settings()["count"]), 0)
+            self.apply_body(body)
+            top.destroy()
+
+        def delete():
+            sel = lb.curselection()
+            if sel and messagebox.askyesno(APP, "이 버전을 삭제할까요?", parent=top):
+                self.store.delete_version(vs[sel[0]][2])
+                fill()
+
+        lb.bind("<<ListboxSelect>>", show)
+        Btn(btns, "닫기", top.destroy, padx=16).pack(side="right")
+        Btn(btns, "삭제", delete, kind="danger", padx=14).pack(side="right", padx=6)
+        Btn(btns, "이 버전으로 되돌리기", restore, kind="primary", bold=True, padx=16).pack(side="right")
+        fill()
+
+    # ------------------------------------------------------------ 테마
+    def rebuild_ui(self):
+        """색을 바꾼 뒤 화면을 다시 만든다. 열어 둔 노트·검색어·보기 설정은 그대로 둔다."""
+        self.flush()
+        cur_path = self.cur["path"] if self.cur else None
+        q, d1, d2 = self.q.get(), self.d_from.get(), self.d_to.get()
+        widths = dict(self.widths)
+        for job in (self.render_job, self.search_job):
+            if job:
+                self.root.after_cancel(job)
+        self.render_job = self.search_job = None
+        self.cur = None
+        self.root.configure(bg=C["bg"])
+        self.pane.destroy()
+        self.style_ttk()
+        self.make_fonts()
+        self.build()
+        self.widths.update(widths)
+        self.bind_keys()
+        self.q.set(q)
+        self.d_from.set(d1)
+        self.d_to.set(d2)
+        self.reload_notes()
+        self.set_mode(self.mode)
+        self.relayout()
+        n = next((x for x in self.notes if x["path"] == cur_path), None) if cur_path else None
+        if n:
+            self.open_note(n, record=False)
+
+    def set_theme(self, name, accent="keep"):
+        old = st.read_config().get("theme", {})
+        acc = old.get("accent") if accent == "keep" else accent
+        st.write_config(theme={"name": name, "accent": acc})
+        apply_theme(name, acc)
+        self.rebuild_ui()
+        self.show_options("theme")
+
+    # ------------------------------------------------------------ 옵션 (설정 > 옵션: 왼쪽 탭 + 오른쪽 내용)
+    def show_options(self, tab="general"):
+        if getattr(self, "opt", None) and self.opt.winfo_exists():
+            self.opt.destroy()
+        top = self.opt = tk.Toplevel(self.root)
+        top.title("옵션")
+        top.configure(bg=C["bg"])
+        top.transient(self.root)
+        top.geometry(f"720x640+{self.root.winfo_x() + 100}+{self.root.winfo_y() + 50}")
+        top.minsize(640, 600)
+        nav = tk.Frame(top, bg=C["panel"], width=170)
+        nav.pack(side="left", fill="y")
+        nav.pack_propagate(False)
+        tk.Label(nav, text="옵션", bg=C["panel"], fg=C["text"], font=(self.ui, 12, "bold"), anchor="w", padx=18, pady=16).pack(fill="x")
+        content = tk.Frame(top, bg=C["bg"], padx=28, pady=22)
+        content.pack(side="left", fill="both", expand=True)
+        foot = tk.Frame(top, bg=C["bg"])
+        tabs = {}
+
+        def lab(p, t, **k):
+            return tk.Label(p, text=t, bg=C["bg"], fg=k.pop("fg", C["text"]), anchor="w", justify="left",
+                            font=k.pop("font", (self.ui, 10)), **k)
+
+        def title(p, t, sub=""):
+            lab(p, t, font=(self.ui, 14, "bold")).pack(anchor="w")
+            if sub:
+                lab(p, sub, fg=C["muted"], font=(self.ui, 9)).pack(anchor="w", pady=(2, 14))
+
+        def hr(p):
+            tk.Frame(p, height=1, bg=C["line"]).pack(fill="x", pady=14)
+
+        def field(p, label, var, width, button=None):
+            row = tk.Frame(p, bg=C["bg"])
+            row.pack(fill="x", pady=3)
+            lab(row, label, width=8).pack(side="left")
+            tk.Entry(row, textvariable=var, width=width, state="readonly", relief="flat", bd=0, bg=C["panel"],
+                     readonlybackground=C["panel"], fg=C["text"], highlightthickness=1, highlightbackground=C["line"],
+                     font=(self.ui, 10)).pack(side="left", ipady=4, fill="x", expand=button is None)
+            if button:
+                Btn(row, button[0], button[1], padx=10, pady=3).pack(side="left", padx=6)
+
+        def copy(text):
+            self.root.clipboard_clear()
+            self.root.clipboard_append(text)
+
+        def general(p):
+            title(p, "일반", "노트를 저장하는 곳과 시작할 때의 보기를 정합니다.")
+            lab(p, "노트와 그림을 저장하는 폴더는 설정 > 폴더 설정에서 바꿉니다.", fg=C["muted"], font=(self.ui, 9)).pack(anchor="w")
+            hr(p)
+            lab(p, "편집기 보기", font=(self.ui, 10, "bold")).pack(anchor="w")
+            for key, label in (("edit", "마크다운만"), ("split", "마크다운 + 렌더링 (분할)"), ("view", "렌더링만")):
+                tk.Radiobutton(p, text=label, value=key, variable=self.v_mode, command=lambda k=key: self.set_mode(k),
+                               bg=C["bg"], activebackground=C["bg"], font=(self.ui, 10), selectcolor=C["bg"]).pack(anchor="w")
+            hr(p)
+            lab(p, "화면 구성", font=(self.ui, 10, "bold")).pack(anchor="w")
+            for key, label in (("notebooks", "노트북 보기"), ("tags", "태그 보기"), ("list", "노트 목록 보기"), ("syntax", "문법 해설 보기")):
+                tk.Checkbutton(p, text=label, variable=self.v[key], command=self.on_view_toggle, bg=C["bg"],
+                               activebackground=C["bg"], font=(self.ui, 10), selectcolor=C["bg"]).pack(anchor="w")
+
+        def clipper(p):
+            title(p, "웹 클리퍼", "웹 페이지를 이 앱으로 바로 저장하는 방법을 고릅니다.")
+            lab(p, "클리퍼", font=(self.ui, 10, "bold")).pack(anchor="w")
+            method = tk.StringVar(value="joplin")
+            tk.Radiobutton(p, text="조플린 클리퍼 플러스 (크롬 확장)", variable=method, value="joplin", bg=C["bg"],
+                           activebackground=C["bg"], font=(self.ui, 10), selectcolor=C["bg"]).pack(anchor="w", pady=(4, 0))
+            tk.Radiobutton(p, text="기본 제공 클리퍼 (준비 중)", variable=method, value="builtin", state="disabled",
+                           bg=C["bg"], font=(self.ui, 10), selectcolor=C["bg"]).pack(anchor="w")
+            hr(p)
+            on = tk.BooleanVar(value=bool(st.read_config().get("clipEnabled", True)))
+            status = lab(p, "", fg=C["muted"], font=(self.ui, 9))
+            port_var, tok_var = tk.StringVar(), tk.StringVar(value=st.clipper_token())
+
+            def refresh_state():
+                if self.srv:
+                    status.config(text=f"실행 중 — 127.0.0.1:{self.port} (이 컴퓨터에서만 접속됩니다)", fg="#15803d")
+                elif on.get():
+                    status.config(text="켜져 있지만 서버를 열지 못했습니다(41200~41209 포트가 모두 사용 중).", fg=C["danger"])
+                else:
+                    status.config(text="꺼져 있음", fg=C["muted"])
+                port_var.set(str(self.port or ""))
+
+            def toggle():
+                st.write_config(clipEnabled=bool(on.get()))
+                if on.get():
+                    self.start_clipper()
+                else:
+                    self.stop_clipper()
+                refresh_state()
+            tk.Checkbutton(p, text="웹 클리퍼 서비스 사용", variable=on, command=toggle, bg=C["bg"],
+                           activebackground=C["bg"], font=(self.ui, 10), selectcolor=C["bg"]).pack(anchor="w")
+            status.pack(anchor="w", pady=(2, 10))
+            field(p, "포트", port_var, 10)
+
+            def regen():
+                if messagebox.askyesno("토큰 새로 만들기", "새 토큰을 만들면 크롬 확장 옵션의 토큰도 바꿔야 합니다.\n계속할까요?", parent=top):
+                    tok_var.set(secrets.token_hex(24))
+                    st.write_config(clipToken=tok_var.get())
+            field(p, "토큰", tok_var, 50, ("복사", lambda: copy(tok_var.get())))
+            Btn(p, "토큰 새로 만들기", regen, padx=10, pady=3).pack(anchor="w", padx=(64, 0), pady=(2, 0))
+            hr(p)
+            store_url = "https://chromewebstore.google.com/detail/joplin-clipper-plus/fbieoidncnoalmenkkpbcbomppoenfoa"
+            lab(p, "크롬 웹스토어", font=(self.ui, 10, "bold")).pack(anchor="w")
+            link = tk.Label(p, text=store_url, bg=C["bg"], fg=C["accent"], cursor="hand2", font=(self.ui, 9, "underline"),
+                            anchor="w", justify="left", wraplength=480)
+            link.pack(anchor="w", pady=(4, 0))
+            link.bind("<Button-1>", lambda e: webbrowser.open(store_url))
+            refresh_state()
+
+        def versions_tab(p):
+            title(p, "노트 버전", "노트를 고칠 때마다 이전 내용을 노트별로 보관해 두고, 나중에 골라서 되돌릴 수 있습니다.")
+            cfg = st.read_config().get("versions", {})
+            enabled = tk.BooleanVar(value=bool(cfg.get("enabled", True)))
+            keep = tk.StringVar(value=str(cfg.get("keep", 10)))
+            minutes = tk.StringVar(value=str(int(float(cfg.get("minutes", 1)))))
+
+            def apply(*_):
+                try:
+                    k = max(1, min(200, int(keep.get())))
+                except ValueError:
+                    k = 10
+                try:
+                    m = max(0, min(1440, int(minutes.get())))
+                except ValueError:
+                    m = 5
+                keep.set(str(k))
+                minutes.set(str(m))
+                st.write_config(versions={"enabled": bool(enabled.get()), "keep": k, "minutes": m})
+                spin_state()
+
+            def spin_state():
+                for w in (sp1, sp2):
+                    w.config(state="normal" if enabled.get() else "disabled")
+            tk.Checkbutton(p, text="노트 버전 기록 사용", variable=enabled, command=apply, bg=C["bg"], activebackground=C["bg"],
+                           font=(self.ui, 10), selectcolor=C["bg"]).pack(anchor="w")
+
+            def spin(label, var, lo, hi, unit):
+                row = tk.Frame(p, bg=C["bg"])
+                row.pack(fill="x", pady=6)
+                lab(row, label, width=18).pack(side="left")
+                w = tk.Spinbox(row, from_=lo, to=hi, textvariable=var, width=6, command=apply, relief="flat", bd=0, bg=C["panel"],
+                               highlightthickness=1, highlightbackground=C["line"], font=(self.ui, 10), buttonbackground=C["panel"])
+                w.pack(side="left", ipady=4)
+                w.bind("<Return>", apply)
+                w.bind("<FocusOut>", apply)
+                lab(row, unit, fg=C["muted"], font=(self.ui, 9)).pack(side="left", padx=8)
+                return w
+            sp1 = spin("노트당 보관 개수", keep, 1, 200, "개 (넘으면 오래된 것부터 지웁니다)")
+            sp2 = spin("새 버전 간격", minutes, 0, 1440, "분 (0 = 자동 저장할 때마다)")
+            spin_state()
+            hr(p)
+            lab(p, "버전을 만드는 때: ① 노트를 연 뒤 처음 고칠 때(그 직전 내용)  ② 그 뒤로는 '새 버전 간격'이 지난 뒤 고칠 때.\n"
+                   "예) 간격 1분이면, 한 노트를 계속 고치는 동안 1분에 한 번씩 버전이 남습니다.\n"
+                   "버전은 저장 폴더의 .history 폴더에 노트별로 보관됩니다(노트북으로 보이지 않습니다).\n"
+                   "노트의 이름을 바꾸거나 다른 노트북으로 옮겨도 버전 기록이 따라갑니다.\n"
+                   "보기: 편집 > 노트 버전…  또는 노트 목록에서 우클릭", fg=C["muted"], font=(self.ui, 9)).pack(anchor="w")
+            Btn(p, "이 노트의 버전 보기", lambda: (top.destroy(), self.show_versions()), padx=12, pady=4).pack(anchor="w", pady=(14, 0))
+
+        def theme_tab(p):
+            title(p, "테마·색상", "노트 전체의 색을 고릅니다. 누르면 바로 적용됩니다.")
+            cfg = st.read_config().get("theme", {})
+            cur_name = cfg.get("name", DEFAULT_THEME)
+            cur_acc = cfg.get("accent")
+            grid = tk.Frame(p, bg=C["bg"])
+            grid.pack(fill="x")
+
+            def card(i, tname):
+                t = compute_theme(tname, cur_acc if tname == cur_name else None)
+                chosen = tname == cur_name
+                f = tk.Frame(grid, bg=C["accent"] if chosen else C["line"], padx=2, pady=2, cursor="hand2")
+                f.grid(row=i // 3, column=i % 3, padx=(0, 10), pady=(0, 10))
+                body = tk.Frame(f, bg=t["bg"], width=150, height=84)
+                body.pack()
+                body.pack_propagate(False)
+                tk.Frame(body, bg=t["panel"], width=34).pack(side="left", fill="y")
+                right = tk.Frame(body, bg=t["bg"])
+                right.pack(side="left", fill="both", expand=True)
+                tk.Label(right, text=tname, bg=t["bg"], fg=t["text"], font=(self.ui, 9, "bold")).pack(anchor="w", padx=8, pady=(12, 4))
+                chips = tk.Frame(right, bg=t["bg"])
+                chips.pack(anchor="w", padx=8)
+                for col, w in ((t["accent"], 30), (t["soft"], 22), (t["line"], 14)):
+                    tk.Frame(chips, bg=col, width=w, height=9).pack(side="left", padx=(0, 4))
+                tk.Label(right, text="✓ 사용 중" if chosen else "", bg=t["bg"], fg=t["accent"], font=(self.ui, 8)).pack(anchor="w", padx=8, pady=(6, 0))
+                for w in (f, body, right, *right.winfo_children(), *chips.winfo_children()):
+                    w.bind("<Button-1>", lambda e, n=tname: self.root.after(20, lambda: self.set_theme(n)))
+            for i, tname in enumerate(THEMES):
+                card(i, tname)
+            hr(p)
+            lab(p, "강조색", font=(self.ui, 10, "bold")).pack(anchor="w")
+            row = tk.Frame(p, bg=C["bg"])
+            row.pack(fill="x", pady=8)
+            tk.Frame(row, bg=C["accent"], width=34, height=22, highlightthickness=1, highlightbackground=C["line"]).pack(side="left")
+            lab(row, cur_acc or "테마 기본색", fg=C["muted"], font=(self.ui, 9)).pack(side="left", padx=10)
+
+            def choose():
+                rgb, hexa = colorchooser.askcolor(color=C["accent"], title="강조색 고르기", parent=top)
+                if hexa:
+                    self.root.after(20, lambda: self.set_theme(cur_name, hexa))
+            Btn(row, "색 고르기…", choose, padx=12, pady=4).pack(side="left")
+            Btn(row, "테마 기본색으로", lambda: self.root.after(20, lambda: self.set_theme(cur_name, None)), padx=12, pady=4).pack(side="left", padx=6)
+            lab(p, "강조색은 선택된 글, 버튼, 링크, 태그 등에 쓰이는 포인트 색입니다.", fg=C["muted"], font=(self.ui, 9)).pack(anchor="w")
+
+            hr(p)
+            lab(p, "유튜브 영상", font=(self.ui, 10, "bold")).pack(anchor="w")
+            lab(p, "노트 안의 유튜브 영상은 썸네일로 보이고, 누르면 재생 창이 열립니다.", fg=C["muted"], font=(self.ui, 9)).pack(anchor="w", pady=(0, 4))
+            vo = tk.StringVar(value=st.read_config().get("video_open", "app"))
+            for key, label in (("app", "작은 재생 창 (Edge 앱 창, 주소창 없음)"), ("browser", "기본 브라우저")):
+                tk.Radiobutton(p, text=label, value=key, variable=vo, command=lambda: st.write_config(video_open=vo.get()),
+                               bg=C["bg"], activebackground=C["bg"], font=(self.ui, 10)).pack(anchor="w")
+
+        def folders_tab(p):
+            title(p, "폴더", "노트와 그림(리소스)을 저장하는 폴더를 정합니다.")
+            root_var, media_var = tk.StringVar(), tk.StringVar()
+            mode_note = lab(p, "", fg=C["muted"], font=(self.ui, 9))
+
+            def refresh():
+                root_var.set(self.store.root)
+                media_var.set(self.store.media_dir)
+                mode_note.config(text={"default": "현재: 노트 폴더 안의 _resources", "sibling": "현재: 노트 폴더와 같은 위치의 _resources",
+                                       "custom": "현재: 직접 지정한 폴더"}.get(self.store.media_mode, ""))
+
+            def change_root():
+                if self.choose_root():
+                    refresh()
+
+            def apply_media(mode, path=None):
+                new = self.store.media_dir_for(mode, path)
+                old = self.store.media_dir
+                same = os.path.normcase(os.path.abspath(new)) == os.path.normcase(os.path.abspath(old))
+                migrate = False
+                count = self.store.count_media()
+                if not same and count:
+                    ans = messagebox.askyesnocancel(
+                        "리소스 폴더 변경", f"기존 리소스 {count}개를 새 폴더로 옮기고 노트의 그림 링크도 고칠까요?\n\n"
+                        "예: 옮기고 링크 수정 (권장)\n아니오: 설정만 바꿈 (기존 파일과 링크는 그대로)\n취소: 변경 안 함", parent=top)
+                    if ans is None:
+                        return
+                    migrate = bool(ans)
+                self.flush()
+                cur_path = self.cur["path"] if self.cur else None
+                try:
+                    moved, relinked = self.store.set_media(mode, path, migrate)
+                except (OSError, ValueError) as ex:
+                    return messagebox.showerror(APP, f"리소스 폴더를 바꾸지 못했습니다.\n{ex}", parent=top)
+                self.reload_notes()
+                n = next((x for x in self.notes if x["path"] == cur_path), None) if cur_path else None
+                if n:
+                    self.open_note(n, record=False)   # 링크가 바뀐 글을 다시 읽어 와서 낡은 내용으로 덮어쓰지 않게
+                refresh()
+                if migrate:
+                    messagebox.showinfo(APP, f"리소스 {moved}개를 옮기고 노트 {relinked}개의 링크를 고쳤습니다.", parent=top)
+
+            def change_media():
+                d = filedialog.askdirectory(parent=top, initialdir=self.store.media_dir if os.path.isdir(self.store.media_dir) else self.store.root,
+                                            title="리소스(미디어) 폴더")
+                if d:
+                    apply_media("custom", d)
+
+            lab(p, "노트 폴더", font=(self.ui, 10, "bold")).pack(anchor="w")
+            lab(p, "노트북 = 폴더(하위 폴더는 하위 노트북), 노트 = .md 파일", fg=C["muted"], font=(self.ui, 9)).pack(anchor="w", pady=(0, 6))
+            field(p, "경로", root_var, 52, ("변경…", change_root))
+            Btn(p, "노트 폴더 열기", lambda: os.startfile(self.store.root), padx=10, pady=3).pack(anchor="w", padx=(64, 0), pady=(4, 0))
+            hr(p)
+            lab(p, "리소스(미디어) 폴더", font=(self.ui, 10, "bold")).pack(anchor="w")
+            lab(p, "웹 클리퍼로 저장한 그림 등이 들어가는 곳입니다.\n노트에는 노트 위치 기준의 상대 경로로 연결됩니다. 클리퍼도 이 폴더만 씁니다.",
+                fg=C["muted"], font=(self.ui, 9)).pack(anchor="w", pady=(0, 6))
+            field(p, "경로", media_var, 52, ("변경…", change_media))
+            row = tk.Frame(p, bg=C["bg"])
+            row.pack(anchor="w", padx=(64, 0), pady=(6, 0))
+            Btn(row, "노트 폴더 안 (_resources)", lambda: apply_media("default"), padx=10, pady=3).pack(side="left")
+            Btn(row, "노트 폴더와 같은 위치", lambda: apply_media("sibling"), padx=10, pady=3).pack(side="left", padx=6)
+            Btn(row, "열기", lambda: (os.makedirs(self.store.media_dir, exist_ok=True), os.startfile(self.store.media_dir)), padx=10, pady=3).pack(side="left")
+            mode_note.pack(anchor="w", padx=(64, 0), pady=(8, 0))
+            refresh()
+
+        def fonts_tab(p):
+            title(p, "글꼴", "노트 목록과 노트의 글자 크기·굵기를 정합니다. 적용을 누르면 바로 바뀝니다.")
+            fc = self.font_cfg()
+            ls, lb = tk.StringVar(value=str(fc["list_size"])), tk.BooleanVar(value=fc["list_bold"])
+            ns, nb = tk.StringVar(value=str(fc["note_size"])), tk.BooleanVar(value=fc["note_bold"])
+
+            def section(name, size_var, bold_var, lo, hi):
+                lab(p, name, font=(self.ui, 10, "bold")).pack(anchor="w", pady=(6, 4))
+                row = tk.Frame(p, bg=C["bg"])
+                row.pack(fill="x")
+                lab(row, "글자 크기", width=9).pack(side="left")
+                tk.Spinbox(row, from_=lo, to=hi, textvariable=size_var, width=5, relief="flat", bd=0, bg=C["panel"], fg=C["text"],
+                           insertbackground=C["accent"], highlightthickness=1, highlightbackground=C["line"],
+                           font=(self.ui, 10), buttonbackground=C["panel"]).pack(side="left", ipady=4)
+                lab(row, "pt", fg=C["muted"], font=(self.ui, 9)).pack(side="left", padx=6)
+                tk.Checkbutton(row, text="굵게", variable=bold_var, bg=C["bg"], fg=C["text"], activebackground=C["bg"],
+                               selectcolor=C["bg"], font=(self.ui, 10)).pack(side="left", padx=18)
+            section("노트 목록", ls, lb, 8, 20)
+            prev1 = lab(p, "노트 목록 제목 미리보기", fg=C["text"])
+            prev1.pack(anchor="w", pady=(8, 0))
+            hr(p)
+            section("노트 (에디터·렌더링)", ns, nb, 8, 28)
+            prev2 = lab(p, "노트 본문 미리보기 — 가나다라 ABC abc 123", fg=C["text"])
+            prev2.pack(anchor="w", pady=(8, 0))
+
+            def preview(*_):
+                try:
+                    a, b = int(float(ls.get())), int(float(ns.get()))
+                except ValueError:
+                    return
+                prev1.config(font=(self.ui, max(8, min(20, a)), "bold" if lb.get() else "normal"))
+                prev2.config(font=(self.ui, max(8, min(28, b)), "bold" if nb.get() else "normal"))
+            for v in (ls, lb, ns, nb):
+                v.trace_add("write", preview)
+            preview()
+            row = tk.Frame(p, bg=C["bg"])
+            row.pack(anchor="w", pady=(22, 0))
+            Btn(row, "적용", lambda: self.root.after(20, lambda: self.set_fonts(ls.get(), lb.get(), ns.get(), nb.get())),
+                kind="primary", bold=True, padx=22, pady=5).pack(side="left")
+            Btn(row, "기본값으로", lambda: self.root.after(20, lambda: self.set_fonts(10, False, 11, False)), padx=14, pady=5).pack(side="left", padx=8)
+
+        pages = (("general", "일반", general), ("folders", "폴더", folders_tab), ("fonts", "글꼴", fonts_tab), ("theme", "테마·색상", theme_tab), ("versions", "노트 버전", versions_tab), ("clipper", "웹 클리퍼", clipper))
+
+        def select(key):
+            for k, b in tabs.items():
+                b.set_on(k == key)
+            for w in content.winfo_children():
+                w.destroy()
+            dict((k, f) for k, _, f in pages)[key](content)
+
+        for key, label, _ in pages:
+            b = Btn(nav, label, lambda k=key: select(k), kind="nav", padx=18, pady=8, anchor="w")
+            b.pack(fill="x", padx=8, pady=1)
+            tabs[key] = b
+        foot.pack(side="bottom", fill="x", padx=28, pady=(0, 16), before=content)
+        Btn(foot, "닫기", top.destroy, kind="primary", padx=22, pady=5).pack(side="right")
+        select(tab)
+
+    # ------------------------------------------------------------ 단축키·종료
+    def bind_keys(self):
+        r = self.root
+        r.bind_all("<Control-n>", lambda e: self.new_note())
+        r.bind_all("<Control-N>", lambda e: self.add_notebook())
+        r.bind_all("<Control-l>", lambda e: self.cur and self.cycle_mode())
+        r.bind_all("<Control-e>", lambda e: self.cur and self.cycle_mode())
+        r.bind_all("<Control-L>", lambda e: (self.v["list"].set(not self.show["list"]), self.on_view_toggle()))
+        r.bind_all("<Control-slash>", lambda e: self.toggle_syntax())
+        r.bind_all("<Control-f>", lambda e: self.focus_search())
+        r.bind_all("<Control-F>", lambda e: self.focus_search())
+        r.bind_all("<Control-comma>", lambda e: self.show_options("general"))
+        r.bind_all("<Control-minus>", lambda e: self.go(-1))
+        r.bind_all("<Control-plus>", lambda e: self.go(1))
+        r.bind_all("<Control-equal>", lambda e: self.go(1))
+        r.bind_all("<Control-T>", lambda e: self.insert_datetime())
+        r.bind_all("<F10>", lambda e: (self.v["notebooks"].set(not self.show["notebooks"]), self.on_view_toggle()))
+        r.bind_all("<Prior>", lambda e: self.page_key(e, -1))
+        r.bind_all("<Next>", lambda e: self.page_key(e, 1))
+        for w in (self.lst, self.view, self.text):   # 포커스가 있는 칸보다 마우스 아래 칸을 우선
+            w.bind("<Prior>", lambda e: self.page_redirect(e, -1), add="+")
+            w.bind("<Next>", lambda e: self.page_redirect(e, 1), add="+")
+        for key, action in (("b", ("wrap", "b")), ("i", ("wrap", "i")), ("k", ("wrap", "link"))):
+            self.text.bind(f"<Control-{key}>", lambda e, a=action: (self.run_action(a), "break")[1])
+
+    def pane_under_pointer(self):
+        """마우스가 올라가 있는 스크롤 칸(목록·렌더링·편집·트리). 없으면 None"""
+        w = self.root.winfo_containing(*self.root.winfo_pointerxy())
+        panes = (self.lst, self.view, self.text, self.tree, self.nbtree, self.tagtree)
+        while w is not None:
+            if any(w is p for p in panes):
+                return w
+            w = getattr(w, "master", None)
+        return None
+
+    def page_redirect(self, e, direction):
+        """목록·렌더링·편집 칸에 포커스가 있어도, 마우스가 다른 칸 위에 있으면 그 칸을 한 쪽 스크롤한다
+        (목록에서 노트를 클릭한 직후 마우스를 오른쪽 노트 위에 두고 PageDown 으로 읽을 수 있게). 같은 칸이면 그 칸이 알아서 한다."""
+        pane = self.pane_under_pointer()
+        if pane is not None and pane is not e.widget:
+            pane.yview_scroll(direction, "pages")
+            return "break"
+
+    def page_key(self, e, direction):
+        """PageUp/PageDown 의 나머지 경우: 입력칸·버튼 등에 포커스가 있거나 포커스가 없을 때.
+        마우스가 올라가 있는 칸을 스크롤하고, 칸 위가 아니면 지금 읽는 노트를 스크롤한다."""
+        if isinstance(e.widget, (tk.Text, tk.Listbox, ttk.Treeview)):
+            return   # 그 칸이 알아서(위의 page_redirect 가 먼저 다른 칸 위의 마우스를 처리한다)
+        target = self.pane_under_pointer()
+        if target is None and self.cur:
+            target = self.text if self.mode == "edit" else self.view
+        if target is not None:
+            target.yview_scroll(direction, "pages")
+            return "break"
+
+    def quit(self):
+        self.flush()
+        self.stop_clipper()
+        self.root.destroy()
+
+    def run(self):
+        self.root.mainloop()
+
+
+def main():
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.shcore.SetProcessDpiAwareness(1)
+        except Exception:  # noqa: BLE001
+            pass
+    App().run()
+
+
+if __name__ == "__main__":
+    main()

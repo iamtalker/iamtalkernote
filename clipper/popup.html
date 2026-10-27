@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Joplin Clipper Plus</title>
+<style>
+  body { font-family: -apple-system, Segoe UI, Arial, sans-serif; width: 320px; padding: 12px; color: #222; }
+  h1 { font-size: 14px; margin: 0 0 10px; display: flex; align-items: center; gap: 6px; }
+  .modes { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 10px; }
+  .modes button { padding: 8px 4px; font-size: 12px; border: 1px solid #ccc; border-radius: 6px; background: #fafafa; cursor: pointer; }
+  .modes button.active { background: #1a73e8; color: #fff; border-color: #1a73e8; }
+  label { display: block; font-size: 11px; font-weight: 600; margin: 8px 0 3px; color: #555; }
+  input, select { width: 100%; box-sizing: border-box; padding: 6px 8px; font-size: 13px; border: 1px solid #ccc; border-radius: 4px; }
+  #clip { width: 100%; margin-top: 12px; padding: 9px; font-size: 13px; font-weight: 600; border: none; border-radius: 6px; background: #1a7f37; color: #fff; cursor: pointer; }
+  #clip:disabled { background: #999; cursor: default; }
+  #status { margin-top: 8px; font-size: 12px; min-height: 16px; }
+  .ok { color: #1a7f37; }
+  .err { color: #c62828; }
+  #settingsLink { font-size: 11px; color: #1a73e8; cursor: pointer; text-decoration: underline; margin-left: auto; }
+  .pick { width: 100%; margin-bottom: 4px; padding: 7px; font-size: 12px; border: 1px dashed #999; border-radius: 6px; background: #fff; color: #333; cursor: pointer; }
+  #version { font-size: 10px; color: #999; font-weight: 400; }
+</style>
+</head>
+<body>
+  <h1>📎 Joplin Clipper <span id="version"></span><span id="settingsLink">settings</span></h1>
+
+  <div class="modes">
+    <button data-mode="article" class="active">📄 Article</button>
+    <button data-mode="full">🖼 Full Page</button>
+    <button data-mode="selection">✂️ Selection</button>
+    <button data-mode="bookmark">🔖 Bookmark</button>
+    <button data-mode="webtoon" style="grid-column: 1 / -1">📜 Webtoon (all big images)</button>
+  </div>
+
+  <button id="pickArea" class="pick" title="클리핑이 잘 안 되는 사이트에서, 기사 영역을 직접 클릭해서 알려줍니다">🎯 이 사이트 영역 직접 고르기</button>
+
+  <label for="title">Title</label>
+  <input id="title" />
+
+  <label for="notebook">Notebook</label>
+  <select id="notebook"><option>Loading…</option></select>
+
+  <label for="tags">Tags (comma separated)</label>
+  <input id="tags" placeholder="reading, research" />
+
+  <button id="clip">Clip to Joplin</button>
+  <div id="status"></div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
