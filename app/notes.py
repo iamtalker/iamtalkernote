@@ -628,7 +628,7 @@ class App:
             items = self.store.trash_items()
             for it in items:
                 left = "-" if not days else "%d일" % max(0, math.ceil(days - (time.time() - it["deleted"]) / 86400))
-                tv.insert("", "end", iid=it["id"], values=("노트북" if it["dir"] else "노트", it["rel"], time.strftime("%Y.%m.%d %H:%M", time.localtime(it["deleted"])), left))
+                tv.insert("", "end", iid=it["id"], values=("저장 폴더" if it["root"] else "노트북" if it["dir"] else "노트", it["rel"], time.strftime("%Y.%m.%d %H:%M", time.localtime(it["deleted"])), left))
             info.config(text=f"{len(items)}개 — 지운 지 {days}일이 지나면 완전히 지워집니다." if days else f"{len(items)}개 — 자동으로 지우지 않습니다.")
         refresh()
 
@@ -1343,7 +1343,7 @@ class App:
                f"안의 노트 {len(self.all_notes)}개, 노트북 {len(books)}개"
                + (", 리소스 폴더(그림)" if inside else "") + ", 노트 버전 기록이 모두 함께 갑니다.\n"
                + ("" if inside else "(리소스 폴더는 저장 폴더 밖에 있어서 그대로 남습니다.)\n")
-               + "\n휴지통에서 복원할 수 있습니다.")
+               + f"\n앱의 휴지통에서 {self.store.trash_days}일 동안 보관하며 복원할 수 있습니다.")
         if not messagebox.askyesno(APP, msg, icon="warning", parent=self.root):
             return
         self.flush()
@@ -1355,7 +1355,7 @@ class App:
         self.nb, self.tag = ALL, None
         self.close_note()
         self.reload_notes()
-        self.status.config(text="저장 폴더를 휴지통으로 보냈습니다. 빈 폴더를 다시 만들어 두었습니다.")
+        self.status.config(text="저장 폴더의 내용을 휴지통으로 보냈습니다. (파일 → 휴지통에서 복원)")
 
     def choose_root(self):
         d = filedialog.askdirectory(parent=self.root, initialdir=self.store.root, title="노트를 저장할 폴더")

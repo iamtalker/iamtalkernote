@@ -344,7 +344,7 @@ class Store:
             try:
                 with open(os.path.join(d, "meta.json"), encoding="utf-8") as f:
                     m = json.load(f)
-                out.append({"id": tid, "rel": m["rel"], "name": md_title(os.path.basename(m["rel"])) if not m.get("dir") else os.path.basename(m["rel"]),
+                out.append({"id": tid, "root": bool(m.get("root")), "rel": m["rel"] if m["rel"] != "." else "(저장 폴더 전체)", "name": md_title(os.path.basename(m["rel"])) if not m.get("dir") else os.path.basename(m["rel"]),
                             "deleted": float(m["deleted"]), "dir": bool(m.get("dir")), "path": os.path.join(d, "item")})
             except (OSError, ValueError, KeyError):
                 continue
@@ -356,6 +356,17 @@ class Store:
         it = next((x for x in self.trash_items() if x["id"] == tid), None)
         if not it:
             raise OSError("휴지통에 없는 항목입니다")
+        if it["root"]:   # 저장 폴더 전체: 내용을 하나씩 되돌리고, 같은 이름이 이미 있으면 ' (복원)' 을 붙인다
+            for x in os.listdir(it["path"]):
+                dst = os.path.join(self.root, x)
+                base, ext = os.path.splitext(dst)
+                i = 0
+                while os.path.exists(dst):
+                    i += 1
+                    dst = f"{base} (복원{'' if i == 1 else i}){ext}"
+                shutil.move(os.path.join(it["path"], x), dst)
+            shutil.rmtree(os.path.join(self.trash_dir, tid), ignore_errors=True)
+            return self.root
         target = self.nb_dir(it["rel"]) if not it["dir"] else os.path.join(self.root, it["rel"].replace("/", os.sep))
         os.makedirs(os.path.dirname(target), exist_ok=True)
         base, ext = os.path.splitext(target)
@@ -396,8 +407,26 @@ class Store:
         if os.path.dirname(p) == p or os.path.normcase(p) in protected:
             raise ValueError("드라이브 루트나 사용자·문서·바탕화면·다운로드 폴더 자체는 통째로 삭제할 수 없습니다.\n"
                              "먼저 설정 > 폴더 설정에서 노트 전용 폴더로 바꾸세요.")
-        recycle(p)
-        os.makedirs(p, exist_ok=True)
+        # 폴더 자신은 그대로 두고 안의 내용(휴지통 폴더만 빼고)을 휴지통 항목 하나로 옮긴다
+        names = [x for x in os.listdir(p) if x != TRASH_DIR]
+        if not names:
+            return
+        tid = "%d-%s" % (int(time.time() * 1000), secrets.token_hex(3))
+        d = os.path.join(self.trash_dir, tid)
+        os.makedirs(os.path.join(d, "item"))
+        self.hide_dir(self.trash_dir)
+        moved = []
+        try:
+            for x in names:
+                shutil.move(os.path.join(p, x), os.path.join(d, "item", x))
+                moved.append(x)
+            with open(os.path.join(d, "meta.json"), "w", encoding="utf-8") as f:
+                json.dump({"rel": ".", "deleted": time.time(), "dir": True, "root": True}, f)
+        except OSError:
+            for x in moved:   # 도중에 실패하면 제자리로
+                shutil.move(os.path.join(d, "item", x), os.path.join(p, x))
+            shutil.rmtree(d, ignore_errors=True)
+            raise
 
     # ---- 노트
     # ---- 색인 DB (SQLite). 노트 파일(.md)이 원본이고, DB 는 언제든 다시 만들 수 있는 요약·검색용 사본이다.
