@@ -34,11 +34,13 @@ import clipserver  # noqa: E402
 import editor as ed  # noqa: E402   (위키나루: 서식 도구·그림 불러오기)
 import preview  # noqa: E402
 import search  # noqa: E402
+import snapshots as sn  # noqa: E402
 import store as st  # noqa: E402
 import wikiconv  # noqa: E402
 
 APP = "iamtalkernote"
 LIST_CHUNK = 100   # 노트 목록은 이만큼씩 이어서 그린다(스크롤하면 계속)
+MORE_SCREENS = 4    # 목록 아래에 남은 글이 이만큼의 화면보다 적어지면 미리 다음 노트들을 이어 그린다
 ALL = "*"
 FMT = "markdown"
 
@@ -323,6 +325,7 @@ class App:
         self.mode = view.get("mode") if view.get("mode") in ("edit", "split", "view") else "split"
         self.store = st.Store()
         self.store.tagger = note_tags   # 색인에 태그도 함께 기억
+        self.snap = sn.Snapshots(self.store)   # 복원 지점
         try:
             self.store.purge_trash()   # 휴지통에 보관 기간(기본 30일)이 지난 항목은 완전히 지운다
         except OSError:
@@ -360,6 +363,7 @@ class App:
         self.set_mode(self.mode)
         self.relayout()
         self.reload_notes(background=True)
+        self.root.after(15000, self.auto_snapshot)   # 시작하고 한참 뒤(목록을 다 읽은 다음) 하루 한 번 복원 지점
         self.root.after(600, self.poll_clip)
 
     # ------------------------------------------------------------ 글꼴·ttk 모양
@@ -435,6 +439,7 @@ class App:
         m.add_command(label="새 노트북", accelerator="Ctrl+Shift+N", command=self.add_notebook)
         m.add_command(label="새 하위 노트북", command=self.add_subnotebook)
         m.add_separator()
+        m.add_command(label="복원 지점…", command=self.show_snapshots)
         m.add_command(label="휴지통…", command=self.show_trash)
         m.add_separator()
         m.add_command(label="종료", accelerator="Alt+F4", command=self.quit)
@@ -532,11 +537,11 @@ class App:
         top.minsize(640, 400)
         return top
 
-    def scan_notes(self, title, work, done):
-        """모든 노트를 뒤에서 훑는다(work(notes, progress, cancelled) → 결과). 끝나면 done(결과). 취소 가능."""
+    def run_task(self, title, work, done, text="노트를 읽는 중…"):
+        """오래 걸리는 일을 뒤에서 돌리고 진행 창을 보여 준다(work(progress, cancelled) → 결과). 끝나면 done(결과). 취소하면 done 은 부르지 않는다."""
         self.flush()
         top = self.tool_window(title, "420x150")
-        msg = tk.Label(top, text="노트를 읽는 중…", bg=C["bg"], fg=C["text"], font=(self.ui, 10), pady=24)
+        msg = tk.Label(top, text=text, bg=C["bg"], fg=C["text"], font=(self.ui, 10), pady=24)
         msg.pack()
         state = {"cancel": False, "prog": (0, 0)}
         q = queue.Queue()
@@ -546,11 +551,10 @@ class App:
             top.destroy()
         top.protocol("WM_DELETE_WINDOW", stop)
         Btn(top, "취소", stop, padx=14, pady=3).pack()
-        notes = list(self.all_notes)
 
         def job():
             try:
-                q.put(("ok", work(notes, lambda d, t: state.update(prog=(d, t)), lambda: state["cancel"])))
+                q.put(("ok", work(lambda d, t: state.update(prog=(d, t)), lambda: state["cancel"])))
             except Exception as ex:  # noqa: BLE001
                 q.put(("err", str(ex)))
         threading.Thread(target=job, daemon=True).start()
@@ -562,13 +566,153 @@ class App:
                 kind, val = q.get_nowait()
             except queue.Empty:
                 d, t = state["prog"]
-                msg.config(text=f"노트를 읽는 중… {d:,} / {t:,}" if t else "노트를 읽는 중…")
+                msg.config(text=f"{text} {d:,} / {t:,}" if t else text)
                 return top.after(100, poll)
             top.destroy()
             if kind == "err":
                 return messagebox.showerror(APP, val, parent=self.root)
             done(val)
         poll()
+
+    def scan_notes(self, title, work, done):
+        """모든 노트를 뒤에서 훑는다(work(notes, progress, cancelled) → 결과). 끝나면 done(결과). 취소 가능."""
+        self.flush()
+        notes = list(self.all_notes)
+        self.run_task(title, lambda prog, cancel: work(notes, prog, cancel), done)
+
+    # ------------------------------------------------------------ 복원 지점
+    def snap_cfg(self):
+        c = st.read_config()
+        return {"auto": bool(c.get("snap_auto", True)), "count": max(1, int(c.get("snap_count", sn.KEEP_COUNT))),
+                "days": max(0, int(c.get("snap_days", sn.KEEP_DAYS)))}
+
+    def checkpoint(self, label, then):
+        """큰 작업 직전에 복원 지점을 만들고(바뀐 게 없으면 바로) then() 을 부른다. 취소하면 then 은 부르지 않는다."""
+        self.run_task("복원 지점 만드는 중", lambda prog, cancel: self.snap.create(label, prog, cancel), lambda pid: then(),
+                      text=f"\"{label}\" 복원 지점을 만드는 중… (처음 한 번은 오래 걸립니다)")
+
+    def auto_snapshot(self):
+        """시작한 뒤 한참 있다가: 마지막 복원 지점이 하루 넘었으면 조용히 하나 만들고 오래된 것을 정리한다"""
+        cfg = self.snap_cfg()
+        if not cfg["auto"]:
+            return
+        pts = self.snap.points()
+        if pts and time.time() - pts[0]["created"] < 20 * 3600:
+            return
+        q = queue.Queue()
+
+        def job():
+            try:
+                self.snap.create("자동")
+                self.snap.prune(cfg["count"], cfg["days"])
+                q.put("ok")
+            except Exception as ex:  # noqa: BLE001
+                q.put("err")
+        threading.Thread(target=job, daemon=True).start()
+
+        def poll():
+            try:
+                r = q.get_nowait()
+            except queue.Empty:
+                return self.root.after(1000, poll)
+            if r == "ok":
+                self.status.config(text="복원 지점을 만들었습니다.")
+        poll()
+
+    def show_snapshots(self):
+        """파일 > 복원 지점: 어느 시점의 모든 노트를 기억해 두었다가 그 상태로 되돌린다"""
+        top = self.tool_window("복원 지점", "800x520")
+        tk.Label(top, text="복원 지점은 그 시점의 모든 노트를 기억해 둡니다(그림·첨부는 제외). 고르면 노트를 그 시점으로 되돌리고, 그 뒤에 새로 생긴 노트는 휴지통으로 보냅니다.",
+                 bg=C["bg"], fg=C["muted"], font=(self.ui, 9), anchor="w", justify="left", wraplength=760, padx=16, pady=10).pack(fill="x")
+        cfgrow = tk.Frame(top, bg=C["bg"])
+        cfgrow.pack(side="bottom", fill="x", padx=16, pady=(0, 6))
+        btns = tk.Frame(top, bg=C["bg"])
+        btns.pack(side="bottom", fill="x", padx=16, pady=10)
+        wrap = tk.Frame(top, bg=C["bg"])
+        wrap.pack(fill="both", expand=True, padx=16)
+        tv = ttk.Treeview(wrap, columns=("when", "label", "count"), show="headings", selectmode="browse")
+        for col, text, w, anc in (("when", "시각", 170, "w"), ("label", "이름", 300, "w"), ("count", "노트 수", 90, "e")):
+            tv.heading(col, text=text)
+            tv.column(col, width=w, anchor=anc, stretch=col == "label")
+        sb = ttk.Scrollbar(wrap, orient="vertical", command=tv.yview)
+        tv.config(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        tv.pack(side="left", fill="both", expand=True)
+        info = tk.Label(cfgrow, text="", bg=C["bg"], fg=C["muted"], font=(self.ui, 9))
+        cfg = self.snap_cfg()
+        auto_var, cnt_var, day_var = tk.BooleanVar(value=cfg["auto"]), tk.StringVar(value=str(cfg["count"])), tk.StringVar(value=str(cfg["days"]))
+
+        def refresh():
+            tv.delete(*tv.get_children())
+            pts = self.snap.points()
+            for p in pts:
+                tv.insert("", "end", iid=p["id"], values=(time.strftime("%Y.%m.%d %H:%M:%S", time.localtime(p["created"])), p["label"] or "수동", f"{p['count']:,}"))
+            mb = self.snap.usage() / 1048576
+            info.config(text=f"지점 {len(pts)}개 · 보관 중인 내용 {mb:,.1f}MB")
+
+        def save_cfg(*_):
+            try:
+                st.write_config(snap_auto=auto_var.get(), snap_count=max(1, int(cnt_var.get())), snap_days=max(0, int(day_var.get())))
+            except ValueError:
+                pass
+
+        def make():
+            self.run_task("복원 지점 만드는 중", lambda prog, cancel: self.snap.create("수동", prog, cancel, force=True),
+                          lambda pid: refresh(), text="복원 지점을 만드는 중… (처음 한 번은 오래 걸립니다)")
+
+        def restore():
+            sel = tv.selection()
+            if not sel:
+                return messagebox.showinfo(APP, "되돌릴 복원 지점을 먼저 고르세요.", parent=top)
+            pid = sel[0]
+
+            def after_diff(d):
+                if not (d["change"] or d["add"] or d["remove"]):
+                    return messagebox.showinfo(APP, "지금 노트가 이 복원 지점과 같습니다.", parent=top)
+                if not messagebox.askyesno(APP, f"이 시점으로 되돌릴까요?\n\n  내용을 되돌릴 노트  {len(d['change']):,}개\n  지워졌던 것을 되살릴 노트  {len(d['add']):,}개\n"
+                                                 f"  그 뒤에 생긴 노트(휴지통으로 보냄)  {len(d['remove']):,}개\n\n되돌리기 직전 상태도 복원 지점으로 남기므로 다시 돌아올 수 있습니다.", parent=top):
+                    return
+                self.flush()
+
+                def go():
+                    def done(res):
+                        self.close_note()
+                        self.reload_notes()
+                        refresh()
+                        messagebox.showinfo(APP, "되돌렸습니다.\n" + f"내용 {res[0]:,}개 · 되살림 {res[1]:,}개 · 휴지통 {res[2]:,}개", parent=top)
+                    self.run_task("복원 중", lambda prog, cancel: self.snap.restore(pid, prog, cancel), done, text="노트를 되돌리는 중…")
+                self.checkpoint("복원 직전", go)
+            self.run_task("비교 중", lambda prog, cancel: self.snap.diff(pid, prog, cancel), after_diff, text="지금 노트와 비교하는 중…")
+
+        def delete():
+            sel = tv.selection()
+            if sel and messagebox.askyesno(APP, "이 복원 지점을 지울까요?", parent=top):
+                self.snap.delete(sel[0])
+                refresh()
+
+        def prune():
+            c = self.snap_cfg()
+            n = self.snap.prune(c["count"], c["days"])
+            refresh()
+            messagebox.showinfo(APP, f"{n}개를 정리했습니다." if n else "정리할 지점이 없습니다.", parent=top)
+        Btn(btns, "지금 복원 지점 만들기", make, padx=12, pady=3).pack(side="left")
+        Btn(btns, "이 지점으로 되돌리기", restore, kind="primary", padx=12, pady=3).pack(side="left", padx=6)
+        Btn(btns, "지우기", delete, kind="danger", padx=12, pady=3).pack(side="right")
+        Btn(btns, "오래된 것 정리", prune, padx=12, pady=3).pack(side="right", padx=6)
+        tk.Checkbutton(cfgrow, text="하루에 한 번 자동으로 만들기", variable=auto_var, command=save_cfg, bg=C["bg"], activebackground=C["bg"], font=(self.ui, 9)).pack(side="left")
+        for label, var, hi in (("  보관: 최근", cnt_var, 500), ("개 이거나", None, 0), ("", day_var, 3650)):
+            if var is None:
+                tk.Label(cfgrow, text=label, bg=C["bg"], fg=C["muted"], font=(self.ui, 9)).pack(side="left")
+                continue
+            if label:
+                tk.Label(cfgrow, text=label, bg=C["bg"], fg=C["muted"], font=(self.ui, 9)).pack(side="left")
+            sp = tk.Spinbox(cfgrow, from_=0, to=hi, textvariable=var, width=5, command=save_cfg, relief="flat", bd=0, bg=C["panel"], fg=C["text"],
+                            highlightthickness=1, highlightbackground=C["line"], font=(self.ui, 9), buttonbackground=C["panel"])
+            sp.pack(side="left", ipady=1, padx=3)
+            sp.bind("<FocusOut>", save_cfg)
+        tk.Label(cfgrow, text="일 안의 것", bg=C["bg"], fg=C["muted"], font=(self.ui, 9)).pack(side="left")
+        info.pack(side="right")
+        refresh()
 
     def trash_notes(self, paths):
         """휴지통으로 보내고 목록을 새로 읽는다 → 보낸 개수"""
@@ -727,14 +871,17 @@ class App:
             if not messagebox.askyesno(APP, f"고른 노트 {len(paths)}개를 휴지통으로 보낼까요?", parent=top):
                 return
             gone = set(paths)
-            self.trash_notes(paths)
-            for k, (why, notes) in enumerate(list(groups)):
-                groups[k] = (why, [n for n in notes if n["path"] not in gone])
-            groups[:] = [g for g in groups if len(g[1]) > 1]
-            if not groups:
-                top.destroy()
-                return messagebox.showinfo(APP, "정리했습니다.", parent=self.root)
-            fill()
+
+            def go():
+                self.trash_notes(paths)
+                for k, (why, notes) in enumerate(list(groups)):
+                    groups[k] = (why, [n for n in notes if n["path"] not in gone])
+                groups[:] = [g for g in groups if len(g[1]) > 1]
+                if not groups:
+                    top.destroy()
+                    return messagebox.showinfo(APP, "정리했습니다.", parent=self.root)
+                fill()
+            self.checkpoint("중복 노트 정리 전", go) if len(paths) >= 5 else go()
         tv.bind("<Double-1>", open_sel)
         Btn(btns, "최근 것만 남기고 고르기", pick_old, padx=12, pady=3).pack(side="left")
         Btn(btns, "선택한 노트 열기", open_sel, padx=12, pady=3).pack(side="left", padx=6)
@@ -895,25 +1042,28 @@ class App:
                 return
             cur_path = self.cur["path"] if self.cur else None
             self.flush()
-            done = 0
-            for n, new, removed in items:
-                try:   # 수정 시각은 그대로 두고(touch=False), 이전 내용은 버전으로 남긴다(force)
-                    self.store.save(n["path"], new, versioned=True, force=True, touch=False, ev="cleanup")
-                    done += 1
-                except OSError:
-                    pass
-                found[:] = [f for f in found if f[0]["path"] != n["path"]]
-            self.reload_notes()
-            m = next((x for x in self.notes if x["path"] == cur_path), None) if cur_path else None
-            if m:
-                self.open_note(m, record=False)
-            messagebox.showinfo(APP, f"{done}개 노트를 정리했습니다.", parent=top)
-            if not found:
-                return top.destroy()
-            fill()
-            pv.config(state="normal")
-            pv.delete("1.0", "end")
-            pv.config(state="disabled")
+
+            def go():
+                done = 0
+                for n, new, removed in items:
+                    try:   # 수정 시각은 그대로 두고(touch=False), 이전 내용은 버전으로 남긴다(force)
+                        self.store.save(n["path"], new, versioned=True, force=True, touch=False, ev="cleanup")
+                        done += 1
+                    except OSError:
+                        pass
+                    found[:] = [f for f in found if f[0]["path"] != n["path"]]
+                self.reload_notes()
+                m = next((x for x in self.notes if x["path"] == cur_path), None) if cur_path else None
+                if m:
+                    self.open_note(m, record=False)
+                messagebox.showinfo(APP, f"{done}개 노트를 정리했습니다.", parent=top)
+                if not found:
+                    return top.destroy()
+                fill()
+                pv.config(state="normal")
+                pv.delete("1.0", "end")
+                pv.config(state="disabled")
+            self.checkpoint("군더더기 정리 전", go) if len(items) >= 5 else go()
 
         def selected():
             return [found[i] for i in lb.curselection()]
@@ -1082,7 +1232,7 @@ class App:
 
         def on_scroll(lo, hi):
             hide(lo, hi)
-            if float(hi) > 0.9 and self.rendered < len(self.results):
+            if self.rendered < len(self.results) and (1 - float(hi)) < MORE_SCREENS * (float(hi) - float(lo)):
                 self.root.after_idle(self.more_cards)
         self.lst.config(yscrollcommand=on_scroll)
         self.lst.pack(side="left", fill="both", expand=True)
@@ -1456,15 +1606,18 @@ class App:
         if not messagebox.askyesno(APP, msg, icon="warning", parent=self.root):
             return
         self.flush()
-        try:
-            self.store.delete_root()
-        except (OSError, ValueError) as ex:
-            return messagebox.showerror(APP, str(ex), parent=self.root)
-        self.hist, self.hpos = [], -1
-        self.nb, self.tag = ALL, None
-        self.close_note()
-        self.reload_notes()
-        self.status.config(text="저장 폴더의 내용을 휴지통으로 보냈습니다. (파일 → 휴지통에서 복원)")
+
+        def go():
+            try:
+                self.store.delete_root()
+            except (OSError, ValueError) as ex:
+                return messagebox.showerror(APP, str(ex), parent=self.root)
+            self.hist, self.hpos = [], -1
+            self.nb, self.tag = ALL, None
+            self.close_note()
+            self.reload_notes()
+            self.status.config(text="저장 폴더의 내용을 휴지통으로 보냈습니다. (파일 → 휴지통에서 복원)")
+        self.checkpoint("저장 폴더 삭제 전", go)
 
     def choose_root(self):
         d = filedialog.askdirectory(parent=self.root, initialdir=self.store.root, title="노트를 저장할 폴더")
@@ -1605,10 +1758,17 @@ class App:
 
     def more_cards(self):
         """스크롤이 목록 끝에 가까워지면 다음 노트들을 이어서 그린다"""
-        if self.rendered >= len(self.results) or self.lst.yview()[1] < 0.85:
-            return
-        self.append_cards()
-        self.mark_selected()
+        L = self.lst
+        grew = False
+        for _ in range(20):   # 아래에 남은 글이 MORE_SCREENS 화면보다 적으면 그만큼 채울 때까지 이어 그린다
+            lo, hi = L.yview()
+            if self.rendered >= len(self.results) or (1 - hi) >= MORE_SCREENS * (hi - lo):
+                break
+            self.append_cards(LIST_CHUNK * 2)
+            grew = True
+            L.update_idletasks()   # 늘어난 길이로 스크롤 위치(yview)를 다시 계산
+        if grew:
+            self.mark_selected()
 
     def mark_selected(self):
         L = self.lst
@@ -2796,17 +2956,20 @@ class App:
                     migrate = bool(ans)
                 self.flush()
                 cur_path = self.cur["path"] if self.cur else None
-                try:
-                    moved, relinked = self.store.set_media(mode, path, migrate)
-                except (OSError, ValueError) as ex:
-                    return messagebox.showerror(APP, f"리소스 폴더를 바꾸지 못했습니다.\n{ex}", parent=top)
-                self.reload_notes()
-                n = next((x for x in self.notes if x["path"] == cur_path), None) if cur_path else None
-                if n:
-                    self.open_note(n, record=False)   # 링크가 바뀐 글을 다시 읽어 와서 낡은 내용으로 덮어쓰지 않게
-                refresh()
-                if migrate:
-                    messagebox.showinfo(APP, f"리소스 {moved}개를 옮기고 노트 {relinked}개의 링크를 고쳤습니다.", parent=top)
+
+                def go():
+                    try:
+                        moved, relinked = self.store.set_media(mode, path, migrate)
+                    except (OSError, ValueError) as ex:
+                        return messagebox.showerror(APP, f"리소스 폴더를 바꾸지 못했습니다.\n{ex}", parent=top)
+                    self.reload_notes()
+                    n = next((x for x in self.notes if x["path"] == cur_path), None) if cur_path else None
+                    if n:
+                        self.open_note(n, record=False)   # 링크가 바뀐 글을 다시 읽어 와서 낡은 내용으로 덮어쓰지 않게
+                    refresh()
+                    if migrate:
+                        messagebox.showinfo(APP, f"리소스 {moved}개를 옮기고 노트 {relinked}개의 링크를 고쳤습니다.", parent=top)
+                self.checkpoint("리소스 폴더 이전 전", go) if migrate else go()   # 노트의 링크가 바뀌므로 먼저 복원 지점
 
             lab(p, "노트 폴더", font=(self.ui, 10, "bold")).pack(anchor="w")
             lab(p, "노트북 = 폴더(하위 폴더는 하위 노트북), 노트 = .md 파일", fg=C["muted"], font=(self.ui, 9)).pack(anchor="w", pady=(0, 6))

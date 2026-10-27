@@ -135,11 +135,20 @@ def parse_meta(body):
         return out
     out["fm"] = True
     in_tags = False
-    for line in m.group(1).split("\n"):
+    lines = m.group(1).split("\n")
+    for i, line in enumerate(lines):
         line = line.rstrip("\r")
         mm = re.match(r"^([A-Za-z_]+):[ \t]*(.*)$", line)
         if mm:
             key, val = mm.group(1).lower(), mm.group(2).strip().strip("\"'")
+            if re.fullmatch(r"[>|][+-]?", val):   # 긴 값은 다음 줄에 들여써 이어진다(source: >-)
+                rest = []
+                for nxt in lines[i + 1:]:
+                    if nxt[:1] in (" ", "\t"):
+                        rest.append(nxt.strip())
+                    else:
+                        break
+                val = " ".join(rest).strip().strip("\"'")
             in_tags = key == "tags" and not val
             if key in ("created", "updated"):
                 out[key] = parse_time(val)
@@ -379,7 +388,7 @@ class Store:
             raise
         self.journal("delete", rel, detail="휴지통")
 
-    def trash_files(self, paths, into):
+    def trash_files(self, paths, into, label=None):
         """여러 파일(예: 안 쓰는 그림)을 휴지통 항목 하나로 옮긴다. 복원하면 into 폴더 안으로 돌아간다 → 옮긴 개수"""
         paths = [p for p in paths if os.path.isfile(p)]
         if not paths:
@@ -398,8 +407,8 @@ class Store:
                 shutil.move(p, dst)
                 moved.append((p, dst))
             with open(os.path.join(d, "meta.json"), "w", encoding="utf-8") as f:
-                json.dump({"rel": "안 쓰는 미디어 파일 %d개" % len(moved), "deleted": time.time(), "dir": True, "into": into}, f)
-            self.journal("delete", ".", detail="안 쓰는 미디어 파일 %d개" % len(moved))
+                json.dump({"rel": (label or "안 쓰는 미디어 파일") + " %d개" % len(moved), "deleted": time.time(), "dir": True, "into": into}, f)
+            self.journal("delete", ".", detail=(label or "안 쓰는 미디어 파일") + " %d개" % len(moved))
         except OSError:
             for p, dst in moved:
                 shutil.move(dst, p)

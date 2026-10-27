@@ -78,7 +78,7 @@ def find_duplicates(notes, progress=None, cancelled=lambda: False):
     이유: 본문이 같음 / 본문이 비슷함"""
     by_path = {n["path"]: n for n in notes}
     by_title, raw_hash = {}, {}
-    n_of, df = Counter(), {}
+    stats = SiteStats()
     total = len(notes)
     for i, n in enumerate(notes):   # 1단계: 제목별로 모으고, 사이트별 공통 줄(메뉴 등)도 센다
         if cancelled():
@@ -95,19 +95,10 @@ def find_duplicates(notes, progress=None, cancelled=lambda: False):
             return []
         if progress and i % 100 == 0:
             progress(total + i, total + len(cand))
-        body = by_path[p].read()
-        site = site_of(body)
-        if site:
-            n_of[site] += 1
-            df.setdefault(site, Counter()).update(doc_keys(body))
-        raw_hash[p] = (body, site)
-    sites = {}
-    for site, c in df.items():
-        if n_of[site] >= SITE_MIN_NOTES:
-            need = max(SITE_MIN_DOCS, SITE_RATIO * n_of[site])
-            lines = frozenset(k for k, v in c.items() if v >= need)
-            if lines:
-                sites[site] = lines
+        body = unwrap_single_column(by_path[p].read())[0]
+        stats.add(body)
+        raw_hash[p] = (body, site_of(body))
+    sites = stats.result()
     uf, why_of, members = _Union(), {}, {}
     links = []
     for group in groups.values():
@@ -189,6 +180,8 @@ def clipper_rule(line, plain):
 SITE_MIN_NOTES = 6      # 같은 사이트에서 스크랩한 노트가 이만큼은 있어야 "사이트 공통 줄"을 찾는다
 SITE_RATIO = 0.30       # 그중 이 비율 이상의 노트에 똑같이 나오는 줄이 사이트 공통(메뉴·머리글·바닥글)
 SITE_MIN_DOCS = 4       # 그리고 최소 이만큼의 노트에 나와야 한다
+EDGE_LINES = 40         # 맨 위/아래 몇 줄(빈 줄 빼고)을 가장자리로 볼지
+EDGE_MIN_DOCS = 6       # 가장자리에서 반복되는 줄은 이만큼의 노트에 나오면 틀로 본다
 NAV_RUN = 5             # 글 맨 위·맨 아래에 짧은 링크/목록 줄이 이만큼 이어지면 메뉴 덩어리로 본다
 NAV_EDGE = 25           # 맨 위/아래 몇 줄 안쪽을 가장자리로 볼지
 
@@ -219,6 +212,13 @@ def line_key(line):
     if re.search(r"\]\([^)]*(youtube\.com|youtu\.be)", line):   # 영상 링크·썸네일은 본문이다
         return None
     plain = _plain(line)
+    if not plain and "![" in line and len(line.strip()) <= 600:   # 글자 없이 그림뿐인 줄(사이트 아이콘·버튼): 파일 이름의 해시와 링크 주소의 노트별 값은 빼고 비교
+        s = re.sub(r"\)\]\(https?://[^)]*\)", ")](U)", line.strip())   # 그림을 감싼 링크의 주소만(그림 자체의 주소는 그대로)
+        # 해시는 "toplogo_<해시>.gif" 처럼 글자 이름 뒤에 붙은 것만 뺀다(본문 그림은 이름 전체가 해시라서 줄마다 다르게 남는다)
+        return "IMG:" + re.sub(r"(?<=[A-Za-z]_)[0-9a-f]{16,}", "#", re.sub(r"(\.\./)+|\.resources/|_resources/", "", s))
+    lab = re.match(r"^([^\s:：\d][^\s:：]{0,7})\s*[:：]\s*\S", plain)
+    if lab and len(plain) <= 80:   # "조회수 : 1256", "게시물ID : …" 같은 항목 줄: 값은 노트마다 달라서 항목 이름으로 비교
+        return "LBL:" + lab.group(1)
     if not (2 <= len(plain) <= 120) or re.fullmatch(r"[\d\W_]+", plain):
         return None
     return plain
@@ -230,16 +230,52 @@ def _split(body):
 
 
 def doc_keys(body):
-    """한 노트가 가진 (코드 블록 밖) 글줄 키 집합"""
-    keys, fence = set(), False
+    """한 노트의 (코드 블록 밖) 글줄 키 → (전체 키 집합, 맨 위·맨 아래 가장자리에 있는 키 집합)"""
+    seq, fence = [], False
     for line in _split(body)[1].split("\n"):
         if line.lstrip().startswith(("```", "~~~")):
             fence = not fence
-        elif not fence:
-            k = line_key(line)
-            if k:
-                keys.add(k)
-    return keys
+        elif not fence and line.strip():
+            seq.append(line_key(line))
+    keys = {k for k in seq if k}
+    edge = {k for k in seq[:EDGE_LINES] + seq[-EDGE_LINES:] if k}
+    return keys, edge
+
+
+class SiteStats:
+    """사이트별로 여러 노트에 똑같이 반복되는 줄(메뉴·머리글·바닥글)을 센다.
+    ① 어디에 있든 사이트 노트의 SITE_RATIO 이상에 나오는 줄, 또는
+    ② 글 맨 위·아래 가장자리에서 EDGE_MIN_DOCS 개 이상의 노트에 나오고 그 노트들에서 거의 항상 가장자리에 있는 줄
+       (사이트가 스크랩 방식을 바꿔서 틀이 일부 노트에만 있어도 찾는다)"""
+
+    def __init__(self):
+        self.n_of, self.df, self.edge, self.seen = Counter(), {}, {}, set()
+
+    def add(self, body):
+        site = site_of(body)
+        if not site:
+            return
+        src = norm_url(st.note_source(body))
+        if src in self.seen:   # 같은 글을 여러 번 저장한 노트는 한 번만 센다(안 그러면 그 글의 본문이 '공통 줄'이 된다)
+            return
+        self.seen.add(src)
+        keys, edge = doc_keys(body)
+        self.n_of[site] += 1
+        self.df.setdefault(site, Counter()).update(keys)
+        self.edge.setdefault(site, Counter()).update(edge)
+
+    def result(self):
+        out = {}
+        for site, c in self.df.items():
+            total = self.n_of[site]
+            if total < SITE_MIN_NOTES:
+                continue
+            need = max(SITE_MIN_DOCS, SITE_RATIO * total)
+            e = self.edge.get(site, Counter())
+            lines = frozenset(k for k, v in c.items() if v >= need or (e[k] >= EDGE_MIN_DOCS and e[k] >= 0.8 * v))
+            if lines:
+                out[site] = lines
+        return out
 
 
 def _navlike(line):
@@ -284,7 +320,11 @@ def clean_body(body, site_lines=frozenset()):
                 why = "통신사 관련뉴스 꼬리"
             elif plain and (cr := clipper_rule(line, plain)):
                 why = cr
-            elif plain and line_key(line) in site_lines:
+            elif not plain and line.strip() and "![" not in line and ("](" in line or "<a " in line):
+                why = "빈 링크·앵커"
+            elif line.count("](") >= 8 and len(plain) <= 14 * line.count("]("):
+                why = "링크 나열(메뉴)"
+            elif line_key(line) in site_lines:
                 why = "사이트 공통"
             elif i in nav and not re.search(r"(youtube\.com|youtu\.be)", line):
                 why = "메뉴 덩어리"
@@ -300,30 +340,47 @@ def clean_body(body, site_lines=frozenset()):
     return head + text, removed
 
 
+ONE_COL = re.compile(r"(?m)^\|[^|\n]*\|[ \t]*\n\|[ \t]*:?-{3,}:?[ \t]*\|[ \t]*\n((?:\|[^|\n]*\|[ \t]*(?:\n|$))+)")
+
+
+def unwrap_single_column(body):
+    """칸이 하나뿐인 표(옛 스크랩이 글 전체를 표 한 칸에 넣은 것)를 일반 마크다운 글로 푼다 → (새 본문, 푼 표 개수)
+    <br> 은 줄바꿈이 되고 빈 칸·빈 머리행은 사라진다. 코드 블록이 든 노트는 건드리지 않는다."""
+    if "```" in body or "~~~" in body:
+        return body, 0
+    head, rest = _split(body)
+    count = [0]
+
+    def fix(m):
+        full = m.group(0)
+        first = full.split("\n", 1)[0].strip().strip("|").strip()
+        cells = [first] + [x.strip().strip("|").strip() for x in m.group(1).split("\n") if x.strip()]
+        parts = []
+        for c in cells:
+            c = re.sub(r"<br\s*/?>", "\n", c, flags=re.I)
+            c = "\n".join(x.rstrip() for x in c.split("\n")).strip()
+            if c:
+                parts.append(c)
+        count[0] += 1
+        return ("\n\n".join(parts) + "\n\n") if parts else ""
+
+    new = ONE_COL.sub(fix, rest)
+    if not count[0]:
+        return body, 0
+    new = re.sub(r"\n{3,}", "\n\n", new)
+    return head + new, count[0]
+
+
 def site_boilerplate(notes, progress=None, cancelled=lambda: False):
     """사이트별로 노트 여러 개에 똑같이 반복되는 줄을 찾는다 → {사이트: 줄 집합}"""
-    n_of, df = Counter(), {}
+    stats = SiteStats()
     for i, n in enumerate(notes):
         if cancelled():
             return {}
         if progress and i % 200 == 0:
             progress(i, len(notes) * 2)
-        body = n.read()
-        site = site_of(body)
-        if not site:
-            continue
-        n_of[site] += 1
-        df.setdefault(site, Counter()).update(doc_keys(body))
-    out = {}
-    for site, c in df.items():
-        total = n_of[site]
-        if total < SITE_MIN_NOTES:
-            continue
-        need = max(SITE_MIN_DOCS, SITE_RATIO * total)
-        lines = frozenset(k for k, v in c.items() if v >= need)
-        if lines:
-            out[site] = lines
-    return out
+        stats.add(unwrap_single_column(n.read())[0])
+    return stats.result()
 
 
 def scan_junk(notes, progress=None, cancelled=lambda: False):
@@ -335,10 +392,12 @@ def scan_junk(notes, progress=None, cancelled=lambda: False):
             break
         if progress and i % 200 == 0:
             progress(total + i, total * 2)
-        body = n.read()
+        body, tables = unwrap_single_column(n.read())
         new, removed = clean_body(body, sites.get(site_of(body), frozenset()))
+        if tables:
+            removed = [(0, f"(칸이 하나뿐인 표 {tables}개를 일반 글로 풀기)", "표 풀기")] + removed
         if removed:
-            out.append((n, new, removed))
+            out.append((n, new if (removed or tables) else body, removed))
     return out
 
 
