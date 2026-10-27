@@ -29,6 +29,7 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
 import bulk  # noqa: E402
+import cleanup  # noqa: E402
 import clipserver  # noqa: E402
 import editor as ed  # noqa: E402   (위키나루: 서식 도구·그림 불러오기)
 import preview  # noqa: E402
@@ -322,6 +323,10 @@ class App:
         self.mode = view.get("mode") if view.get("mode") in ("edit", "split", "view") else "split"
         self.store = st.Store()
         self.store.tagger = note_tags   # 색인에 태그도 함께 기억
+        try:
+            self.store.purge_trash()   # 휴지통에 보관 기간(기본 30일)이 지난 항목은 완전히 지운다
+        except OSError:
+            pass
         self.nb = ALL                  # '*' 모든 노트 · '' 기본 · 그 밖은 노트북 폴더 이름
         self.tag = None                # 태그로 거르는 중이면 그 태그
         self.nb_keys, self.tag_keys = [], []
@@ -338,6 +343,7 @@ class App:
         self.dirty = self.loading = self.quiet = False
         self.save_job = self.render_job = self.search_job = None
         self.imgs, self.img_q, self.photos = {}, queue.Queue(), []
+        self.img_files = {}   # 렌더링 화면 속 그림 이름 → 원본 파일 경로(우클릭 "파일 위치 열기"용)
         self.links = {}
         self.clip_q = queue.Queue()
         self.srv = self.port = None
@@ -427,6 +433,8 @@ class App:
         m.add_command(label="새 노트북", accelerator="Ctrl+Shift+N", command=self.add_notebook)
         m.add_command(label="새 하위 노트북", command=self.add_subnotebook)
         m.add_separator()
+        m.add_command(label="휴지통…", command=self.show_trash)
+        m.add_separator()
         m.add_command(label="종료", accelerator="Alt+F4", command=self.quit)
         mb.add_cascade(label="파일", menu=m, underline=0)
 
@@ -488,6 +496,11 @@ class App:
         mb.add_cascade(label="이동", menu=m, underline=0)
 
         m = tk.Menu(mb, tearoff=0)
+        m.add_command(label="중복 노트 찾기…", command=self.show_duplicates)
+        m.add_command(label="스크랩 군더더기 정리…", command=self.show_cleanup)
+        mb.add_cascade(label="도구", menu=m, underline=0)
+
+        m = tk.Menu(mb, tearoff=0)
         m.add_command(label="옵션…", accelerator="Ctrl+,", command=lambda: self.show_options("general"))
         m.add_separator()
         m.add_command(label="폴더 설정… (노트·리소스 폴더)", command=lambda: self.show_options("folders"))
@@ -504,6 +517,301 @@ class App:
             APP, "위키나루 기반 마크다운 노트 앱\n노트는 .md 파일로 저장됩니다.\n\n저장 폴더: " + self.store.root, parent=self.root))
         mb.add_cascade(label="도움말", menu=m, underline=0)
         self.root.config(menu=mb)
+
+    # ------------------------------------------------------------ 도구: 중복 노트 · 스크랩 군더더기
+    def tool_window(self, title, size="900x580"):
+        top = tk.Toplevel(self.root)
+        top.title(title)
+        top.configure(bg=C["bg"])
+        top.transient(self.root)
+        top.geometry(f"{size}+{self.root.winfo_x() + 80}+{self.root.winfo_y() + 50}")
+        top.minsize(640, 400)
+        return top
+
+    def scan_notes(self, title, work, done):
+        """모든 노트를 뒤에서 훑는다(work(notes, progress, cancelled) → 결과). 끝나면 done(결과). 취소 가능."""
+        self.flush()
+        top = self.tool_window(title, "420x150")
+        msg = tk.Label(top, text="노트를 읽는 중…", bg=C["bg"], fg=C["text"], font=(self.ui, 10), pady=24)
+        msg.pack()
+        state = {"cancel": False, "prog": (0, 0)}
+        q = queue.Queue()
+
+        def stop():
+            state["cancel"] = True
+            top.destroy()
+        top.protocol("WM_DELETE_WINDOW", stop)
+        Btn(top, "취소", stop, padx=14, pady=3).pack()
+        notes = list(self.all_notes)
+
+        def job():
+            try:
+                q.put(("ok", work(notes, lambda d, t: state.update(prog=(d, t)), lambda: state["cancel"])))
+            except Exception as ex:  # noqa: BLE001
+                q.put(("err", str(ex)))
+        threading.Thread(target=job, daemon=True).start()
+
+        def poll():
+            if state["cancel"]:
+                return
+            try:
+                kind, val = q.get_nowait()
+            except queue.Empty:
+                d, t = state["prog"]
+                msg.config(text=f"노트를 읽는 중… {d:,} / {t:,}" if t else "노트를 읽는 중…")
+                return top.after(100, poll)
+            top.destroy()
+            if kind == "err":
+                return messagebox.showerror(APP, val, parent=self.root)
+            done(val)
+        poll()
+
+    def trash_notes(self, paths):
+        """휴지통으로 보내고 목록을 새로 읽는다 → 보낸 개수"""
+        cur_path = self.cur["path"] if self.cur else None
+        if cur_path in paths:
+            if self.save_job:
+                self.root.after_cancel(self.save_job)
+                self.save_job = None
+            self.dirty = False
+            self.close_note()
+        else:
+            self.flush()
+        done = 0
+        for p in paths:
+            try:
+                self.store.delete_note(p)
+                done += 1
+            except OSError:
+                pass
+        self.reload_notes()
+        return done
+
+    def show_trash(self):
+        """파일 > 휴지통: 지운 노트·노트북을 보관 기간(기본 30일) 동안 두고, 복원하거나 바로 지운다"""
+        top = self.tool_window("휴지통", "760x500")
+        head = tk.Frame(top, bg=C["bg"])
+        head.pack(fill="x", padx=16, pady=(12, 6))
+        info = tk.Label(head, text="", bg=C["bg"], fg=C["muted"], font=(self.ui, 9), anchor="w", justify="left")
+        info.pack(side="left")
+        days_var = tk.StringVar(value=str(self.store.trash_days))
+        tk.Label(head, text="일", bg=C["bg"], fg=C["muted"], font=(self.ui, 9)).pack(side="right")
+
+        def set_days(*_):
+            try:
+                st.write_config(trash_days=max(0, int(days_var.get())))
+            except ValueError:
+                pass
+            refresh()
+        sp = tk.Spinbox(head, from_=0, to=3650, textvariable=days_var, width=5, command=set_days, relief="flat", bd=0, bg=C["panel"], fg=C["text"],
+                        highlightthickness=1, highlightbackground=C["line"], font=(self.ui, 10), buttonbackground=C["panel"])
+        sp.pack(side="right", ipady=2, padx=4)
+        sp.bind("<FocusOut>", set_days)
+        sp.bind("<Return>", set_days)
+        tk.Label(head, text="보관 기간 (0 = 자동으로 지우지 않음)", bg=C["bg"], fg=C["muted"], font=(self.ui, 9)).pack(side="right")
+        btns = tk.Frame(top, bg=C["bg"])
+        btns.pack(side="bottom", fill="x", padx=16, pady=12)
+        wrap = tk.Frame(top, bg=C["bg"])
+        wrap.pack(fill="both", expand=True, padx=16)
+        tv = ttk.Treeview(wrap, columns=("kind", "where", "deleted", "left"), selectmode="extended", show="headings")
+        for col, text, w, anchor in (("kind", "종류", 70, "w"), ("where", "이름 · 원래 위치", 360, "w"), ("deleted", "지운 때", 130, "w"), ("left", "남은 기간", 90, "e")):
+            tv.heading(col, text=text)
+            tv.column(col, width=w, anchor=anchor, stretch=col == "where")
+        sb = ttk.Scrollbar(wrap, orient="vertical", command=tv.yview)
+        tv.config(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        tv.pack(side="left", fill="both", expand=True)
+
+        def refresh():
+            tv.delete(*tv.get_children())
+            days = self.store.trash_days
+            items = self.store.trash_items()
+            for it in items:
+                left = "-" if not days else "%d일" % max(0, math.ceil(days - (time.time() - it["deleted"]) / 86400))
+                tv.insert("", "end", iid=it["id"], values=("노트북" if it["dir"] else "노트", it["rel"], time.strftime("%Y.%m.%d %H:%M", time.localtime(it["deleted"])), left))
+            info.config(text=f"{len(items)}개 — 지운 지 {days}일이 지나면 완전히 지워집니다." if days else f"{len(items)}개 — 자동으로 지우지 않습니다.")
+        refresh()
+
+        def restore():
+            sel = tv.selection()
+            if not sel:
+                return messagebox.showinfo(APP, "복원할 항목을 먼저 고르세요.", parent=top)
+            fail = 0
+            for tid in sel:
+                try:
+                    self.store.restore_trash(tid)
+                except OSError:
+                    fail += 1
+            self.reload_notes()
+            refresh()
+            if fail:
+                messagebox.showerror(APP, f"{fail}개를 복원하지 못했습니다.", parent=top)
+
+        def remove():
+            sel = tv.selection()
+            if sel and messagebox.askyesno(APP, f"고른 {len(sel)}개를 완전히 지울까요? 되돌릴 수 없습니다.", parent=top):
+                for tid in sel:
+                    self.store.delete_trash(tid)
+                refresh()
+
+        def empty():
+            n = len(tv.get_children())
+            if n and messagebox.askyesno(APP, f"휴지통의 {n}개를 모두 완전히 지울까요? 되돌릴 수 없습니다.", parent=top):
+                self.store.empty_trash()
+                refresh()
+        Btn(btns, "복원", restore, kind="primary", padx=14, pady=3).pack(side="left")
+        Btn(btns, "선택한 항목 완전히 삭제", remove, kind="danger", padx=12, pady=3).pack(side="left", padx=6)
+        Btn(btns, "휴지통 비우기", empty, kind="danger", padx=12, pady=3).pack(side="right")
+
+    def show_duplicates(self):
+        """도구 > 중복 노트 찾기: 같은 원본 주소 · 같은 본문 · 같은 제목에 비슷한 본문을 묶어 보여 주고, 골라서 휴지통으로"""
+        self.scan_notes("중복 노트 찾기", lambda notes, prog, cancel: cleanup.find_duplicates(notes, prog, cancel), self.duplicates_dialog)
+
+    def duplicates_dialog(self, groups):
+        if not groups:
+            return messagebox.showinfo(APP, "중복으로 보이는 노트가 없습니다.", parent=self.root)
+        top = self.tool_window(f"중복 노트 — {len(groups):,}묶음")
+        tk.Label(top, text="같은 묶음 안의 노트들입니다. 지울 노트를 고른 뒤(Ctrl/Shift 로 여러 개) 휴지통으로 보내세요.",
+                 bg=C["bg"], fg=C["muted"], font=(self.ui, 9), anchor="w", padx=16, pady=10).pack(fill="x")
+        btns = tk.Frame(top, bg=C["bg"])
+        btns.pack(side="bottom", fill="x", padx=16, pady=12)
+        wrap = tk.Frame(top, bg=C["bg"])
+        wrap.pack(fill="both", expand=True, padx=16)
+        tv = ttk.Treeview(wrap, columns=("nb", "mtime", "size"), selectmode="extended")
+        tv.heading("#0", text="제목")
+        tv.heading("nb", text="노트북")
+        tv.heading("mtime", text="수정")
+        tv.heading("size", text="크기")
+        tv.column("#0", width=380)
+        tv.column("nb", width=140)
+        tv.column("mtime", width=130, stretch=False)
+        tv.column("size", width=80, anchor="e", stretch=False)
+        sb = ttk.Scrollbar(wrap, orient="vertical", command=tv.yview)
+        tv.config(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        tv.pack(side="left", fill="both", expand=True)
+        path_of, groups_iid = {}, []
+
+        def fill():
+            tv.delete(*tv.get_children())
+            path_of.clear()
+            groups_iid.clear()
+            for why, notes in groups:
+                g = tv.insert("", "end", text=f"{', '.join(why)} — {len(notes)}개", open=True)
+                groups_iid.append(g)
+                for n in notes:
+                    iid = tv.insert(g, "end", text=n["title"], values=(self.nb_label(n["nb"]), time.strftime("%Y.%m.%d %H:%M", time.localtime(n["mtime"])), f"{n['size']:,}B"))
+                    path_of[iid] = n["path"]
+        fill()
+
+        def pick_old():   # 묶음마다 가장 최근에 고친 것만 남기고 나머지를 고른다
+            sel = []
+            for g in groups_iid:
+                sel += tv.get_children(g)[1:]
+            tv.selection_set(sel)
+
+        def open_sel(e=None):
+            sel = [i for i in tv.selection() if i in path_of]
+            n = next((x for x in self.all_notes if sel and x["path"] == path_of[sel[0]]), None)
+            if n:
+                self.open_note(n)
+
+        def trash():
+            paths = [path_of[i] for i in tv.selection() if i in path_of]
+            if not paths:
+                return messagebox.showinfo(APP, "지울 노트를 먼저 고르세요.", parent=top)
+            if not messagebox.askyesno(APP, f"고른 노트 {len(paths)}개를 휴지통으로 보낼까요?", parent=top):
+                return
+            gone = set(paths)
+            self.trash_notes(paths)
+            for k, (why, notes) in enumerate(list(groups)):
+                groups[k] = (why, [n for n in notes if n["path"] not in gone])
+            groups[:] = [g for g in groups if len(g[1]) > 1]
+            if not groups:
+                top.destroy()
+                return messagebox.showinfo(APP, "정리했습니다.", parent=self.root)
+            fill()
+        tv.bind("<Double-1>", open_sel)
+        Btn(btns, "최근 것만 남기고 고르기", pick_old, padx=12, pady=3).pack(side="left")
+        Btn(btns, "선택한 노트 열기", open_sel, padx=12, pady=3).pack(side="left", padx=6)
+        Btn(btns, "선택한 노트 휴지통으로", trash, kind="danger", padx=12, pady=3).pack(side="right")
+
+    def show_cleanup(self):
+        """도구 > 스크랩 군더더기 정리: 노트마다 지울 줄을 미리 보여 주고, 골라서 적용(적용 전 내용은 노트 버전으로 남는다)"""
+        self.scan_notes("스크랩 군더더기 찾기", lambda notes, prog, cancel: cleanup.scan_junk(notes, prog, cancel), self.cleanup_dialog)
+
+    def cleanup_dialog(self, found):
+        if not found:
+            return messagebox.showinfo(APP, "정리할 군더더기(맨위로·공유하기·댓글 쓰기 같은 줄)가 없습니다.", parent=self.root)
+        top = self.tool_window(f"스크랩 군더더기 — 노트 {len(found):,}개")
+        tk.Label(top, text="지울 줄이 있는 노트입니다. 노트를 고르면 지워질 줄을 보여 줍니다. 적용하면 이전 내용이 노트 버전으로 남습니다.",
+                 bg=C["bg"], fg=C["muted"], font=(self.ui, 9), anchor="w", padx=16, pady=10).pack(fill="x")
+        btns = tk.Frame(top, bg=C["bg"])
+        btns.pack(side="bottom", fill="x", padx=16, pady=12)
+        left = tk.Frame(top, bg=C["panel"], width=320)
+        left.pack(side="left", fill="y", padx=(16, 0))
+        left.pack_propagate(False)
+        lb = tk.Listbox(left, bg=C["panel"], fg=C["text"], relief="flat", bd=0, highlightthickness=0, activestyle="none", selectmode="extended",
+                        selectbackground=C["soft"], selectforeground=C["accent"], font=(self.ui, 10), exportselection=False)
+        lb.pack(fill="both", expand=True, padx=6, pady=6)
+        pv = tk.Text(top, wrap="word", state="disabled", relief="flat", bd=0, highlightthickness=0, bg=C["panel"], fg=C["text"],
+                     font=(self.mono, 10), padx=14, pady=10)
+        pv.pack(side="left", fill="both", expand=True, padx=16)
+        pv.tag_configure("rm", foreground=C["danger"], overstrike=True)
+
+        def fill():
+            lb.delete(0, "end")
+            for n, new, removed in found:
+                lb.insert("end", f"{n['title']}  ({len(removed)}줄)")
+
+        def show(e=None):
+            sel = lb.curselection()
+            if not sel:
+                return
+            n, new, removed = found[sel[-1]]
+            pv.config(state="normal")
+            pv.delete("1.0", "end")
+            pv.insert("end", f"{n['title']} — {self.nb_label(n['nb'])}\n지워지는 줄 {len(removed)}개:\n\n")
+            for no, line in removed[:300]:
+                pv.insert("end", f"{no:>5}  {line}\n", "rm")
+            pv.config(state="disabled")
+        fill()
+        lb.bind("<<ListboxSelect>>", show)
+
+        def apply(items):
+            if not items:
+                return messagebox.showinfo(APP, "정리할 노트를 먼저 고르세요.", parent=top)
+            if st.version_settings()["keep"] <= 0 and not messagebox.askyesno(
+                    APP, "노트 버전 기록이 꺼져 있어 적용하면 되돌릴 수 없습니다. 그래도 적용할까요?", parent=top):
+                return
+            if not messagebox.askyesno(APP, f"노트 {len(items)}개에서 군더더기 줄을 지울까요?", parent=top):
+                return
+            cur_path = self.cur["path"] if self.cur else None
+            self.flush()
+            done = 0
+            for n, new, removed in items:
+                try:   # 수정 시각은 그대로 두고(touch=False), 이전 내용은 버전으로 남긴다(force)
+                    self.store.save(n["path"], new, versioned=True, force=True, touch=False)
+                    done += 1
+                except OSError:
+                    pass
+                found[:] = [f for f in found if f[0]["path"] != n["path"]]
+            self.reload_notes()
+            m = next((x for x in self.notes if x["path"] == cur_path), None) if cur_path else None
+            if m:
+                self.open_note(m, record=False)
+            messagebox.showinfo(APP, f"{done}개 노트를 정리했습니다.", parent=top)
+            if not found:
+                return top.destroy()
+            fill()
+            pv.config(state="normal")
+            pv.delete("1.0", "end")
+            pv.config(state="disabled")
+
+        def selected():
+            return [found[i] for i in lb.curselection()]
+        Btn(btns, "선택한 노트 정리", lambda: apply(selected()), kind="primary", padx=12, pady=3).pack(side="right")
+        Btn(btns, "모두 정리", lambda: apply(list(found)), padx=12, pady=3).pack(side="right", padx=6)
 
     def help_search(self):
         messagebox.showinfo("검색 문법", "공백 = AND\n회의록 AND (예산 OR 일정) NOT 취소\n\"정확한 구절\"\n"
@@ -793,6 +1101,8 @@ class App:
         self.view.pack(side="left", fill="both", expand=True)
         self.configure_tags()
         self.view.bind("<Button-1>", self.on_view_click)
+        self.view.bind("<Button-3>", self.on_view_menu)
+        self.text.bind("<Button-3>", self.on_text_menu)
         self.show_empty(True)
 
     def show_empty(self, on):
@@ -1012,7 +1322,7 @@ class App:
             return
         if key == "":
             return self.delete_root()
-        if not messagebox.askyesno(APP, f"노트북 \"{self.nb_label(key)}\"을(를) 휴지통으로 보낼까요?\n(하위 노트북과 안의 노트도 함께 갑니다)", parent=self.root):
+        if not messagebox.askyesno(APP, f"노트북 \"{self.nb_label(key)}\"을(를) 휴지통으로 보낼까요?\n(하위 노트북과 안의 노트도 함께 가며, {self.store.trash_days}일 동안 보관합니다)", parent=self.root):
             return
         self.flush()
         try:
@@ -1421,7 +1731,7 @@ class App:
             self.title_entry.select_range(0, "end")
 
     def delete_note(self):
-        if not self.cur or not messagebox.askyesno(APP, "이 노트를 휴지통으로 보낼까요?", parent=self.root):
+        if not self.cur or not messagebox.askyesno(APP, f"이 노트를 휴지통으로 보낼까요?\n({self.store.trash_days}일 동안 보관하며 파일 → 휴지통에서 복원할 수 있습니다)", parent=self.root):
             return
         if self.save_job:
             self.root.after_cancel(self.save_job)
@@ -1477,6 +1787,7 @@ class App:
         v.delete("1.0", "end")
         self.links.clear()
         self.photos.clear()
+        self.img_files.clear()
         for t, tags, extra in segs:
             tg = list(tags)
             if "b" in tg and "i" in tg:
@@ -1567,17 +1878,58 @@ class App:
             if not path:
                 return False
             img = self.photo_from_file(path)
-        return self.put_image(img, width) if img is not None else False
+        return self.put_image(img, width, path) if img is not None else False
 
-    def put_image(self, img, width=0):
+    def put_image(self, img, width=0, path=None):
         """그림을 렌더링 화면에 넣는다. HTML 의 width 가 있으면 그 너비에 가깝게(정수 배로만 줄일 수 있다), 없으면 너무 클 때만 줄인다"""
         if width and img.width() > width:
             img = img.subsample(max(1, round(img.width() / width)))
         elif img.width() > ed.IMG_MAX_W:
             img = img.subsample(math.ceil(img.width() / ed.IMG_MAX_W))
         self.photos.append(img)
-        self.view.image_create("end", image=img)
+        name = self.view.image_create("end", image=img)
+        if path:
+            self.img_files[str(name)] = path
         return True
+
+    def image_at(self, e):
+        """렌더링 화면의 (x, y) 에 있는 그림의 (이름 or None) — 그림이 아니면 None"""
+        idx = self.view.index(f"@{e.x},{e.y}")
+        hit = self.view.dump(idx, idx + "+1c", image=True)
+        return str(hit[0][1]) if hit else None
+
+    def reveal_file(self, path):
+        if sys.platform == "win32":
+            subprocess.Popen(["explorer", "/select,", os.path.normpath(path)])
+        else:
+            webbrowser.open(os.path.dirname(path))
+
+    def on_view_menu(self, e):
+        v = self.view
+        m = tk.Menu(self.root, tearoff=0)
+        name = self.image_at(e)
+        if name is not None:
+            path = self.img_files.get(name)
+            m.add_command(label="그림 파일 위치 열기", command=lambda: self.reveal_file(path), state="normal" if path else "disabled")
+            m.add_separator()
+        m.add_command(label="복사", command=lambda: v.event_generate("<<Copy>>"), state="normal" if v.tag_ranges("sel") else "disabled")
+        m.add_command(label="모두 선택", command=lambda: v.tag_add("sel", "1.0", "end-1c"))
+        m.tk_popup(e.x_root, e.y_root)
+
+    def on_text_menu(self, e):
+        t = self.text
+        t.focus_set()
+        has_sel = bool(t.tag_ranges("sel"))
+        m = tk.Menu(self.root, tearoff=0)
+        m.add_command(label="실행 취소", command=lambda: t.event_generate("<<Undo>>"))
+        m.add_command(label="다시 실행", command=lambda: t.event_generate("<<Redo>>"))
+        m.add_separator()
+        m.add_command(label="잘라내기", command=lambda: t.event_generate("<<Cut>>"), state="normal" if has_sel else "disabled")
+        m.add_command(label="복사", command=lambda: t.event_generate("<<Copy>>"), state="normal" if has_sel else "disabled")
+        m.add_command(label="붙여넣기", command=lambda: t.event_generate("<<Paste>>"))
+        m.add_separator()
+        m.add_command(label="모두 선택", command=lambda: t.tag_add("sel", "1.0", "end-1c"))
+        m.tk_popup(e.x_root, e.y_root)
 
     def remote_image(self, url):
         s = self.imgs.get(url)
@@ -2225,8 +2577,10 @@ class App:
             def refresh():
                 root_var.set(self.store.root)
                 media_var.set(self.store.media_dir)
-                mode_note.config(text={"default": "현재: 노트 폴더 안의 _resources", "sibling": "현재: 노트 폴더와 같은 위치의 _resources",
-                                       "custom": "현재: 직접 지정한 폴더"}.get(self.store.media_mode, ""))
+                if self.store.media_is_vault:
+                    mode_note.config(text="현재: 볼트 안 .resources (숨김)")
+                else:
+                    mode_note.config(text="현재: 예전 방식의 리소스 폴더입니다. 「볼트 안으로 옮기기」를 누르면 그림을 .resources 로 옮기고 노트의 링크도 고칩니다.")
 
             def change_root():
                 if self.choose_root():
@@ -2259,28 +2613,24 @@ class App:
                 if migrate:
                     messagebox.showinfo(APP, f"리소스 {moved}개를 옮기고 노트 {relinked}개의 링크를 고쳤습니다.", parent=top)
 
-            def change_media():
-                d = filedialog.askdirectory(parent=top, initialdir=self.store.media_dir if os.path.isdir(self.store.media_dir) else self.store.root,
-                                            title="리소스(미디어) 폴더")
-                if d:
-                    apply_media("custom", d)
-
             lab(p, "노트 폴더", font=(self.ui, 10, "bold")).pack(anchor="w")
             lab(p, "노트북 = 폴더(하위 폴더는 하위 노트북), 노트 = .md 파일", fg=C["muted"], font=(self.ui, 9)).pack(anchor="w", pady=(0, 6))
             field(p, "경로", root_var, 52, ("변경…", change_root))
             Btn(p, "노트 폴더 열기", lambda: os.startfile(self.store.root), padx=10, pady=3).pack(anchor="w", padx=(64, 0), pady=(4, 0))
             hr(p)
-            lab(p, "리소스(미디어) 폴더", font=(self.ui, 10, "bold")).pack(anchor="w")
-            lab(p, "웹 클리퍼로 저장한 그림 등이 들어가는 곳입니다.\n노트에는 노트 위치 기준의 상대 경로로 연결됩니다. 클리퍼도 이 폴더만 씁니다.",
+            lab(p, "그림·첨부 (볼트 안 숨김 폴더)", font=(self.ui, 10, "bold")).pack(anchor="w")
+            lab(p, "웹 클리퍼로 저장한 그림 등은 노트 폴더(볼트) 안의 숨김 폴더 .resources 에 저장되고,\n노트에는 노트 위치 기준의 상대 경로로 연결됩니다. 따로 지정할 필요가 없습니다.",
                 fg=C["muted"], font=(self.ui, 9)).pack(anchor="w", pady=(0, 6))
-            field(p, "경로", media_var, 52, ("변경…", change_media))
+            field(p, "경로", media_var, 52)
             row = tk.Frame(p, bg=C["bg"])
             row.pack(anchor="w", padx=(64, 0), pady=(6, 0))
-            Btn(row, "노트 폴더 안 (_resources)", lambda: apply_media("default"), padx=10, pady=3).pack(side="left")
-            Btn(row, "노트 폴더와 같은 위치", lambda: apply_media("sibling"), padx=10, pady=3).pack(side="left", padx=6)
-            Btn(row, "열기", lambda: (os.makedirs(self.store.media_dir, exist_ok=True), os.startfile(self.store.media_dir)), padx=10, pady=3).pack(side="left")
+            move_btn = Btn(row, "볼트 안으로 옮기기", lambda: apply_media("vault"), padx=10, pady=3)
+            move_btn.pack(side="left")
+            Btn(row, "열기", lambda: (self.store.ensure_media(), os.startfile(self.store.media_dir)), padx=10, pady=3).pack(side="left", padx=6)
             mode_note.pack(anchor="w", padx=(64, 0), pady=(8, 0))
             refresh()
+            if self.store.media_is_vault:
+                move_btn.pack_forget()
 
         def fonts_tab(p):
             title(p, "글꼴", "노트 목록과 노트의 글자 크기·굵기를 정합니다. 적용을 누르면 바로 바뀝니다.")

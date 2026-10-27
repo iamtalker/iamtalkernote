@@ -16,7 +16,10 @@ from wikiconv.markdown import md_name, md_title
 
 APP_NAME = "iamtalkernote"
 HISTORY_DIR = ".history"   # 노트별 이전 버전(숨김 폴더라 노트북으로 보이지 않는다)
-MEDIA_DIR = "_resources"   # 조플린 마크다운 내보내기와 같은 미디어 폴더 이름(노트북이 아니라 첨부 저장소)
+MEDIA_DIR = ".resources"   # 볼트 안의 숨김 첨부 폴더(노트북으로 보이지 않는다)
+TRASH_DIR = ".trash"   # 앱 안의 휴지통(숨김 폴더). 지운 노트는 여기서 TRASH_DAYS 일 보관 뒤 완전히 지워진다
+TRASH_DAYS = 30
+LEGACY_MEDIA_DIR ="_resources"   # 조플린 마크다운 내보내기·이전 버전의 폴더 이름. 이전 전까지는 그대로 읽는다
 ROOT_ID = "__root__"   # 클리퍼가 '기본'(저장 폴더 바로 아래)을 가리키는 이름
 
 
@@ -276,7 +279,7 @@ class Store:
             except OSError:
                 return
             for name in names:
-                if name.startswith(".") or name == MEDIA_DIR:
+                if name.startswith(".") or name == LEGACY_MEDIA_DIR:
                     continue
                 path = f"{rel}/{name}" if rel else name
                 if os.path.normcase(self.nb_dir(path)) == media:
@@ -297,7 +300,92 @@ class Store:
         return rel
 
     def delete_notebook(self, nb):
-        recycle(self.nb_dir(nb))
+        self.to_trash(self.nb_dir(nb))
+
+    # ---- 휴지통: <볼트>/.trash/<번호>/{item, meta.json}. 지운 지 TRASH_DAYS 일이 지나면 시작할 때 완전히 지운다.
+    @property
+    def trash_dir(self):
+        return os.path.join(self.root, TRASH_DIR)
+
+    @property
+    def trash_days(self):
+        try:
+            return max(0, int(read_config().get("trash_days", TRASH_DAYS)))
+        except (TypeError, ValueError):
+            return TRASH_DAYS
+
+    def to_trash(self, path):
+        """노트(파일)나 노트북(폴더)을 휴지통 폴더로 옮긴다. 원래 위치를 기억해 두어 복원할 수 있다."""
+        path = os.path.abspath(path)
+        rel = os.path.relpath(path, self.root).replace("\\", "/")
+        if rel.startswith("..") or rel == ".":
+            raise OSError("볼트 밖의 항목은 휴지통으로 보낼 수 없습니다")
+        tid = "%d-%s" % (int(time.time() * 1000), secrets.token_hex(3))
+        d = os.path.join(self.trash_dir, tid)
+        os.makedirs(d)
+        self.hide_dir(self.trash_dir)
+        try:
+            shutil.move(path, os.path.join(d, "item"))
+            with open(os.path.join(d, "meta.json"), "w", encoding="utf-8") as f:
+                json.dump({"rel": rel, "deleted": time.time(), "dir": os.path.isdir(os.path.join(d, "item"))}, f)
+        except OSError:
+            shutil.rmtree(d, ignore_errors=True)
+            raise
+
+    def trash_items(self):
+        """[{id, name, rel, deleted, dir, path}] 최근에 지운 것부터"""
+        out = []
+        try:
+            ids = os.listdir(self.trash_dir)
+        except OSError:
+            return out
+        for tid in ids:
+            d = os.path.join(self.trash_dir, tid)
+            try:
+                with open(os.path.join(d, "meta.json"), encoding="utf-8") as f:
+                    m = json.load(f)
+                out.append({"id": tid, "rel": m["rel"], "name": md_title(os.path.basename(m["rel"])) if not m.get("dir") else os.path.basename(m["rel"]),
+                            "deleted": float(m["deleted"]), "dir": bool(m.get("dir")), "path": os.path.join(d, "item")})
+            except (OSError, ValueError, KeyError):
+                continue
+        out.sort(key=lambda x: -x["deleted"])
+        return out
+
+    def restore_trash(self, tid):
+        """원래 자리로 되돌린다(같은 이름이 있으면 ' (복원)' 을 붙인다) → 복원된 경로"""
+        it = next((x for x in self.trash_items() if x["id"] == tid), None)
+        if not it:
+            raise OSError("휴지통에 없는 항목입니다")
+        target = self.nb_dir(it["rel"]) if not it["dir"] else os.path.join(self.root, it["rel"].replace("/", os.sep))
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        base, ext = os.path.splitext(target)
+        i = 0
+        while os.path.exists(target):
+            i += 1
+            target = f"{base} (복원{'' if i == 1 else i}){ext}"
+        shutil.move(it["path"], target)
+        shutil.rmtree(os.path.join(self.trash_dir, tid), ignore_errors=True)
+        return target
+
+    def delete_trash(self, tid):
+        shutil.rmtree(os.path.join(self.trash_dir, tid), ignore_errors=True)
+
+    def empty_trash(self):
+        n = len(self.trash_items())
+        shutil.rmtree(self.trash_dir, ignore_errors=True)
+        return n
+
+    def purge_trash(self):
+        """보관 기간이 지난 항목을 완전히 지운다 → 지운 개수 (trash_days 가 0 이면 자동으로 지우지 않는다)"""
+        days = self.trash_days
+        if not days:
+            return 0
+        limit, n = time.time() - days * 86400, 0
+        for it in self.trash_items():
+            if it["deleted"] < limit:
+                self.delete_trash(it["id"])
+                n += 1
+        return n
 
     def delete_root(self):
         """저장 폴더 전체를 휴지통으로 보내고 같은 이름의 빈 폴더를 다시 만든다.
@@ -555,7 +643,7 @@ class Store:
         def save(mime, b64):
             buf = base64.b64decode(b64)
             name = hashlib.sha1(buf).hexdigest()[:16] + "." + IMG_EXT.get(mime.lower(), "bin")
-            os.makedirs(res, exist_ok=True)
+            self.ensure_media()
             with open(os.path.join(res, name), "wb") as f:
                 f.write(buf)
             count[0] += 1
@@ -568,15 +656,42 @@ class Store:
         return md, count[0]
 
     def delete_note(self, path):
-        recycle(path)
+        self.to_trash(path)
 
     # ---- 리소스(미디어) 폴더: 기본은 노트 폴더 안의 _resources, 노트 폴더와 같은 위치나 직접 지정도 가능
     def media_dir_for(self, mode, path=None):
+        """mode: 'vault' = 볼트 안 .resources, 'default' = vault 이되 아직 이전 안 한 _resources 가 있으면 그것,
+        'sibling'/'custom' = 예전 설정(이전 기능으로 vault 로 옮길 수 있다)"""
         if mode == "sibling":
-            return os.path.join(os.path.dirname(self.root), MEDIA_DIR)
+            return os.path.join(os.path.dirname(self.root), LEGACY_MEDIA_DIR)
         if mode == "custom" and path:
             return os.path.abspath(path)
-        return os.path.join(self.root, MEDIA_DIR)
+        new, old = os.path.join(self.root, MEDIA_DIR), os.path.join(self.root, LEGACY_MEDIA_DIR)
+        if mode == "default" and not os.path.isdir(new) and os.path.isdir(old):
+            return old
+        return new
+
+    @property
+    def media_is_vault(self):
+        return os.path.normcase(os.path.abspath(self.media_dir)) == os.path.normcase(os.path.join(self.root, MEDIA_DIR))
+
+    def hide_dir(self, path):
+        """윈도에서 폴더에 '숨김' 속성을 준다(탐색기에서 안 보이게)"""
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                attrs = ctypes.windll.kernel32.GetFileAttributesW(path)
+                if attrs != -1:
+                    ctypes.windll.kernel32.SetFileAttributesW(path, attrs | 2)
+            except Exception:  # noqa: BLE001
+                pass
+
+    def ensure_media(self):
+        res = self.media_dir
+        os.makedirs(res, exist_ok=True)
+        if os.path.basename(res) == MEDIA_DIR:
+            self.hide_dir(res)
+        return res
 
     @property
     def media_mode(self):
@@ -645,6 +760,8 @@ class Store:
         moved = relinked = 0
         if migrate and on != nn and os.path.isdir(old):
             os.makedirs(new, exist_ok=True)
+            if os.path.basename(new) == MEDIA_DIR:
+                self.hide_dir(new)
             for entry in os.listdir(old):
                 dst = os.path.join(new, entry)
                 if not os.path.exists(dst):
