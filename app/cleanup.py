@@ -7,7 +7,6 @@ from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 
 import store as st
 
-MIN_LEN = 30        # 본문이 이보다 짧으면 본문 비교로는 중복으로 보지 않는다
 SIMILAR = 0.85      # 같은 제목끼리 본문이 이만큼 비슷하면 중복 후보
 
 
@@ -61,48 +60,80 @@ class _Union:
         self.p[self.find(a)] = self.find(b)
 
 
+MIN_BODY = 100          # 군더더기를 뺀 본문이 이보다 짧으면 비교하지 않는다(짧은 노트는 같은지 판단할 수 없다)
+MAX_BUCKET = 60         # 같은 제목이 이보다 많은 노트에 붙어 있으면 비슷한 정도는 비교하지 않는다(똑같은 본문만 찾는다)
+SUFFIX = re.compile(r"(\s*\(\d+\)|-\d+)$")   # 같은 이름이 있을 때 앱·클리퍼가 붙이는 번호: "제목-1", "제목 (2)"
+
+
+def title_key(title):
+    """제목이 같은지 볼 때 쓰는 키: 소문자로, 끝에 붙은 중복 번호("-1", " (2)")는 뗀다"""
+    t = title.strip().lower()
+    return SUFFIX.sub("", t).strip() or t
+
+
 def find_duplicates(notes, progress=None, cancelled=lambda: False):
     """notes(store.list_notes 결과) → [(이유들, [노트, …])] 묶음 목록. 묶음 안은 수정 시각이 최근인 것부터.
-    이유: 같은 원본 주소 / 본문이 같음 / 같은 제목에 본문이 비슷함"""
-    uf = _Union()
+    ① 제목이 같은 노트끼리 모으고(끝의 "-1" 같은 번호는 무시) ② 그 안에서 내용이 같거나(군더더기를 뺀 본문)
+    아주 비슷한 것만 중복으로 본다. 제목이 다르면 내용이 같아도 묶지 않는다.
+    이유: 본문이 같음 / 본문이 비슷함"""
     by_path = {n["path"]: n for n in notes}
-    link = []                          # (a, b, 이유)
-    src_seen, body_seen, title_seen = {}, {}, {}
+    by_title, raw_hash = {}, {}
+    n_of, df = Counter(), {}
     total = len(notes)
-    for i, n in enumerate(notes):
+    for i, n in enumerate(notes):   # 1단계: 제목별로 모으고, 사이트별 공통 줄(메뉴 등)도 센다
         if cancelled():
             return []
         if progress and i % 200 == 0:
-            progress(i, total)
-        body = n.read()
-        nb = norm_body(body)
-        n["_len"] = len(nb)
-        src = st.note_source(body)
-        if src:
-            k = norm_url(src)
-            if k in src_seen:
-                link.append((src_seen[k], n["path"], "같은 원본 주소"))
-            else:
-                src_seen[k] = n["path"]
-        if len(nb) >= MIN_LEN:
-            h = hashlib.sha1(nb.encode("utf-8")).hexdigest()
-            if h in body_seen:
-                link.append((body_seen[h], n["path"], "본문이 같음"))
-            else:
-                body_seen[h] = n["path"]
-        title_seen.setdefault(n["title"].strip().lower(), []).append((n["path"], nb))
-    for group in title_seen.values():
-        if len(group) < 2:
-            continue
-        sh = [(p, shingles(nb)) for p, nb in group if len(nb) >= MIN_LEN]
-        for a in range(len(sh)):
-            for b in range(a + 1, len(sh)):
-                if jaccard(sh[a][1], sh[b][1]) >= SIMILAR:
-                    link.append((sh[a][0], sh[b][0], "같은 제목에 본문이 비슷함"))
-    for a, b, why in link:
+            progress(i, total * 2)
+        by_title.setdefault(title_key(n["title"]), []).append(n["path"])
+    groups = {k: g for k, g in by_title.items() if len(g) >= 2}
+    cand = {p for g in groups.values() for p in g}
+    if not cand:
+        return []
+    for i, p in enumerate(cand):    # 2단계: 후보 노트만 읽는다(다른 사이트의 공통 줄을 알아야 하므로 같은 사이트 노트도 세어 둔다)
+        if cancelled():
+            return []
+        if progress and i % 100 == 0:
+            progress(total + i, total + len(cand))
+        body = by_path[p].read()
+        site = site_of(body)
+        if site:
+            n_of[site] += 1
+            df.setdefault(site, Counter()).update(doc_keys(body))
+        raw_hash[p] = (body, site)
+    sites = {}
+    for site, c in df.items():
+        if n_of[site] >= SITE_MIN_NOTES:
+            need = max(SITE_MIN_DOCS, SITE_RATIO * n_of[site])
+            lines = frozenset(k for k, v in c.items() if v >= need)
+            if lines:
+                sites[site] = lines
+    uf, why_of, members = _Union(), {}, {}
+    links = []
+    for group in groups.values():
+        text, sh = {}, {}
+        for p in group:
+            body, site = raw_hash[p]
+            t = norm_body(clean_body(body, sites.get(site, frozenset()))[0])
+            if len(t) >= MIN_BODY:
+                text[p] = t
+        same = {}
+        for p, t in text.items():
+            same.setdefault(hashlib.sha1(t.encode("utf-8")).hexdigest(), []).append(p)
+        for ps in same.values():
+            for x in ps[1:]:
+                links.append((ps[0], x, "본문이 같음"))
+        if len(group) <= MAX_BUCKET:
+            firsts = [ps[0] for ps in same.values()]
+            for p in firsts:
+                sh[p] = shingles(text[p])
+            for a in range(len(firsts)):
+                for b in range(a + 1, len(firsts)):
+                    if jaccard(sh[firsts[a]], sh[firsts[b]]) >= SIMILAR:
+                        links.append((firsts[a], firsts[b], "본문이 비슷함"))
+    for a, b, why in links:
         uf.join(a, b)
-    members, why_of = {}, {}
-    for a, b, why in link:
+    for a, b, why in links:
         for x in (a, b):
             members.setdefault(uf.find(x), set()).add(x)
         why_of.setdefault(uf.find(a), set()).add(why)
