@@ -194,7 +194,21 @@ class Layout:
                 self.emit("─" * 30 + "\n", m + ("hr",))
         self.emit("\n", m)
 
+    def table_single_column(self, b, m):
+        """칸이 하나뿐인 표: 표가 아니라 글을 담는 상자로 쓰인 것(옛 스크랩에 많다)이라 상자 표로 그리지 않고
+        칸의 내용을 보통 글처럼 풀어서 보여 준다(<br> 은 줄바꿈). 비어 있는 칸은 건너뛴다."""
+        if b[2]:
+            self.emit(text_of(b[2]) + "\n", m + ("b",))
+        for r in b[1]:
+            inl = cell_inline(r[0])
+            if not text_of(inl).strip() and not has_image(inl):
+                continue
+            self.inline(inl, m)
+            self.emit("\n\n", m)
+
     def table(self, b, m):
+        if b[1] and all(len(r) == 1 and r[0].get("cs", 1) == 1 for r in b[1]):
+            return self.table_single_column(b, m)
         if any(has_image(cell_inline(c)) for r in b[1] for c in r):
             return self.table_with_images(b, m)
         rows = []
