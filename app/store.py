@@ -250,6 +250,7 @@ class Store:
             root = default_root()
         os.makedirs(root, exist_ok=True)
         self.root = os.path.abspath(root)
+        self._jlast = {}   # 변경 이력에 노트별로 마지막으로 적은 시각
 
     def set_root(self, root):
         self.root = os.path.abspath(root)
@@ -302,6 +303,51 @@ class Store:
     def delete_notebook(self, nb):
         self.to_trash(self.nb_dir(nb))
 
+    # ---- 전체 변경 이력(저널): <볼트>/.history/journal.jsonl 에 한 줄씩. 노트별 버전과 달리 모든 노트의 변경을 시간순으로 본다.
+    @property
+    def journal_path(self):
+        return os.path.join(self.root, HISTORY_DIR, "journal.jsonl")
+
+    def journal(self, ev, path, to=None, detail=""):
+        """ev: edit create delete restore rename move cleanup … path/to 는 볼트 기준 상대 경로. 실패해도 본 작업을 막지 않는다."""
+        try:
+            rel = os.path.relpath(path, self.root).replace("\\", "/") if os.path.isabs(path) else path
+            if ev == "edit":   # 자동 저장은 자주 일어나므로 같은 노트는 1분에 한 번만 적는다
+                last = self._jlast.get(rel, 0)
+                if time.time() - last < 60:
+                    return
+                self._jlast[rel] = time.time()
+            rec = {"t": round(time.time(), 1), "ev": ev, "path": rel}
+            if to:
+                rec["to"] = os.path.relpath(to, self.root).replace("\\", "/") if os.path.isabs(to) else to
+            if detail:
+                rec["d"] = detail
+            os.makedirs(os.path.dirname(self.journal_path), exist_ok=True)
+            with open(self.journal_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            if os.path.getsize(self.journal_path) > 4_000_000:   # 너무 커지면 최근 2만 줄만 남긴다
+                with open(self.journal_path, encoding="utf-8") as f:
+                    lines = f.readlines()[-20000:]
+                with open(self.journal_path, "w", encoding="utf-8") as f:
+                    f.writelines(lines)
+        except OSError:
+            pass
+
+    def journal_read(self, limit=5000):
+        """최근 것부터 [{t, ev, path, to?, d?}]"""
+        out = []
+        try:
+            with open(self.journal_path, encoding="utf-8") as f:
+                for line in f.readlines()[-limit:]:
+                    try:
+                        out.append(json.loads(line))
+                    except ValueError:
+                        continue
+        except OSError:
+            pass
+        out.reverse()
+        return out
+
     # ---- 휴지통: <볼트>/.trash/<번호>/{item, meta.json}. 지운 지 TRASH_DAYS 일이 지나면 시작할 때 완전히 지운다.
     @property
     def trash_dir(self):
@@ -331,6 +377,35 @@ class Store:
         except OSError:
             shutil.rmtree(d, ignore_errors=True)
             raise
+        self.journal("delete", rel, detail="휴지통")
+
+    def trash_files(self, paths, into):
+        """여러 파일(예: 안 쓰는 그림)을 휴지통 항목 하나로 옮긴다. 복원하면 into 폴더 안으로 돌아간다 → 옮긴 개수"""
+        paths = [p for p in paths if os.path.isfile(p)]
+        if not paths:
+            return 0
+        into = os.path.abspath(into)
+        tid = "%d-%s" % (int(time.time() * 1000), secrets.token_hex(3))
+        d = os.path.join(self.trash_dir, tid)
+        os.makedirs(os.path.join(d, "item"))
+        self.hide_dir(self.trash_dir)
+        moved = []
+        try:
+            for p in paths:
+                rel = os.path.relpath(p, into)
+                dst = os.path.join(d, "item", rel)
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                shutil.move(p, dst)
+                moved.append((p, dst))
+            with open(os.path.join(d, "meta.json"), "w", encoding="utf-8") as f:
+                json.dump({"rel": "안 쓰는 미디어 파일 %d개" % len(moved), "deleted": time.time(), "dir": True, "into": into}, f)
+            self.journal("delete", ".", detail="안 쓰는 미디어 파일 %d개" % len(moved))
+        except OSError:
+            for p, dst in moved:
+                shutil.move(dst, p)
+            shutil.rmtree(d, ignore_errors=True)
+            raise
+        return len(moved)
 
     def trash_items(self):
         """[{id, name, rel, deleted, dir, path}] 최근에 지운 것부터"""
@@ -345,7 +420,7 @@ class Store:
                 with open(os.path.join(d, "meta.json"), encoding="utf-8") as f:
                     m = json.load(f)
                 out.append({"id": tid, "root": bool(m.get("root")), "rel": m["rel"] if m["rel"] != "." else "(저장 폴더 전체)", "name": md_title(os.path.basename(m["rel"])) if not m.get("dir") else os.path.basename(m["rel"]),
-                            "deleted": float(m["deleted"]), "dir": bool(m.get("dir")), "path": os.path.join(d, "item")})
+                            "deleted": float(m["deleted"]), "dir": bool(m.get("dir")), "into": m.get("into"), "path": os.path.join(d, "item")})
             except (OSError, ValueError, KeyError):
                 continue
         out.sort(key=lambda x: -x["deleted"])
@@ -356,6 +431,16 @@ class Store:
         it = next((x for x in self.trash_items() if x["id"] == tid), None)
         if not it:
             raise OSError("휴지통에 없는 항목입니다")
+        if it["into"]:   # 파일 묶음: 원래 폴더 구조대로 되돌린다(같은 이름이 이미 있으면 그대로 둔다)
+            for dp, _, fn in os.walk(it["path"]):
+                for f in fn:
+                    src = os.path.join(dp, f)
+                    dst = os.path.join(it["into"], os.path.relpath(src, it["path"]))
+                    os.makedirs(os.path.dirname(dst), exist_ok=True)
+                    if not os.path.exists(dst):
+                        shutil.move(src, dst)
+            shutil.rmtree(os.path.join(self.trash_dir, tid), ignore_errors=True)
+            return it["into"]
         if it["root"]:   # 저장 폴더 전체: 내용을 하나씩 되돌리고, 같은 이름이 이미 있으면 ' (복원)' 을 붙인다
             for x in os.listdir(it["path"]):
                 dst = os.path.join(self.root, x)
@@ -376,6 +461,7 @@ class Store:
             target = f"{base} (복원{'' if i == 1 else i}){ext}"
         shutil.move(it["path"], target)
         shutil.rmtree(os.path.join(self.trash_dir, tid), ignore_errors=True)
+        self.journal("restore", target, detail="휴지통에서")
         return target
 
     def delete_trash(self, tid):
@@ -422,6 +508,7 @@ class Store:
                 moved.append(x)
             with open(os.path.join(d, "meta.json"), "w", encoding="utf-8") as f:
                 json.dump({"rel": ".", "deleted": time.time(), "dir": True, "root": True}, f)
+            self.journal("delete", ".", detail="저장 폴더 전체")
         except OSError:
             for x in moved:   # 도중에 실패하면 제자리로
                 shutil.move(os.path.join(d, "item", x), os.path.join(p, x))
@@ -581,9 +668,10 @@ class Store:
         p = os.path.join(d, md_name(name))
         with open(p, "w", encoding="utf-8", newline="\n") as f:
             f.write(body)
+        self.journal("create", p)
         return {"nb": nb, "title": name, "path": p}
 
-    def save(self, path, body, versioned=True, force=False, touch=True):
+    def save(self, path, body, versioned=True, force=False, touch=True, ev="edit"):
         """저장. 버전 기능이 켜져 있으면 덮어쓰기 전의 내용을 이전 버전으로 남긴다.
         force=True 면 간격과 상관없이 남긴다(노트를 연 뒤 처음 고칠 때)."""
         v = version_settings()
@@ -597,6 +685,7 @@ class Store:
         with open(path, "w", encoding="utf-8", newline="\n") as f:
             f.write(body)
         self.index_one(path, body)
+        self.journal(ev, path)
         return body
 
     def set_dates(self, path, updated=None, created=None):
@@ -631,6 +720,7 @@ class Store:
         target = os.path.join(d, md_name(n))
         os.rename(path, target)
         self.move_history(path, target)
+        self.journal("rename", path, to=target)
         return md_title(os.path.basename(target)), target
 
     def depth(self, nb):
@@ -650,6 +740,7 @@ class Store:
             i += 1
         os.rename(path, target)
         self.move_history(path, target)
+        self.journal("move", path, to=target)
         try:   # 깊이가 달라졌으면 ../_resources/ 의 ../ 개수를 맞춘다
             with open(target, "rb") as fh:
                 body = decode(fh.read())
