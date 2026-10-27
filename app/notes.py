@@ -1323,12 +1323,12 @@ class App:
             if key == ALL:
                 label, count, parent = "모든 노트", len(self.all_notes), ""
             elif key == "":
-                label, count, parent = self.store.root_name, direct.get("", 0), ""
+                label, count, parent = self.store.root_name, None, ""   # 저장 폴더 줄에는 숫자를 달지 않는다(아래 노트북들이 실제 내용)
             else:
                 label, count = self.nb_short(key), total(key)
                 # 최상위 노트북은 저장 폴더 항목(scrapbook) 아래에 들여써서 보여 준다
                 parent = f"nb{idx[key.rsplit('/', 1)[0]]}" if "/" in key else f"nb{idx['']}"
-            self.nbtree.insert(parent, "end", iid=f"nb{i}", text="  " + label, values=(f"{count:,}",), open=True)
+            self.nbtree.insert(parent, "end", iid=f"nb{i}", text="  " + label, values=("" if count is None else f"{count:,}",), open=True)
         self.nbtree.selection_set(f"nb{idx[self.nb]}")
         texts = []
 
