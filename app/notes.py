@@ -436,7 +436,7 @@ class App:
         m.add_command(label="휴지통…", command=self.show_trash)
         m.add_separator()
         m.add_command(label="종료", accelerator="Alt+F4", command=self.quit)
-        mb.add_cascade(label="파일", menu=m, underline=0)
+        mb.add_cascade(label="파일", menu=m)
 
         m = tk.Menu(mb, tearoff=0)
         m.add_command(label="실행 취소", accelerator="Ctrl+Z", command=lambda: self.text_do("edit_undo"))
@@ -471,7 +471,7 @@ class App:
         m.add_command(label="노트 속성…", command=self.show_properties)
         m.add_command(label="노트 버전…", command=self.show_versions)
         m.add_command(label="전체 변경 이력…", command=self.show_journal)
-        mb.add_cascade(label="편집", menu=m, underline=0)
+        mb.add_cascade(label="편집", menu=m)
 
         m = tk.Menu(mb, tearoff=0)
         m.add_checkbutton(label="노트북 보기", variable=self.v["notebooks"], command=self.on_view_toggle)
@@ -489,18 +489,18 @@ class App:
         f.add_command(label="노트 제목", command=lambda: self.cur and self.title_entry.focus_set())
         f.add_command(label="노트 본문", command=lambda: self.cur and self.text.focus_set())
         m.add_cascade(label="포커스", menu=f)
-        mb.add_cascade(label="보기", menu=m, underline=0)
+        mb.add_cascade(label="보기", menu=m)
 
         m = tk.Menu(mb, tearoff=0)
         m.add_command(label="뒤로", accelerator="Ctrl+-", command=lambda: self.go(-1))
         m.add_command(label="앞으로", accelerator="Ctrl++", command=lambda: self.go(1))
-        mb.add_cascade(label="이동", menu=m, underline=0)
+        mb.add_cascade(label="이동", menu=m)
 
         m = tk.Menu(mb, tearoff=0)
         m.add_command(label="중복 노트 찾기…", command=self.show_duplicates)
         m.add_command(label="스크랩 군더더기 정리…", command=self.show_cleanup)
         m.add_command(label="안 쓰는 미디어 파일 정리…", command=self.show_unused_media)
-        mb.add_cascade(label="도구", menu=m, underline=0)
+        mb.add_cascade(label="도구", menu=m)
 
         m = tk.Menu(mb, tearoff=0)
         m.add_command(label="옵션…", accelerator="Ctrl+,", command=lambda: self.show_options("general"))
@@ -511,13 +511,13 @@ class App:
         m.add_command(label="테마·색상…", command=lambda: self.show_options("theme"))
         m.add_command(label="노트 버전 설정…", command=lambda: self.show_options("versions"))
         m.add_command(label="웹 클리퍼 설정…", command=lambda: self.show_options("clipper"))
-        mb.add_cascade(label="설정", menu=m, underline=0)
+        mb.add_cascade(label="설정", menu=m)
 
         m = tk.Menu(mb, tearoff=0)
         m.add_command(label="검색 문법", command=self.help_search)
         m.add_command(label=f"{APP} 정보", command=lambda: messagebox.showinfo(
             APP, "위키나루 기반 마크다운 노트 앱\n노트는 .md 파일로 저장됩니다.\n\n저장 폴더: " + self.store.root, parent=self.root))
-        mb.add_cascade(label="도움말", menu=m, underline=0)
+        mb.add_cascade(label="도움말", menu=m)
         self.root.config(menu=mb)
 
     # ------------------------------------------------------------ 도구: 중복 노트 · 스크랩 군더더기
