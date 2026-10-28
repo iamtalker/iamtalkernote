@@ -2122,6 +2122,7 @@ class App:
             label = ("    " * key.count("/") + (self.nb_short(key) if key else self.store.root_name))
             mm.add_command(label=label, command=lambda k=key: self.move_note(n, k), state="disabled" if key == n["nb"] else "normal")
         lm.add_cascade(label="노트북으로 이동", menu=mm)
+        lm.add_command(label="태그 추가…", command=lambda: self.tag_new([n]))
         lm.add_command(label="노트 링크 복사", command=lambda: (self.root.clipboard_clear(), self.root.clipboard_append(f"[[{n['title']}]]")))
         lm.add_command(label="노트 속성…", command=self.show_properties)
         lm.add_command(label="노트 버전…", command=self.show_versions)
@@ -2139,6 +2140,7 @@ class App:
             label = ("    " * key.count("/") + (self.nb_short(key) if key else self.store.root_name))
             mm.add_command(label=label, command=lambda k=key: self.move_multi(k))
         lm.add_cascade(label=f"노트 {len(self.multi)}개를 노트북으로 이동", menu=mm)
+        lm.add_command(label=f"노트 {len(self.multi)}개에 태그 추가…", command=lambda: self.tag_new(list(self.multi.values())))
         lm.add_command(label=f"노트 {len(self.multi)}개 휴지통으로", command=self.trash_multi)
         lm.add_separator()
         lm.add_command(label="선택 해제", command=self.clear_multi)
@@ -2371,44 +2373,47 @@ class App:
 
     # ------------------------------------------------------------ 태그 목록: 우클릭으로 추가·이름 바꾸기·삭제
     def on_tag_menu(self, e):
+        """태그 목록 우클릭: 이름 바꾸기 · 삭제(둘 다 그 태그가 든 모든 노트에서)"""
         row = self.tagtree.identify_row(e.y)
-        tag = self.tag_keys[int(row[2:])] if row else None
-        targets = list(self.multi.values()) or ([self.cur] if self.cur else [])
-        who = f"선택한 노트 {len(targets)}개" if len(targets) > 1 else "현재 노트"
-        on = "normal" if targets else "disabled"
+        if not row:
+            return
+        tag = self.tag_keys[int(row[2:])]
         m = tk.Menu(self.root, tearoff=0)
-        if tag:
-            m.add_command(label=f"'{tag}' 를 {who}에 추가", state=on, command=lambda: self.tag_add_to(targets, tag))
-            m.add_command(label="이름 바꾸기…", command=lambda: self.tag_rename(tag))
-            m.add_command(label="모든 노트에서 삭제…", command=lambda: self.tag_delete(tag))
-            m.add_separator()
-        m.add_command(label=f"새 태그를 {who}에 추가…", state=on, command=lambda: self.tag_new(targets))
+        m.add_command(label="태그 이름 변경…", command=lambda: self.tag_rename(tag))
+        m.add_command(label="태그 삭제…", command=lambda: self.tag_delete(tag))
         m.tk_popup(e.x_root, e.y_root)
+        return "break"
 
     def tag_new(self, targets):
-        name = simpledialog.askstring("새 태그", "추가할 태그 이름 (공백은 _ 로 바뀝니다):", parent=self.root)
+        """노트 목록에서 고른 노트(들)에 태그를 붙인다(공백·쉼표로 여러 개 가능)"""
+        who = f"노트 {len(targets)}개" if len(targets) > 1 else "이 노트"
+        name = simpledialog.askstring("태그 추가", f"{who}에 추가할 태그를 적으세요.\n(공백이나 쉼표로 여러 개, 앞의 # 는 없어도 됩니다)", parent=self.root)
         if name is None:
             return
-        tag = clean_tag_name(name)
-        if not tag:
-            return messagebox.showinfo(APP, "쓸 수 없는 이름입니다. (비었거나 30자를 넘거나 [ ] ( ) / < > , 가 들어 있습니다)", parent=self.root)
-        self.tag_add_to(targets, tag)
+        tags = [t for t in (clean_tag_name(x) for x in re.split(r"[,\s]+", name)) if t]
+        if not tags:
+            return messagebox.showinfo(APP, "쓸 수 있는 태그가 없습니다. (비었거나 30자를 넘거나 [ ] ( ) / < > 가 들어 있습니다)", parent=self.root)
+        self.tag_add_to(targets, list(dict.fromkeys(tags)))
 
-    def tag_add_to(self, targets, tag):
-        """노트(들)에 태그를 더한다: 글 아래의 '태그:' 줄에 적는다"""
+    def tag_add_to(self, targets, tags):
+        """노트(들)에 태그들을 더한다: 글 아래의 '태그:' 줄에 적는다"""
         self.flush()
         cur_path = self.cur["path"] if self.cur else None
         done = 0
         for n in targets:
             try:
-                new, ok = add_tag(n.read(), tag)
-                if ok:
-                    self.store.save(n["path"], new, versioned=True, force=True, ev="tags")
+                body, changed = n.read(), False
+                for t in tags:
+                    body, ok = add_tag(body, t)
+                    changed = changed or ok
+                if changed:
+                    self.store.save(n["path"], body, versioned=True, force=True, ev="tags")
                     done += 1
             except OSError as ex:
                 return messagebox.showerror(APP, f"태그를 더하지 못했습니다.\n{ex}", parent=self.root)
         self.after_tag_change(cur_path)
-        self.status.config(text=f"태그 '{tag}' 를 노트 {done}개에 더했습니다" + ("" if done == len(targets) else f" (나머지 {len(targets) - done}개는 이미 있음)"))
+        self.status.config(text=f"태그 {' '.join('#' + t for t in tags)} 를 노트 {done}개에 더했습니다"
+                                + ("" if done == len(targets) else f" (나머지 {len(targets) - done}개는 이미 있음)"))
 
     def tag_rename(self, tag):
         suggest = re.sub(r"\s+", "_", tag)
