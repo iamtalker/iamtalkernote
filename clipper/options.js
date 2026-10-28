@@ -36,7 +36,7 @@ function loadNotebooks(selected) {
 
 chrome.storage.local.get(["joplinToken", "joplinPort", "defaultMode", "defaultFolderId"], (data) => {
   tokenEl.value = data.joplinToken || "";
-  portEl.value = data.joplinPort || "41200";
+  portEl.value = data.joplinPort || "41184";
   modeEl.value = data.defaultMode || "article";
   loadNotebooks(data.defaultFolderId || "");
 });
@@ -44,7 +44,7 @@ chrome.storage.local.get(["joplinToken", "joplinPort", "defaultMode", "defaultFo
 function collect() {
   return {
     joplinToken: tokenEl.value.trim(),
-    joplinPort: portEl.value.trim() || "41200",
+    joplinPort: portEl.value.trim() || "41184",
     defaultMode: modeEl.value,
     defaultFolderId: notebookEl.value,
   };

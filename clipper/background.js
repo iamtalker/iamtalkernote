@@ -3,7 +3,7 @@
 importScripts("core.js");
 
 async function getSettings() {
-  const { joplinToken = "", joplinPort = "41200" } = await chrome.storage.local.get([
+  const { joplinToken = "", joplinPort = "41184" } = await chrome.storage.local.get([
     "joplinToken",
     "joplinPort",
   ]);

@@ -140,8 +140,13 @@ def html_to_md(html, base=""):
 
 
 # ---------------------------------------------------------------- 서버
-def start(store, get_token, on_saved):
-    """서버를 열고 (서버, 포트) 를 돌려준다. 조플린(41184~41194)과 겹치지 않게 41200~41209 에서 빈 포트를 쓴다."""
+DEFAULT_PORT = 41184   # 조플린 웹 클리퍼의 기본 포트: 웹스토어의 조플린 클리퍼 플러스가 포트를 안 바꿔도 연결된다(조플린과 같이 켜면 옆 포트로 밀린다)
+PORTS = range(DEFAULT_PORT, DEFAULT_PORT + 11)   # 41184~41194
+
+
+def start(store, get_token, on_saved, ports=PORTS):
+    """서버를 열고 (서버, 포트) 를 돌려준다. 조플린과 같은 41184 부터 41194 사이에서 빈 포트를 쓴다.
+    ports 로 후보 포트를 좁힐 수 있다(못 열면 (None, None))."""
 
     def extract_images(md, nb):
         return store.extract_images(md, nb)[0]
@@ -225,7 +230,7 @@ def start(store, get_token, on_saved):
     class Srv(ThreadingHTTPServer):
         allow_reuse_address = False   # 윈도에서는 켜면 다른 프로그램(조플린)이 쓰는 포트에도 겹쳐 열린다
 
-    for port in range(41200, 41210):
+    for port in ports:
         try:
             srv = Srv(("127.0.0.1", port), H)
         except OSError:
