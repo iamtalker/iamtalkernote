@@ -163,6 +163,59 @@ def parse_meta(body):
     return out
 
 
+def fm_edit_tags(body, fn):
+    """머리말 tags 의 태그마다 fn(이름) 을 불러 이름을 바꾸거나(새 이름) 지운다(None 이나 빈 문자열) → (새 본문, 바뀐 태그 수)
+    목록(`- 이름`)과 한 줄(`tags: [a, b]`) 두 모양을 다루고, 바꾼 결과가 같은 이름이 둘이 되면 뒤의 것은 뺀다.
+    머리말의 다른 줄과 본문은 건드리지 않는다."""
+    if not body.startswith("---"):
+        return body, 0
+    m = FM_RE.match(body)
+    if not m:
+        return body, 0
+    changed, seen, in_tags, out = [0], set(), False, []
+
+    def apply(name):
+        new = fn(name.strip())
+        if new != name.strip():
+            changed[0] += 1
+        return new
+
+    for line in m.group(1).split("\n"):
+        raw = line.rstrip("\r")
+        eol = line[len(raw):]
+        mm = re.match(r"^([A-Za-z_]+):([ \t]*)(.*)$", raw)
+        if mm:
+            key, sp, val = mm.groups()
+            in_tags = key.lower() == "tags" and not val.strip()
+            if key.lower() == "tags" and val.strip():
+                v = val.strip()
+                wrapped = v.startswith("[") and v.endswith("]")
+                parts = []
+                for it in (v[1:-1] if wrapped else v).split(","):
+                    pm = re.match(r"^(\s*[\"']?)(.*?)([\"']?\s*)$", it)
+                    if not (pm and pm.group(2)):
+                        parts.append(it)
+                        continue
+                    new = apply(pm.group(2))
+                    if new and new not in seen:
+                        seen.add(new)
+                        parts.append(pm.group(1) + new + pm.group(3))
+                joined = ",".join(parts)
+                line = f"{key}:{sp}" + (f"[{joined}]" if wrapped else joined) + eol
+        elif in_tags:
+            li = re.match(r"^(\s*-\s*[\"']?)(.+?)([\"']?\s*)$", raw)
+            if li:
+                new = apply(li.group(2))
+                if not new or new in seen:   # 지우거나, 바꾸고 보니 이미 있는 태그면 줄을 뺀다
+                    continue
+                seen.add(new)
+                line = li.group(1) + new + li.group(3) + eol
+        out.append(line)
+    if not changed[0]:
+        return body, 0
+    return body[:m.start(1)] + "\n".join(out) + body[m.end(1):], changed[0]
+
+
 def format_like(epoch, sample):
     """머리말에 이미 있던 값과 같은 모양(UTC 'Z' / 'T' 구분 / 현지 시각)으로 시각을 적는다"""
     sample = sample.strip().strip("\"'")
@@ -201,7 +254,7 @@ def note_source(body, meta=None):
     return m.group(1) if m else ""
 
 
-INDEX_VERSION = 4   # 색인 DB 의 판(태그·색인 방식이 바뀌면 올리면 새로 만든다)
+INDEX_VERSION = 5   # 색인 DB 의 판(태그·색인 방식이 바뀌면 올리면 새로 만든다)
 
 
 class Note(dict):

@@ -120,7 +120,8 @@ CODE_RE = re.compile(r"```.*?```|`[^`\n]*`", re.S)
 
 
 HASH_FAST = re.compile(r"#([A-Za-z_가-힣][\w가-힣\-]*)")
-BAD_PREV = set("#&/(=-.:[")   # 이런 글자 바로 뒤의 #는 태그가 아니다(주소의 #앵커, 제목 등)
+BAD_PREV = set("#&/(=-.:[?")   # 이런 글자 바로 뒤의 #는 태그가 아니다(주소의 #앵커, 제목 등)
+URL_RE = re.compile(r"(?:https?|ftp)://[^\s<>\]\)]+|file:///[^\s<>\]\)]+", re.I)   # 주소 속의 #(앵커·댓글 번호 …)는 태그가 아니다
 
 
 def hashtags(text):
@@ -155,8 +156,79 @@ def note_tags(body):
     tags.update(line_tags(body))
     if "#" in body and hashtags(body):
         # 후보가 있을 때만 코드·그림 덩어리를 걷어 내고 다시 확인(코드 속 #은 태그가 아니므로)
-        tags.update(hashtags(CODE_RE.sub(" ", st.DATA_IMG.sub(" ", body))))
+        tags.update(hashtags(URL_RE.sub(" ", CODE_RE.sub(" ", st.DATA_IMG.sub(" ", body)))))
     return tags
+
+
+TAG_OK = re.compile(r"^[A-Za-z_가-힣][\w가-힣\-]*$")   # 본문에 '#이름' 으로 쓸 수 있는 이름
+
+
+def clean_tag_name(name):
+    """입력한 태그 이름을 정리한다: 앞의 # 를 떼고 공백은 _ 로. 쓸 수 없으면 ''"""
+    t = re.sub(r"\s+", "_", (name or "").strip().lstrip("#").strip())
+    return t if t and len(t) <= 30 and not re.search(r"[\[\]()/<>,]", t) else ""
+
+
+def edit_tag(body, old, new):
+    """노트 본문에서 태그 old 를 new 로 바꾼다(new 가 None 이면 지운다) → (새 본문, 센 수)
+    태그는 세 군데에서 온다: 머리말 tags('fm'), 글 아래의 '태그: #a #b' 줄('line'), 본문 속 #해시태그('inline').
+    코드·주소 속의 #는 태그가 아니라서 건드리지 않고, 본문에 못 쓰는 이름(공백·기호가 든 것)으로는 본문 #태그를 못 바꿔서 'stuck' 으로 센다."""
+    counts = {"fm": 0, "line": 0, "inline": 0, "stuck": 0}
+    body, counts["fm"] = st.fm_edit_tags(body, lambda t: (new if new else None) if t == old else t)
+    m = st.FM_RE.match(body)
+    head, rest = (body[:m.end()], body[m.end():]) if m else ("", body)
+    for m in reversed(list(TAG_LINE.finditer(rest))):   # 글 아래의 '태그: …' 줄
+        toks = re.findall(r"[^,\s]+", m.group(1))
+        if not any(t.lstrip("#") == old and len(t) <= 31 for t in toks):
+            continue
+        out = []
+        for t in toks:
+            if t.lstrip("#") == old:
+                t = ("#" if t.startswith("#") else "") + new if new else None
+            if t and t.lstrip("#") not in [x.lstrip("#") for x in out]:
+                out.append(t)
+        counts["line"] += 1
+        if out:
+            rest = rest[:m.start()] + rest[m.start():m.start(1)] + " ".join(out) + rest[m.end():]
+        else:   # 줄에 태그가 하나도 안 남으면 줄째로 지운다
+            end = m.end() + 1 if rest[m.end():m.end() + 1] == "\n" else m.end()
+            rest = rest[:m.start()] + rest[end:]
+    if "#" in rest:   # 본문 속 #해시태그
+        skip = [mm.span() for rx in (CODE_RE, st.DATA_IMG, URL_RE) for mm in rx.finditer(rest)]
+        out, pos = [], 0
+        for mm in HASH_FAST.finditer(rest):
+            i = mm.start()
+            if mm.group(1) != old or (i and (rest[i - 1].isalnum() or rest[i - 1] == "_" or rest[i - 1] in BAD_PREV)) \
+                    or any(a <= i < b for a, b in skip):
+                continue
+            if new is None:   # 지우기: '#이름' 과 바로 뒤의 공백 하나
+                end = mm.end() + 1 if rest[mm.end():mm.end() + 1] == " " else mm.end()
+                out.append(rest[pos:i])
+                pos = end
+            elif TAG_OK.match(new):
+                out.append(rest[pos:i] + "#" + new)
+                pos = mm.end()
+            else:
+                counts["stuck"] += 1
+                continue
+            counts["inline"] += 1
+        rest = "".join(out) + rest[pos:]
+    return head + rest, counts
+
+
+def add_tag(body, tag):
+    """노트에 태그를 더한다 → (새 본문, 더했는가). 이미 있으면 그대로. 글 아래의 '태그:' 줄 끝에 붙이고, 줄이 없으면 만든다."""
+    if tag in note_tags(body):
+        return body, False
+    m = st.FM_RE.match(body)
+    head, rest = (body[:m.end()], body[m.end():]) if m else ("", body)
+    ms = list(TAG_LINE.finditer(rest))
+    if ms:
+        rest = rest[:ms[0].end()] + " #" + tag + rest[ms[0].end():]
+    else:
+        tail = "" if rest.endswith("\n\n") else ("\n" if rest.endswith("\n") else "\n\n")
+        rest += f"{tail}태그: #{tag}\n"
+    return head + rest, True
 
 
 # 문법 해설 사이드바에 더 넣은 서식 (렌더러가 실제로 그리는 것만)
@@ -964,7 +1036,7 @@ class App:
                  bg=C["bg"], fg=C["muted"], font=(self.ui, 9), anchor="w", padx=16, pady=10).pack(fill="x")
         flt = tk.Frame(top, bg=C["bg"])
         flt.pack(fill="x", padx=16)
-        names = {"edit": "수정", "create": "새 노트", "delete": "삭제", "restore": "복원", "rename": "이름 바꿈", "move": "이동", "cleanup": "군더더기 정리"}
+        names = {"edit": "수정", "create": "새 노트", "delete": "삭제", "restore": "복원", "rename": "이름 바꿈", "move": "이동", "cleanup": "군더더기 정리", "tags": "태그 정리"}
         var = tk.StringVar(value="전체")
         for label in ["전체"] + list(names.values()):
             tk.Radiobutton(flt, text=label, value=label, variable=var, command=lambda: fill(), indicatoron=False, bd=0, padx=8, pady=2,
@@ -1333,6 +1405,7 @@ class App:
         self.section_head(self.tag_sec, "태그")
         self.tagtree = self.make_tree(self.tag_sec)
         self.tagtree.bind("<ButtonRelease-1>", self.on_tag_click)
+        self.tagtree.bind("<Button-3>", self.on_tag_menu)
         self.root_label = tk.Label(f, text="", bg=C["panel"], fg=C["muted"], font=(self.ui, 8), anchor="w", padx=14, pady=6)
         self.root_label.pack(side="bottom", fill="x", before=self.left_pane)
 
@@ -2295,6 +2368,131 @@ class App:
             self.status.config(text="태그를 저장했습니다. 본문에 직접 쓴 #태그는 못 지웁니다: " + " ".join("#" + t for t in stuck))
         else:
             self.update_status("태그 저장됨")
+
+    # ------------------------------------------------------------ 태그 목록: 우클릭으로 추가·이름 바꾸기·삭제
+    def on_tag_menu(self, e):
+        row = self.tagtree.identify_row(e.y)
+        tag = self.tag_keys[int(row[2:])] if row else None
+        targets = list(self.multi.values()) or ([self.cur] if self.cur else [])
+        who = f"선택한 노트 {len(targets)}개" if len(targets) > 1 else "현재 노트"
+        on = "normal" if targets else "disabled"
+        m = tk.Menu(self.root, tearoff=0)
+        if tag:
+            m.add_command(label=f"'{tag}' 를 {who}에 추가", state=on, command=lambda: self.tag_add_to(targets, tag))
+            m.add_command(label="이름 바꾸기…", command=lambda: self.tag_rename(tag))
+            m.add_command(label="모든 노트에서 삭제…", command=lambda: self.tag_delete(tag))
+            m.add_separator()
+        m.add_command(label=f"새 태그를 {who}에 추가…", state=on, command=lambda: self.tag_new(targets))
+        m.tk_popup(e.x_root, e.y_root)
+
+    def tag_new(self, targets):
+        name = simpledialog.askstring("새 태그", "추가할 태그 이름 (공백은 _ 로 바뀝니다):", parent=self.root)
+        if name is None:
+            return
+        tag = clean_tag_name(name)
+        if not tag:
+            return messagebox.showinfo(APP, "쓸 수 없는 이름입니다. (비었거나 30자를 넘거나 [ ] ( ) / < > , 가 들어 있습니다)", parent=self.root)
+        self.tag_add_to(targets, tag)
+
+    def tag_add_to(self, targets, tag):
+        """노트(들)에 태그를 더한다: 글 아래의 '태그:' 줄에 적는다"""
+        self.flush()
+        cur_path = self.cur["path"] if self.cur else None
+        done = 0
+        for n in targets:
+            try:
+                new, ok = add_tag(n.read(), tag)
+                if ok:
+                    self.store.save(n["path"], new, versioned=True, force=True, ev="tags")
+                    done += 1
+            except OSError as ex:
+                return messagebox.showerror(APP, f"태그를 더하지 못했습니다.\n{ex}", parent=self.root)
+        self.after_tag_change(cur_path)
+        self.status.config(text=f"태그 '{tag}' 를 노트 {done}개에 더했습니다" + ("" if done == len(targets) else f" (나머지 {len(targets) - done}개는 이미 있음)"))
+
+    def tag_rename(self, tag):
+        suggest = re.sub(r"\s+", "_", tag)
+        name = simpledialog.askstring("태그 이름 바꾸기", f"'{tag}' 의 새 이름 (공백은 _ 로 바뀝니다):", initialvalue=suggest, parent=self.root)
+        if name is None:
+            return
+        new = clean_tag_name(name)
+        if not new:
+            return messagebox.showinfo(APP, "쓸 수 없는 이름입니다. (비었거나 30자를 넘거나 [ ] ( ) / < > , 가 들어 있습니다)", parent=self.root)
+        if new == tag:
+            return
+        self.tag_apply(tag, new)
+
+    def tag_delete(self, tag):
+        self.tag_apply(tag, None)
+
+    def tag_apply(self, tag, new):
+        """태그 tag 를 가진 모든 노트에서 new 로 바꾸거나(None 이면 지우고) 미리 몇 곳이 바뀌는지 보여 준 뒤 적용한다"""
+        self.flush()
+        targets = [n for n in self.all_notes if tag in n["tags"]]
+
+        def scan(prog, cancel):
+            out, total = [], {"fm": 0, "line": 0, "inline": 0, "stuck": 0}
+            for i, n in enumerate(targets):
+                if cancel():
+                    return None
+                if i % 50 == 0:
+                    prog(i, len(targets))
+                body = n.read()
+                nb, c = edit_tag(body, tag, new)
+                for k in total:
+                    total[k] += c[k]
+                if nb != body:
+                    out.append((n, nb))
+            return out, total
+
+        def confirm(res):
+            if res is None:
+                return
+            items, c = res
+            if not items:
+                return messagebox.showinfo(APP, "바꿀 곳이 없습니다." + (f"\n(본문 속 #{tag} {c['stuck']}곳은 이 이름으로 바꿀 수 없습니다)" if c["stuck"] else ""), parent=self.root)
+            parts = [f"{label} {c[k]}곳" for k, label in (("fm", "머리말"), ("line", "태그 줄"), ("inline", "본문 #태그")) if c[k]]
+            what = f"'{tag}' → '{new}' 로 바꿉니다" if new else f"'{tag}' 를 지웁니다"
+            extra = ""
+            if new is None and c["inline"]:
+                extra += f"\n본문 속 #{tag} 는 글에서 그 글자가 지워집니다."
+            if c["stuck"]:
+                extra += f"\n본문 속 #{tag} {c['stuck']}곳은 '{new}' 가 본문 태그로 쓸 수 없는 이름이라 그대로 남습니다."
+            if not messagebox.askyesno(APP, f"{what}.\n\n노트 {len(items):,}개 ({', '.join(parts)}){extra}\n\n"
+                                            "이전 내용은 노트 버전으로 남고, 수정 시각은 바뀌지 않습니다. 계속할까요?", parent=self.root):
+                return
+            self.checkpoint("태그 정리 전", lambda: self.tag_write(items, tag, new)) if len(items) >= 5 else self.tag_write(items, tag, new)
+        self.run_task("태그 확인", scan, confirm, text="태그가 든 노트를 확인하는 중…")
+
+    def tag_write(self, items, tag, new):
+        cur_path = self.cur["path"] if self.cur else None
+        top = self.tool_window("태그 바꾸는 중", "420x110", native=True)
+        msg = tk.Label(top, text="", bg=C["bg"], fg=C["text"], font=(self.ui, 10), pady=24)
+        msg.pack()
+        top.protocol("WM_DELETE_WINDOW", lambda: None)
+        done = 0
+        for i, (n, body) in enumerate(items):
+            if i % 10 == 0:
+                msg.config(text=f"노트의 태그를 바꾸는 중… {i:,} / {len(items):,}")
+                top.update()
+            try:   # 수정 시각은 그대로 두고(touch=False), 이전 내용은 버전으로 남긴다(force)
+                self.store.save(n["path"], body, versioned=True, force=True, touch=False, ev="tags")
+                done += 1
+            except OSError:
+                pass
+        top.destroy()
+        if self.tag == tag:
+            self.tag = new
+        self.after_tag_change(cur_path)
+        messagebox.showinfo(APP, f"노트 {done:,}개의 태그를 " + ("바꿨습니다." if new else "지웠습니다."), parent=self.root)
+
+    def after_tag_change(self, cur_path):
+        """태그를 바꾼 뒤: 노트를 다시 읽고 사이드바·목록·열려 있던 노트를 갱신한다"""
+        self.reload_notes()
+        self.reload_tags()
+        n = next((x for x in self.notes if x["path"] == cur_path), None) if cur_path else None
+        if n:
+            self.open_note(n, record=False)   # 바뀐 글을 다시 읽어 와서 낡은 내용으로 덮어쓰지 않게
 
     def commit_title(self):
         if not self.cur:
