@@ -87,6 +87,7 @@ def detect_format(text, path=""):
 
 
 IMG_MAX_W = 520                       # 렌더링 창에 보이는 그림의 최대 너비(픽셀)
+IMG_FETCH_W = 1600                    # 노트 앱: 내려받은 그림을 이 너비까지 보관하고, 보여 줄 때 칸 너비에 맞춰 줄인다
 IMG_MAX_BYTES = 20 * 1024 * 1024      # 외부 그림 하나의 최대 크기
 IMG_CLSID = {"png": "557cf406-1a04-11d3-9a73-0000f81ef32e", "jpeg": "557cf401-1a04-11d3-9a73-0000f81ef32e"}
 PNG_SIG = b"\x89PNG\r\n\x1a\n"
@@ -200,7 +201,7 @@ def fetch_image(url, cache_dir=None, max_w=IMG_MAX_W, timeout=12):
         raise ValueError("http·https 주소만 불러옵니다")
     cache_dir = cache_dir or image_cache_dir()
     os.makedirs(cache_dir, exist_ok=True)
-    key = hashlib.sha1(url.encode("utf-8")).hexdigest()[:20]
+    key = hashlib.sha1(f"{url}|{max_w}".encode("utf-8")).hexdigest()[:20]   # 너비가 다르면 다른 캐시
     out = os.path.join(cache_dir, key + ".png")
     if os.path.isfile(out):
         return out
@@ -235,7 +236,7 @@ def local_image_png(path, cache_dir=None, max_w=IMG_MAX_W):
     cache_dir = cache_dir or image_cache_dir()
     os.makedirs(cache_dir, exist_ok=True)
     st = os.stat(path)
-    key = hashlib.sha1(f"{os.path.abspath(path)}|{st.st_mtime_ns}|{st.st_size}".encode("utf-8")).hexdigest()[:20]
+    key = hashlib.sha1(f"{os.path.abspath(path)}|{st.st_mtime_ns}|{st.st_size}|{max_w}".encode("utf-8")).hexdigest()[:20]
     out = os.path.join(cache_dir, key + ".png")
     if not os.path.isfile(out):
         convert_any(path, out, max_w)

@@ -350,6 +350,8 @@ class App:
         self.load_prog = (0, 0)        # 처음 색인을 만들 때의 진행(읽은 수, 총 수)
         self.dirty = self.loading = self.quiet = False
         self.save_job = self.render_job = self.search_job = None
+        self.resize_job = None        # 렌더링 칸 너비가 바뀐 뒤 그림 크기를 다시 맞추는 예약
+        self.img_w_used, self.has_imgs = None, False   # 마지막으로 그릴 때 쓴 그림 너비 / 그 글에 그림이 있는지
         self.imgs, self.img_q, self.photos = {}, queue.Queue(), []
         self.multi = {}       # 목록에서 Shift/Ctrl+클릭으로 고른 노트들 {경로: 노트} (한 개만 고르면 비어 있다)
         self.anchor = None    # Shift+클릭 범위의 시작 노트 경로
@@ -1475,6 +1477,7 @@ class App:
         self.view.pack(side="left", fill="both", expand=True)
         self.configure_tags()
         self.view.bind("<Button-1>", self.on_view_click)
+        box2.bind("<Configure>", self.on_view_resize)
         self.view.bind("<Button-3>", self.on_view_menu)
         self.text.bind("<Button-3>", self.on_text_menu)
         self.show_empty(True)
@@ -2253,8 +2256,21 @@ class App:
             return self.status.config(text="렌더링 오류: " + str(ex))
         self.draw_view(segs)
 
+    def on_view_resize(self, e=None):
+        """렌더링 칸 너비가 바뀌면(창 크기·칸 켜기 끄기) 그림이 든 글만 잠시 뒤에 다시 그려 그림 크기를 맞춘다"""
+        if self.resize_job:
+            self.root.after_cancel(self.resize_job)
+        self.resize_job = self.root.after(300, self.refit_images)
+
+    def refit_images(self):
+        self.resize_job = None
+        if self.cur and self.mode != "edit" and self.has_imgs and self.img_avail() != self.img_w_used:
+            self.render()
+
     def draw_view(self, segs):
         v = self.view
+        self.img_w_used = self.img_avail()
+        self.has_imgs = any(extra and extra[0] == "img" for _, _, extra in segs)
         top = v.yview()[0]
         v.config(state="normal")
         v.delete("1.0", "end")
@@ -2298,7 +2314,7 @@ class App:
             if not os.path.isfile(path):
                 with open(path, "wb") as f:
                     f.write(raw)
-            return tk.PhotoImage(file=ed.local_image_png(path))
+            return tk.PhotoImage(file=ed.local_image_png(path, max_w=self.img_avail()))
         except (tk.TclError, OSError, ValueError):
             return None
 
@@ -2320,16 +2336,30 @@ class App:
         cands.append(os.path.join(self.store.media_dir, os.path.basename(src.split("?")[0])))   # 노트가 옮겨져 링크가 어긋났을 때
         return next((c for c in cands if os.path.isfile(c)), None)
 
-    def photo_from_file(self, path):
-        """그림 파일 → PhotoImage. 형식은 확장자가 아니라 내용으로 알아본다. PNG·GIF 는 바로, 그 밖(JPEG·BMP·WebP 등)은 PNG 로 바꿔서"""
+    def img_avail(self):
+        """렌더링 화면에서 그림이 쓸 수 있는 너비(픽셀): 렌더링 칸 너비 - 여백(스크롤바 포함). 50 단위로 내려서 변환 캐시가 늘지 않게.
+        스크롤바가 생겼다 사라져도 값이 같도록 스크롤바가 들어가는 바깥 칸의 너비로 잰다."""
+        box = self.view.master
+        box.update_idletasks()
+        w = box.winfo_width()
+        if w < 200:   # 아직 화면에 안 나왔다
+            return ed.IMG_MAX_W
+        return max(300, min((w - 2 * 18 - 4 - 20) // 50 * 50, ed.IMG_FETCH_W))
+
+    def photo_from_file(self, path, target=None):
+        """그림 파일 → PhotoImage (너비가 target 보다 크면 target 으로 줄여서). 형식은 확장자가 아니라 내용으로 알아본다.
+        PNG·GIF 는 작으면 바로, 그 밖(JPEG·BMP·WebP 등)이나 큰 것은 PNG 로 바꿔서"""
         kind = ed.sniff_image(path)
+        target = target or self.img_avail()
         try:
             if kind in ("png", "gif"):
                 try:
-                    return tk.PhotoImage(file=path)
+                    img = tk.PhotoImage(file=path)
+                    if img.width() <= target:
+                        return img
                 except tk.TclError:   # Tk 가 못 읽는 PNG(16비트 등)
                     pass
-            return tk.PhotoImage(file=ed.local_image_png(path))
+            return tk.PhotoImage(file=ed.local_image_png(path, max_w=target))
         except (tk.TclError, OSError):
             return None
 
@@ -2339,26 +2369,29 @@ class App:
         if src[:5].lower() == "data:":   # 노트 본문에 base64 로 박힌 그림
             img = self.data_image(src)
             return self.put_image(img, width) if img is not None else False
+        avail = self.img_avail()
+        target = min(width, avail) if width else avail   # HTML 의 width 가 있으면 그 너비로(칸보다 넓지는 않게)
         if re.match(r"(?i)^https?://", src):
             path = self.remote_image(src)
             if not path:
                 return False
-            img = self.photo_from_file(path)
+            img = self.photo_from_file(path, target)
         else:
             if re.match(r"(?i)^[a-z][a-z0-9+.-]+:", src) and not re.match(r"(?i)^(file:///|:/)", src):
                 return False   # mailto: 같은 그림이 아닌 주소
             path = self.find_local_image(src)
             if not path:
                 return False
-            img = self.photo_from_file(path)
+            img = self.photo_from_file(path, target)
         return self.put_image(img, width, path) if img is not None else False
 
     def put_image(self, img, width=0, path=None):
-        """그림을 렌더링 화면에 넣는다. HTML 의 width 가 있으면 그 너비에 가깝게(정수 배로만 줄일 수 있다), 없으면 너무 클 때만 줄인다"""
+        """그림을 렌더링 화면에 넣는다. 파일 그림은 photo_from_file 에서 이미 알맞게 줄였고, 본문에 박힌 PNG·GIF 처럼 못 줄인 것만
+        여기서 정수 배로 줄인다(HTML 의 width 가 있으면 그 너비에 가깝게, 없으면 칸 너비보다 클 때만)"""
         if width and img.width() > width:
             img = img.subsample(max(1, round(img.width() / width)))
-        elif img.width() > ed.IMG_MAX_W:
-            img = img.subsample(math.ceil(img.width() / ed.IMG_MAX_W))
+        elif img.width() > self.img_avail():
+            img = img.subsample(math.ceil(img.width() / self.img_avail()))
         self.photos.append(img)
         name = self.view.image_create("end", image=img)
         if path:
@@ -2411,7 +2444,7 @@ class App:
 
             def job():
                 try:
-                    self.img_q.put((url, "ok", ed.fetch_image(url)))
+                    self.img_q.put((url, "ok", ed.fetch_image(url, max_w=ed.IMG_FETCH_W)))   # 크게 보관하고 보여 줄 때 칸 너비에 맞춰 줄인다
                 except Exception as ex:  # noqa: BLE001
                     self.img_q.put((url, "fail", str(getattr(ex, "reason", None) or ex)))
             threading.Thread(target=job, daemon=True).start()
