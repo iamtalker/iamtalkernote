@@ -300,6 +300,9 @@ def nav_lines(lines):
     return marked
 
 
+RES_REF = re.compile(r"[._]resources?(?![A-Za-z])", re.I)
+
+
 def clean_body(body, site_lines=frozenset()):
     """군더더기 줄을 뺀 본문과 뺀 줄 목록을 돌려준다 → (새 본문, [(줄 번호, 줄, 이유)])
     이유: 사이트 공통 / 메뉴 덩어리 / 흔한 군더더기"""
@@ -330,6 +333,8 @@ def clean_body(body, site_lines=frozenset()):
                 why = "메뉴 덩어리"
             elif plain and len(plain) <= 40 and JUNK_RE.match(plain):
                 why = "흔한 군더더기"
+            if why and RES_REF.search(line):   # 리소스 폴더(.resources·_resources)의 그림·첨부를 가리키는 줄은 지우지 않는다
+                why = None
             if why:
                 removed.append((base + i + 1, line, why))
                 continue
@@ -338,6 +343,19 @@ def clean_body(body, site_lines=frozenset()):
         return body, []
     text = re.sub(r"\n{3,}", "\n\n", "\n".join(out))
     return head + text, removed
+
+
+def settle_body(body, site_lines=frozenset(), max_rounds=12):
+    """clean_body 를 더 지울 줄이 없을 때까지 되풀이한다 → (새 본문, [(줄 번호, 줄, 이유)])
+    한 번 지우면 글 맨 위·아래 가장자리(몇 줄 안쪽만 보는 규칙)로 다음 줄들이 밀려 들어와서, 한 번만 돌리면
+    정리한 뒤에 다시 돌릴 때마다 새로 걸리기 때문이다. 둘째 번부터 나온 줄의 번호는 앞 단계를 지운 본문 기준이다."""
+    all_removed = []
+    for _ in range(max_rounds):
+        body, removed = clean_body(body, site_lines)
+        if not removed:
+            break
+        all_removed += removed
+    return body, all_removed
 
 
 ONE_COL = re.compile(r"(?m)^\|[^|\n]*\|[ \t]*\n\|[ \t]*:?-{3,}:?[ \t]*\|[ \t]*\n((?:\|[^|\n]*\|[ \t]*(?:\n|$))+)")
@@ -371,34 +389,68 @@ def unwrap_single_column(body):
     return head + new, count[0]
 
 
-def site_boilerplate(notes, progress=None, cancelled=lambda: False):
-    """사이트별로 노트 여러 개에 똑같이 반복되는 줄을 찾는다 → {사이트: 줄 집합}"""
+def site_boilerplate(notes, progress=None, cancelled=lambda: False, site_map=None):
+    """사이트별로 노트 여러 개에 똑같이 반복되는 줄을 찾는다 → {사이트: 줄 집합}
+    site_map 을 주면 {노트 경로: 사이트} 도 채운다."""
     stats = SiteStats()
     for i, n in enumerate(notes):
         if cancelled():
             return {}
         if progress and i % 200 == 0:
-            progress(i, len(notes) * 2)
-        stats.add(unwrap_single_column(n.read())[0])
+            progress(i, len(notes), "1/2단계 — 사이트 공통 줄 찾는 중…")
+        body = unwrap_single_column(n.read())[0]
+        if site_map is not None:
+            site_map[n["path"]] = site_of(body)
+        stats.add(body)
     return stats.result()
 
 
+SETTLE_ROUNDS = 4   # 지운 뒤의 본문으로 사이트 공통 줄을 다시 구해서 더 지울 게 나오는지 보는 일을 몇 번까지 되풀이할지
+
+
 def scan_junk(notes, progress=None, cancelled=lambda: False):
-    """[(노트, 새 본문, 뺀 줄들)] — 뺄 게 있는 노트만. 1단계: 사이트별 공통 줄 찾기, 2단계: 노트마다 적용"""
-    sites = site_boilerplate(notes, progress, cancelled)
-    out, total = [], len(notes)
+    """[(노트, 새 본문, 뺀 줄들)] — 뺄 게 있는 노트만. 1단계: 사이트별 공통 줄 찾기, 2단계: 노트마다 적용.
+    적용하고 나서 다시 돌려도 또 나오지 않도록(정리하면 사이트 공통 줄의 통계와 가장자리가 달라진다),
+    지운 노트가 있는 사이트는 지운 뒤의 본문으로 통계를 다시 구해 더 나올 게 없을 때까지 되풀이한다."""
+    site_map = {}
+    sites = site_boilerplate(notes, progress, cancelled, site_map)
+    info, total = {}, len(notes)    # 경로 → [노트, 새 본문, 뺀 줄들]
     for i, n in enumerate(notes):
         if cancelled():
             break
         if progress and i % 200 == 0:
-            progress(total + i, total * 2)
+            progress(i, total, "2/2단계 — 노트마다 지울 줄 찾는 중…")
         body, tables = unwrap_single_column(n.read())
-        new, removed = clean_body(body, sites.get(site_of(body), frozenset()))
+        new, removed = settle_body(body, sites.get(site_map.get(n["path"], ""), frozenset()))
         if tables:
             removed = [(0, f"(칸이 하나뿐인 표 {tables}개를 일반 글로 풀기)", "표 풀기")] + removed
         if removed:
-            out.append((n, new if (removed or tables) else body, removed))
-    return out
+            info[n["path"]] = [n, new, removed]
+    changed = {site_map.get(p) for p in info} - {"", None}
+    for rnd in range(SETTLE_ROUNDS):
+        if not changed or cancelled():
+            break
+        part = [n for n in notes if site_map.get(n["path"]) in changed]
+        if progress:
+            progress(0, len(part), f"추가 확인 {rnd + 1} — 정리한 사이트의 공통 줄을 다시 구하는 중…")
+        cur, stats = {}, SiteStats()
+        for n in part:
+            p = n["path"]
+            cur[p] = info[p][1] if p in info else unwrap_single_column(n.read())[0]
+            stats.add(cur[p])
+        sites2 = stats.result()
+        changed = set()
+        for n in part:
+            p = n["path"]
+            new, removed = settle_body(cur[p], sites2.get(site_map[p], frozenset()))
+            if removed:
+                if p in info:
+                    info[p][1] = new
+                    info[p][2] = info[p][2] + removed
+                else:
+                    info[p] = [n, new, removed]
+                changed.add(site_map[p])
+    return [tuple(info[n["path"]]) for n in notes if n["path"] in info]
 
 
 # ------------------------------------------------------------------ 안 쓰는 미디어 파일

@@ -858,12 +858,16 @@ class Store:
         except OSError:
             return 0
 
-    def relink(self, old_dir, new_dir):
-        """모든 노트에서 old_dir 안의 파일을 가리키는 그림·링크를 new_dir 쪽으로 고친다 → 고친 노트 수"""
+    def relink(self, old_dir, new_dir, progress=None):
+        """모든 노트에서 old_dir 안의 파일을 가리키는 그림·링크를 new_dir 쪽으로 고친다 → 고친 노트 수
+        progress(읽은 노트 수, 전체 노트 수, 단계 이름) 으로 진행을 알린다."""
         old_n = os.path.normcase(os.path.abspath(old_dir))
         pat = re.compile(r'(\]\(|\bsrc=")([^)"\s]+)')
         changed = 0
-        for n in self.list_notes("*"):
+        notes = self.list_notes("*")
+        for i, n in enumerate(notes):
+            if progress and i % 50 == 0:
+                progress(i, len(notes), "2/2단계 — 노트의 그림 링크 고치는 중…")
             d = os.path.dirname(n["path"])
 
             def fix(m):
@@ -892,7 +896,7 @@ class Store:
                 changed += 1
         return changed
 
-    def set_media(self, mode, path=None, migrate=False):
+    def set_media(self, mode, path=None, migrate=False, progress=None):
         """리소스 폴더를 바꾼다. migrate=True 면 기존 파일을 새 폴더로 옮기고 노트의 링크도 고친다 → (옮긴 파일 수, 고친 노트 수)"""
         old = self.media_dir
         new = self.media_dir_for(mode, path)
@@ -905,12 +909,15 @@ class Store:
             os.makedirs(new, exist_ok=True)
             if os.path.basename(new) == MEDIA_DIR:
                 self.hide_dir(new)
-            for entry in os.listdir(old):
+            entries = os.listdir(old)
+            for i, entry in enumerate(entries):
+                if progress and i % 50 == 0:
+                    progress(i, len(entries), "1/2단계 — 리소스 파일 옮기는 중…")
                 dst = os.path.join(new, entry)
                 if not os.path.exists(dst):
                     shutil.move(os.path.join(old, entry), dst)
                     moved += 1
-            relinked = self.relink(old, new)
+            relinked = self.relink(old, new, progress)
             try:
                 os.rmdir(old)
             except OSError:
