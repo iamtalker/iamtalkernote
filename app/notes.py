@@ -36,7 +36,9 @@ import preview  # noqa: E402
 import search  # noqa: E402
 import snapshots as sn  # noqa: E402
 import store as st  # noqa: E402
+import updater  # noqa: E402
 import wikiconv  # noqa: E402
+from version import VERSION  # noqa: E402
 
 APP = "iamtalkernote"
 LIST_CHUNK = 100   # 노트 목록은 이만큼씩 이어서 그린다(스크롤하면 계속)
@@ -496,13 +498,6 @@ class App:
         for key, label in (("edit", "마크다운만"), ("split", "마크다운 + 렌더링"), ("view", "렌더링만")):
             m.add_radiobutton(label=label, value=key, variable=self.v_mode, command=lambda k=key: self.set_mode(k))
         m.add_command(label="편집기 레이아웃 전환", accelerator="Ctrl+L", command=lambda: self.cur and self.cycle_mode())
-        m.add_separator()
-        f = tk.Menu(m, tearoff=0)
-        f.add_command(label="사이드바", command=lambda: self.nbtree.focus_set())
-        f.add_command(label="노트 목록", command=lambda: self.lst.focus_set())
-        f.add_command(label="노트 제목", command=lambda: self.cur and self.title_entry.focus_set())
-        f.add_command(label="노트 본문", command=lambda: self.cur and self.text.focus_set())
-        m.add_cascade(label="포커스", menu=f)
         mb.add_cascade(label="보기", menu=m)
 
         m = tk.Menu(mb, tearoff=0)
@@ -529,8 +524,11 @@ class App:
 
         m = tk.Menu(mb, tearoff=0)
         m.add_command(label="검색 문법", command=self.help_search)
-        m.add_command(label=f"{APP} 정보", command=lambda: messagebox.showinfo(
-            APP, "위키나루 기반 마크다운 노트 앱\n노트는 .md 파일로 저장됩니다.\n\n저장 폴더: " + self.store.root, parent=self.root))
+        m.add_separator()
+        m.add_command(label="업데이트 확인…", command=self.check_update)
+        m.add_command(label=f"{APP} 정보 (버전 {VERSION})", command=lambda: messagebox.showinfo(
+            APP, f"{APP} {VERSION}\n\n위키나루 기반 마크다운 노트 앱\n노트는 .md 파일로 저장됩니다.\n\n저장 폴더: " + self.store.root
+            + "\n\nhttps://github.com/" + updater.REPO, parent=self.root))
         mb.add_cascade(label="도움말", menu=m)
         self.root.config(menu=mb)
 
@@ -1183,6 +1181,40 @@ class App:
                              command=lambda: apply(selected()), state="normal" if sel else "disabled")
             menu.tk_popup(e.x_root, e.y_root)
         lb.bind("<Button-3>", on_menu)
+
+    # ------------------------------------------------------------ 도움말 > 업데이트 확인
+    def check_update(self):
+        """GitHub 의 최신 릴리스를 확인하고, 새 버전이면 내려받아 exe 를 바꾸고 다시 시작한다(소스로 실행 중이면 릴리스 페이지만 안내)"""
+        self.run_task("업데이트 확인", lambda prog, cancel: updater.latest(), self.update_found, text="최신 버전을 확인하는 중…")
+
+    def update_found(self, rel):
+        if not updater.is_newer(rel["tag"], VERSION):
+            return messagebox.showinfo(APP, f"최신 버전입니다.\n현재 {VERSION}, 최신 릴리스 {rel['tag']}", parent=self.root)
+        news = updater.whats_new(rel["body"])
+        head = f"새 버전 {rel['tag']} 이 나왔습니다. (현재 {VERSION})\n\n{news}\n\n"
+        if not (ed.FROZEN and rel["asset_url"] and rel["sha"]):   # 소스로 실행 중이거나 자동으로 바꿀 파일이 없으면 페이지만
+            why = "소스로 실행 중이라 자동으로 바꾸지 않습니다. " if not ed.FROZEN else ""
+            if messagebox.askyesno(APP, head + why + "릴리스 페이지를 열까요?", parent=self.root):
+                webbrowser.open(rel["url"])
+            return
+        ans = messagebox.askyesnocancel(
+            APP, head + "예: 지금 업데이트(내려받아 바꾸고 자동으로 다시 시작)\n아니오: 릴리스 페이지 열기\n취소: 나중에", parent=self.root)
+        if ans is None:
+            return
+        if not ans:
+            return webbrowser.open(rel["url"])
+        self.run_task("업데이트 내려받기", lambda prog, cancel: updater.download(rel, prog, cancel), self.update_downloaded,
+                      text=f"{rel['tag']} 을 내려받는 중… (KB)")
+
+    def update_downloaded(self, path):
+        if not path:
+            return
+        self.flush()
+        try:
+            updater.apply(path)
+        except OSError as ex:
+            return messagebox.showerror(APP, f"업데이트를 시작하지 못했습니다.\n{ex}", parent=self.root)
+        self.quit()   # 앱이 끝나야 실행 파일이 풀려서 바뀐다. 바뀐 뒤 새 버전이 자동으로 다시 시작된다.
 
     def help_search(self):
         messagebox.showinfo("검색 문법", "공백 = AND\n회의록 AND (예산 OR 일정) NOT 취소\n\"정확한 구절\"\n"
