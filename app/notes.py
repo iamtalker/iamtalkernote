@@ -1361,6 +1361,10 @@ class App:
         L.tag_lower("selcard")
         L.tag_raise("hl")
         L.bind("<Button-1>", self.on_list_click)
+        # 목록에서는 글자 선택이 없다(여러 노트 고르기는 Shift/Ctrl+클릭). 어떤 경로(Ctrl+A·Ctrl+/·Shift+PageDown 등 Text 기본 단축키)로
+        # 선택이 생겨도 바로 지우고, 혹시 보이더라도 진한 파랑이 아니라 안 보이게 한다.
+        L.config(selectbackground=C["bg"], selectforeground=C["text"], inactiveselectbackground=C["bg"])
+        L.bind("<<Selection>>", lambda e: L.tag_remove("sel", "1.0", "end"))
         # 끌기·더블/트리플 클릭으로 글자가 여러 카드에 걸쳐 선택되는 Text 기본 동작을 막는다(여러 개 선택은 Shift/Ctrl+클릭만)
         for seq in ("<B1-Motion>", "<Double-Button-1>", "<Triple-Button-1>", "<Shift-B1-Motion>", "<Control-B1-Motion>"):
             L.bind(seq, lambda e: "break")
