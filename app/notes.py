@@ -136,17 +136,23 @@ def hashtags(text):
     return out
 
 
-def note_tags(body):
-    """태그: 머리말 tags, '태그: a, b' 줄, 본문 속 #해시태그(코드·제목 제외).
-    대부분의 노트에는 태그가 없으므로, 필요할 때만 무거운 처리를 한다."""
-    tags = set(st.parse_meta(body)["tags"])
+def line_tags(body):
+    """'태그: a, b' 줄에 적힌 태그들(줄 순서대로). 링크·괄호·긴 조각은 태그가 아니다(블로그의 'Tags: [블로그](주소)' 같은 줄)"""
+    out = []
     if "태그" in body or "tag" in body or "Tag" in body or "TAG" in body:
         for m in TAG_LINE.finditer(body):
             for t in re.split(r"[,\s]+", m.group(1)):
                 t = t.strip().lstrip("#")
-                # 링크·괄호·긴 조각은 태그가 아니다(블로그의 'Tags: [블로그](주소)' 같은 줄)
-                if t and len(t) <= 30 and not re.search(r"[\[\]()/<>]", t):
-                    tags.add(t)
+                if t and len(t) <= 30 and not re.search(r"[\[\]()/<>]", t) and t not in out:
+                    out.append(t)
+    return out
+
+
+def note_tags(body):
+    """태그: 머리말 tags, '태그: a, b' 줄, 본문 속 #해시태그(코드·제목 제외).
+    대부분의 노트에는 태그가 없으므로, 필요할 때만 무거운 처리를 한다."""
+    tags = set(st.parse_meta(body)["tags"])
+    tags.update(line_tags(body))
     if "#" in body and hashtags(body):
         # 후보가 있을 때만 코드·그림 덩어리를 걷어 내고 다시 확인(코드 속 #은 태그가 아니므로)
         tags.update(hashtags(CODE_RE.sub(" ", st.DATA_IMG.sub(" ", body))))
@@ -1482,8 +1488,17 @@ class App:
         self.title_entry.bind("<FocusOut>", lambda e: self.commit_title())
 
         tk.Frame(self.main, height=1, bg=C["line"]).pack(fill="x")
-        self.status = tk.Label(self.main, text="", anchor="w", bg=C["bg"], fg=C["muted"], font=(self.ui, 9), padx=18, pady=4)
-        self.status.pack(side="bottom", fill="x")
+        self.statusbar = tk.Frame(self.main, bg=C["bg"])
+        self.statusbar.pack(side="bottom", fill="x")
+        self.status = tk.Label(self.statusbar, text="", anchor="w", bg=C["bg"], fg=C["muted"], font=(self.ui, 9), padx=18, pady=4)
+        self.status.pack(side="left")
+        # 맨 아래 줄의 태그 부분: 누르면 그 자리에서 바로 태그를 고친다
+        self.tagbtn = tk.Label(self.statusbar, text="", anchor="w", bg=C["bg"], fg=C["accent"], font=(self.ui, 9), cursor="hand2", pady=4)
+        self.tagbtn.pack(side="left")
+        self.tagbtn.bind("<Button-1>", self.edit_tags)
+        self.tagbtn.bind("<Enter>", lambda e: self.tagbtn.config(font=(self.ui, 9, "underline")))
+        self.tagbtn.bind("<Leave>", lambda e: self.tagbtn.config(font=(self.ui, 9)))
+        self.tag_edit = None   # 태그를 고치는 중이면 (입력칸, 안내 라벨)
         tk.Frame(self.main, height=1, bg=C["line"]).pack(side="bottom", fill="x")
         self.body = tk.Frame(self.main, bg=C["panel"])
         self.body.pack(fill="both", expand=True)
@@ -2196,10 +2211,90 @@ class App:
 
     def update_status(self, extra=""):
         if self.cur:
-            tags = "   ".join("# " + t for t in sorted(self.cur.get("tags", ()))[:6])
             self.status.config(text=f"{self.nb_label(self.cur['nb'])}/{os.path.basename(self.cur['path'])}   ·   "
-                                    f"{len(self.cur['body']):,}자" + (f"   ·   {tags}" if tags else "")
-                                    + (f"   ·   {extra}" if extra else ""))
+                                    f"{len(self.cur['body']):,}자" + (f"   ·   {extra}" if extra else "") + "   ·")
+            if not self.tag_edit:
+                tags = sorted(self.cur.get("tags", ()))
+                shown = "   ".join("# " + t for t in tags[:6]) + (f"   … +{len(tags) - 6}" if len(tags) > 6 else "")
+                self.tagbtn.config(text=shown or "# 태그 추가", fg=C["accent"] if tags else C["muted"])
+
+    def edit_tags(self, e=None):
+        """맨 아래 줄의 태그를 누르면 그 자리에 입력칸이 열린다: 공백이나 쉼표로 나눠 쓰고 Enter 로 저장, Esc 로 취소"""
+        if not self.cur or self.tag_edit:
+            return
+        self.flush()
+        tags = sorted(self.cur.get("tags", ()))
+        var = tk.StringVar(value=" ".join("#" + t for t in tags) + (" " if tags else "#"))
+        ent = tk.Entry(self.statusbar, textvariable=var, width=36, relief="flat", bg=C["panel"], fg=C["text"], insertbackground=C["accent"],
+                       highlightthickness=1, highlightbackground=C["line"], highlightcolor=C["accent"], font=(self.ui, 9))
+        hint = tk.Label(self.statusbar, text="Enter 저장 · Esc 취소", bg=C["bg"], fg=C["muted"], font=(self.ui, 8), padx=8)
+        self.tagbtn.pack_forget()
+        ent.pack(side="left", pady=2, ipady=1)
+        hint.pack(side="left")
+        self.tag_edit = (ent, hint)
+        ent.focus_set()
+        ent.icursor("end")
+        ent.bind("<Return>", lambda e: self.finish_tags(True))
+        ent.bind("<KP_Enter>", lambda e: self.finish_tags(True))
+        ent.bind("<Escape>", lambda e: self.finish_tags(False))
+        ent.bind("<FocusOut>", lambda e: self.finish_tags(True))
+
+    def finish_tags(self, save):
+        if not self.tag_edit:
+            return
+        ent, hint = self.tag_edit
+        self.tag_edit = None          # FocusOut 이 되풀이로 불리지 않게 먼저 비운다
+        value = ent.get()
+        ent.destroy()
+        hint.destroy()
+        self.tagbtn.pack(side="left")
+        if save and self.cur:
+            self.apply_tags(value)
+        self.update_status()
+        if self.cur:
+            (self.text if self.mode != "view" else self.lst).focus_set()
+
+    def apply_tags(self, value):
+        """입력칸의 태그로 노트를 고친다. 글 맨 아래의 '태그: #a #b' 줄에 적는다(없으면 만든다).
+        본문 속 #해시태그나 머리말 tags 로 생긴 태그는 여기서 지울 수 없어서(글 자체를 고쳐야 한다) 알려 준다."""
+        want = []
+        for t in re.split(r"[,\s]+", value):
+            t = t.strip().lstrip("#").strip()
+            if t and len(t) <= 30 and not re.search(r"[\[\]()/<>]", t) and t not in want:
+                want.append(t)
+        T = self.text
+        body = T.get("1.0", "end-1c")
+        have = note_tags(body)
+        on_line = line_tags(body)
+        removed = have - set(want)
+        stuck = sorted(t for t in removed if t not in on_line)       # 줄에 없는 태그는 지울 수 없다
+        keep = [t for t in on_line if t not in removed]
+        new_line = keep + [t for t in want if t not in have]
+        if set(new_line) == set(on_line):
+            if stuck:
+                self.status.config(text="본문에 직접 쓴 #태그는 여기서 못 지웁니다: " + " ".join("#" + t for t in stuck))
+            return
+        line = "태그: " + " ".join("#" + t for t in new_line) if new_line else ""
+        T.edit_separator()
+        spans = [(m.start(), m.end()) for m in TAG_LINE.finditer(body)]
+        if spans:
+            for k, (a, b) in reversed(list(enumerate(spans))):
+                if k == 0 and line:
+                    T.delete(f"1.0+{a}c", f"1.0+{b}c")
+                    T.insert(f"1.0+{a}c", line)
+                else:   # 둘째 줄부터(또는 태그가 없어졌으면 첫 줄도) 줄째로 지운다
+                    end = b + 1 if b < len(body) else b
+                    T.delete(f"1.0+{a}c", f"1.0+{end}c")
+        else:
+            tail = "" if body.endswith("\n\n") else ("\n" if body.endswith("\n") else "\n\n")
+            T.insert("end-1c", f"{tail}{line}\n")
+        T.edit_separator()
+        self.dirty = True
+        self.flush()                                                  # 바로 저장하고 목록·사이드바·상태 줄을 갱신
+        if stuck:
+            self.status.config(text="태그를 저장했습니다. 본문에 직접 쓴 #태그는 못 지웁니다: " + " ".join("#" + t for t in stuck))
+        else:
+            self.update_status("태그 저장됨")
 
     def commit_title(self):
         if not self.cur:
@@ -3284,6 +3379,12 @@ class App:
         for w in (self.lst, self.view, self.text):   # 포커스가 있는 칸보다 마우스 아래 칸을 우선
             w.bind("<Prior>", lambda e: self.page_redirect(e, -1), add="+")
             w.bind("<Next>", lambda e: self.page_redirect(e, 1), add="+")
+        # 렌더링 화면은 읽기 전용이라 글자 위젯의 '커서를 한 쪽 옮기기' 대신 화면을 직접 밀어 준다. 기본 동작은 그림처럼 화면보다 큰 줄을
+        # 누른 뒤에는 커서가 그 줄을 못 벗어나서 PageDown 이 거의 안 되고, 방향키는 그림 한 줄을 통째로 건너뛴다.
+        for seq, args in (("<Prior>", ("scroll", -1, "pages")), ("<Next>", ("scroll", 1, "pages")),
+                          ("<Up>", ("scroll", -48, "pixels")), ("<Down>", ("scroll", 48, "pixels")),
+                          ("<Home>", ("moveto", 0.0)), ("<End>", ("moveto", 1.0))):
+            self.view.bind(seq, lambda e, a=args: (self.view.yview(*a), "break")[1], add="+")
         for key, action in (("b", ("wrap", "b")), ("i", ("wrap", "i")), ("k", ("wrap", "link"))):
             self.text.bind(f"<Control-{key}>", lambda e, a=action: (self.run_action(a), "break")[1])
 
