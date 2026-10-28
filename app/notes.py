@@ -560,6 +560,7 @@ class App:
         m.add_command(label="코드 블록", command=act(("block", "codeblock")))
         m.add_command(label="날짜 및 시간 삽입", accelerator="Ctrl+Shift+T", command=self.insert_datetime)
         m.add_separator()
+        m.add_command(label="문서에서 찾기", accelerator="Ctrl+F", command=lambda: self.cur and self.show_find())
         m.add_command(label="모든 노트에서 검색", accelerator="Ctrl+Shift+F", command=self.focus_search)
         m.add_separator()
         m.add_command(label="노트 속성…", command=self.show_properties)
@@ -1404,6 +1405,7 @@ class App:
         self.tag_sec = tk.Frame(self.left_pane, bg=C["panel"])
         self.section_head(self.tag_sec, "태그")
         self.tagtree = self.make_tree(self.tag_sec)
+        self.tagtree.config(selectmode="extended")   # Ctrl/Shift+클릭으로 태그 여러 개를 골라 한꺼번에 이름 변경·삭제
         self.tagtree.bind("<ButtonRelease-1>", self.on_tag_click)
         self.tagtree.bind("<Button-3>", self.on_tag_menu)
         self.root_label = tk.Label(f, text="", bg=C["panel"], fg=C["muted"], font=(self.ui, 8), anchor="w", padx=14, pady=6)
@@ -1576,6 +1578,24 @@ class App:
         self.body = tk.Frame(self.main, bg=C["panel"])
         self.body.pack(fill="both", expand=True)
         self.body.grid_rowconfigure(0, weight=1)
+        # 문서 안에서 찾기 막대(Ctrl+F 로 보이고 Esc 로 닫는다). 평소엔 숨겨 둔다.
+        self.findbar = tk.Frame(self.main, bg=C["soft"])
+        self.find_var = tk.StringVar()
+        self.find_hits, self.find_i, self.find_job = [], -1, None
+        tk.Label(self.findbar, text="문서에서 찾기", bg=C["soft"], fg=C["sub"], font=(self.ui, 9), padx=14).pack(side="left")
+        self.find_entry = tk.Entry(self.findbar, textvariable=self.find_var, width=30, relief="flat", bg=C["bg"], fg=C["text"],
+                                   insertbackground=C["accent"], highlightthickness=1, highlightbackground=C["line"],
+                                   highlightcolor=C["accent"], font=(self.ui, 10))
+        self.find_entry.pack(side="left", pady=5, ipady=2)
+        self.find_count = tk.Label(self.findbar, text="", bg=C["soft"], fg=C["muted"], font=(self.ui, 9), padx=10, width=9, anchor="w")
+        self.find_count.pack(side="left")
+        for label, cmd in (("▲", lambda: self.find_step(-1)), ("▼", lambda: self.find_step(1)), ("✕", self.hide_find)):
+            Btn(self.findbar, label, cmd, padx=8, pady=1).pack(side="left", padx=1)
+        tk.Label(self.findbar, text="Enter 다음 · Shift+Enter 이전 · Esc 닫기", bg=C["soft"], fg=C["muted"], font=(self.ui, 8), padx=12).pack(side="left")
+        self.find_var.trace_add("write", lambda *a: self.find_run())
+        self.find_entry.bind("<Return>", lambda e: self.find_step(1))
+        self.find_entry.bind("<Shift-Return>", lambda e: self.find_step(-1))
+        self.find_entry.bind("<Escape>", lambda e: self.hide_find())
         ring = dict(highlightthickness=2, highlightbackground=C["line"], highlightcolor=C["accent"], relief="flat", bd=0)
 
         self.edit_frame = tk.Frame(self.body, bg=C["panel"])
@@ -1756,7 +1776,7 @@ class App:
 
     def on_tag_click(self, e):
         row = self.tagtree.identify_row(e.y)
-        if not row:
+        if not row or e.state & 0x5:   # Ctrl/Shift+클릭은 여러 개 고르기라서 노트를 거르지 않는다
             return
         tag = self.tag_keys[int(row[2:])]
         self.tag = None if tag == self.tag else tag   # 선택된 태그를 다시 누르면 해제
@@ -2185,6 +2205,8 @@ class App:
 
     def open_note(self, n, record=True):
         self.flush()
+        if self.cur is not None and self.cur is not n:
+            self.hide_find(focus=False)   # 다른 노트로 가면 찾기 막대는 닫는다
         if self.cur is not None and self.cur is not n and not self.dirty:
             self.cur.pop("body", None)   # 연 적 있는 노트의 본문이 계속 쌓이지 않게
         self.cur = n
@@ -2252,6 +2274,7 @@ class App:
         if self.loading or not self.cur:
             return
         self.dirty = True
+        self.find_later()   # 찾기 막대가 열려 있으면 바뀐 글에서 다시 찾는다
         if self.save_job:
             self.root.after_cancel(self.save_job)
         self.save_job = self.root.after(600, self.flush)
@@ -2373,14 +2396,20 @@ class App:
 
     # ------------------------------------------------------------ 태그 목록: 우클릭으로 추가·이름 바꾸기·삭제
     def on_tag_menu(self, e):
-        """태그 목록 우클릭: 이름 바꾸기 · 삭제(둘 다 그 태그가 든 모든 노트에서)"""
+        """태그 목록 우클릭: 이름 변경 · 삭제(둘 다 그 태그가 든 모든 노트에서). Ctrl/Shift+클릭으로 여러 개를 골랐으면 그 태그들 모두"""
         row = self.tagtree.identify_row(e.y)
         if not row:
             return
-        tag = self.tag_keys[int(row[2:])]
+        if row not in self.tagtree.selection():   # 고른 태그들 밖을 누르면 그 태그 하나만 고른다
+            self.tagtree.selection_set(row)
+        tags = [self.tag_keys[int(i[2:])] for i in self.tagtree.selection()]
         m = tk.Menu(self.root, tearoff=0)
-        m.add_command(label="태그 이름 변경…", command=lambda: self.tag_rename(tag))
-        m.add_command(label="태그 삭제…", command=lambda: self.tag_delete(tag))
+        if len(tags) == 1:
+            m.add_command(label="태그 이름 변경…", command=lambda: self.tag_rename(tags))
+            m.add_command(label="태그 삭제…", command=lambda: self.tag_delete(tags))
+        else:
+            m.add_command(label=f"태그 {len(tags)}개를 하나의 이름으로 바꾸기(합치기)…", command=lambda: self.tag_rename(tags))
+            m.add_command(label=f"태그 {len(tags)}개 삭제…", command=lambda: self.tag_delete(tags))
         m.tk_popup(e.x_root, e.y_root)
         return "break"
 
@@ -2415,25 +2444,32 @@ class App:
         self.status.config(text=f"태그 {' '.join('#' + t for t in tags)} 를 노트 {done}개에 더했습니다"
                                 + ("" if done == len(targets) else f" (나머지 {len(targets) - done}개는 이미 있음)"))
 
-    def tag_rename(self, tag):
-        suggest = re.sub(r"\s+", "_", tag)
-        name = simpledialog.askstring("태그 이름 바꾸기", f"'{tag}' 의 새 이름 (공백은 _ 로 바뀝니다):", initialvalue=suggest, parent=self.root)
+    def tag_rename(self, tags):
+        """tags(하나 이상)를 모두 새 이름 하나로 바꾼다. 여러 개를 골랐으면 그 이름으로 합쳐진다"""
+        if len(tags) == 1:
+            title, ask, suggest = "태그 이름 바꾸기", f"'{tags[0]}' 의 새 이름 (공백은 _ 로 바뀝니다):", re.sub(r"\s+", "_", tags[0])
+        else:
+            title, suggest = "태그 합치기", re.sub(r"\s+", "_", tags[0])
+            ask = f"선택한 태그 {len(tags)}개({', '.join(tags[:4])}{' …' if len(tags) > 4 else ''})를\n모두 이 이름 하나로 바꿉니다 (공백은 _ 로 바뀝니다):"
+        name = simpledialog.askstring(title, ask, initialvalue=suggest, parent=self.root)
         if name is None:
             return
         new = clean_tag_name(name)
         if not new:
             return messagebox.showinfo(APP, "쓸 수 없는 이름입니다. (비었거나 30자를 넘거나 [ ] ( ) / < > , 가 들어 있습니다)", parent=self.root)
-        if new == tag:
+        if tags == [new]:
             return
-        self.tag_apply(tag, new)
+        self.tag_apply(tags, new)
 
-    def tag_delete(self, tag):
-        self.tag_apply(tag, None)
+    def tag_delete(self, tags):
+        self.tag_apply(tags, None)
 
-    def tag_apply(self, tag, new):
-        """태그 tag 를 가진 모든 노트에서 new 로 바꾸거나(None 이면 지우고) 미리 몇 곳이 바뀌는지 보여 준 뒤 적용한다"""
+    def tag_apply(self, tags, new):
+        """태그들(tags)을 가진 모든 노트에서 new 로 바꾸거나(None 이면 지우고) 미리 몇 곳이 바뀌는지 보여 준 뒤 적용한다"""
         self.flush()
-        targets = [n for n in self.all_notes if tag in n["tags"]]
+        want = set(tags)
+        targets = [n for n in self.all_notes if want & n["tags"]]
+        names = ", ".join(f"'{t}'" for t in tags[:5]) + (f" 외 {len(tags) - 5}개" if len(tags) > 5 else "")
 
         def scan(prog, cancel):
             out, total = [], {"fm": 0, "line": 0, "inline": 0, "stuck": 0}
@@ -2442,12 +2478,15 @@ class App:
                     return None
                 if i % 50 == 0:
                     prog(i, len(targets))
-                body = n.read()
-                nb, c = edit_tag(body, tag, new)
-                for k in total:
-                    total[k] += c[k]
-                if nb != body:
-                    out.append((n, nb))
+                body = orig = n.read()
+                for t in tags:
+                    if t == new:
+                        continue
+                    body, c = edit_tag(body, t, new)
+                    for k in total:
+                        total[k] += c[k]
+                if body != orig:
+                    out.append((n, body))
             return out, total
 
         def confirm(res):
@@ -2455,21 +2494,21 @@ class App:
                 return
             items, c = res
             if not items:
-                return messagebox.showinfo(APP, "바꿀 곳이 없습니다." + (f"\n(본문 속 #{tag} {c['stuck']}곳은 이 이름으로 바꿀 수 없습니다)" if c["stuck"] else ""), parent=self.root)
+                return messagebox.showinfo(APP, "바꿀 곳이 없습니다." + (f"\n(본문 속 #태그 {c['stuck']}곳은 이 이름으로 바꿀 수 없습니다)" if c["stuck"] else ""), parent=self.root)
             parts = [f"{label} {c[k]}곳" for k, label in (("fm", "머리말"), ("line", "태그 줄"), ("inline", "본문 #태그")) if c[k]]
-            what = f"'{tag}' → '{new}' 로 바꿉니다" if new else f"'{tag}' 를 지웁니다"
+            what = (f"{names} → '{new}' 로 " + ("합칩니다" if len(tags) > 1 else "바꿉니다")) if new else f"{names} 를 지웁니다"
             extra = ""
             if new is None and c["inline"]:
-                extra += f"\n본문 속 #{tag} 는 글에서 그 글자가 지워집니다."
+                extra += "\n본문 속 #태그는 글에서 그 글자가 지워집니다."
             if c["stuck"]:
-                extra += f"\n본문 속 #{tag} {c['stuck']}곳은 '{new}' 가 본문 태그로 쓸 수 없는 이름이라 그대로 남습니다."
+                extra += f"\n본문 속 #태그 {c['stuck']}곳은 '{new}' 가 본문 태그로 쓸 수 없는 이름이라 그대로 남습니다."
             if not messagebox.askyesno(APP, f"{what}.\n\n노트 {len(items):,}개 ({', '.join(parts)}){extra}\n\n"
                                             "이전 내용은 노트 버전으로 남고, 수정 시각은 바뀌지 않습니다. 계속할까요?", parent=self.root):
                 return
-            self.checkpoint("태그 정리 전", lambda: self.tag_write(items, tag, new)) if len(items) >= 5 else self.tag_write(items, tag, new)
+            self.checkpoint("태그 정리 전", lambda: self.tag_write(items, tags, new)) if len(items) >= 5 else self.tag_write(items, tags, new)
         self.run_task("태그 확인", scan, confirm, text="태그가 든 노트를 확인하는 중…")
 
-    def tag_write(self, items, tag, new):
+    def tag_write(self, items, tags, new):
         cur_path = self.cur["path"] if self.cur else None
         top = self.tool_window("태그 바꾸는 중", "420x110", native=True)
         msg = tk.Label(top, text="", bg=C["bg"], fg=C["text"], font=(self.ui, 10), pady=24)
@@ -2486,7 +2525,7 @@ class App:
             except OSError:
                 pass
         top.destroy()
-        if self.tag == tag:
+        if self.tag in tags:
             self.tag = new
         self.after_tag_change(cur_path)
         messagebox.showinfo(APP, f"노트 {done:,}개의 태그를 " + ("바꿨습니다." if new else "지웠습니다."), parent=self.root)
@@ -2556,6 +2595,116 @@ class App:
         self.reload_notes()
 
     # ------------------------------------------------------------ 보기 모드·렌더링 (위키나루)
+    # ------------------------------------------------------------ 문서 안에서 찾기
+    def find_target(self):
+        """찾은 곳을 옮겨 다니는 칸: 렌더링만 볼 때는 렌더링 화면, 그 밖에는 편집 칸(둘 다 보이면 양쪽에 강조하고 편집 칸으로 옮긴다)"""
+        return self.view if self.mode == "view" else self.text
+
+    def show_find(self):
+        if not self.cur:
+            return
+        for w in (self.text, self.view):
+            w.tag_configure("find", background=C["mark"], foreground=C["text"])
+            w.tag_configure("findcur", background="#ff9f43", foreground="#000000")
+        if not self.findbar.winfo_ismapped():
+            self.findbar.pack(side="top", fill="x", before=self.body)
+        try:   # 편집 칸에서 한 줄을 골라 둔 채 눌렀으면 그 글자로 바로 찾는다
+            sel = self.text.get("sel.first", "sel.last") if self.focus_in_text() else ""
+        except tk.TclError:
+            sel = ""
+        if sel and "\n" not in sel and len(sel) <= 80:
+            self.find_var.set(sel)
+        self.find_entry.focus_set()
+        self.find_entry.select_range(0, "end")
+        self.find_run()
+
+    def focus_in_text(self):
+        return self.root.focus_get() is self.text
+
+    def hide_find(self, focus=True):
+        if not self.findbar.winfo_ismapped():
+            return
+        self.findbar.pack_forget()
+        for w in (self.text, self.view):
+            w.tag_remove("find", "1.0", "end")
+            w.tag_remove("findcur", "1.0", "end")
+        self.find_hits, self.find_i = [], -1
+        if focus and self.cur:
+            self.find_target().focus_set()
+
+    def find_matches(self, w, needle, limit=5000):
+        out, pos = [], "1.0"
+        n = tk.IntVar()
+        while len(out) < limit:
+            pos = w.search(needle, pos, "end", nocase=True, count=n)
+            if not pos:
+                break
+            n_chars = max(1, n.get())
+            out.append((pos, f"{pos}+{n_chars}c"))
+            pos = f"{pos}+{n_chars}c"
+        return out
+
+    def find_run(self, goto=True):
+        """찾을 글자가 바뀌었거나 내용이 바뀌면 일치하는 곳을 모두 강조하고, 지금 위치 다음(없으면 처음)의 것으로 이동한다"""
+        if not self.findbar.winfo_ismapped():
+            return
+        for w in (self.text, self.view):
+            w.tag_remove("find", "1.0", "end")
+            w.tag_remove("findcur", "1.0", "end")
+        needle = self.find_var.get()
+        prim = self.find_target()
+        old_i = self.find_i
+        self.find_hits, self.find_i = [], -1
+        if not needle:
+            return self.find_count.config(text="", fg=C["muted"])
+        shown = [self.text] if self.mode == "edit" else ([self.view] if self.mode == "view" else [self.text, self.view])
+        for w in shown:
+            hits = self.find_matches(w, needle)
+            for a, b in hits:
+                w.tag_add("find", a, b)
+            if w is prim:
+                self.find_hits = hits
+        if not self.find_hits:
+            return self.find_count.config(text="없음", fg=C["danger"])
+        if goto:   # 편집 칸이면 커서 다음의 것, 렌더링 화면이면 처음 것
+            at = prim.index("insert") if prim is self.text else "1.0"
+            i = next((k for k, (a, _) in enumerate(self.find_hits) if prim.compare(a, ">=", at)), 0)
+        else:
+            i = min(max(old_i, 0), len(self.find_hits) - 1)
+        self.find_goto(i, move=goto)
+
+    def find_goto(self, i, move=True):
+        prim = self.find_target()
+        self.find_i = i
+        a, b = self.find_hits[i]
+        prim.tag_remove("findcur", "1.0", "end")
+        prim.tag_add("findcur", a, b)
+        prim.tag_raise("findcur")
+        if move:
+            prim.see(a)
+            if prim is self.text:
+                prim.mark_set("insert", a)
+        self.find_count.config(text=f"{i + 1} / {len(self.find_hits):,}", fg=C["muted"])
+
+    def find_step(self, d):
+        if not self.find_hits:
+            return self.find_run()
+        self.find_goto((self.find_i + d) % len(self.find_hits))
+
+    def find_later(self):
+        """내용이 바뀌는 중(타이핑)에는 잠시 뒤에 한 번만 다시 찾는다"""
+        if not self.findbar.winfo_ismapped():
+            return
+        if self.find_job:
+            self.root.after_cancel(self.find_job)
+        self.find_job = self.root.after(300, lambda: self.find_run(goto=False))
+
+    def on_ctrl_f(self, e=None):
+        """Ctrl+F: 노트가 열려 있으면 그 문서에서 찾기, 아니면(또는 목록 검색칸에 있으면) 모든 노트에서 검색. 모든 노트 검색은 Ctrl+Shift+F"""
+        if self.cur and self.root.focus_get() is not self.search_entry:
+            return self.show_find()
+        self.focus_search()
+
     def set_mode(self, m):
         self.mode = m
         self.v_mode.set(m)
@@ -2572,6 +2721,8 @@ class App:
         self.body.grid_columnconfigure(1, weight=1 if two else 0, uniform="pane" if two else "")
         self.save_view()
         self.render()
+        if self.findbar.winfo_ismapped():
+            self.root.after(60, self.find_run)
 
     def cycle_mode(self):
         self.set_mode({"edit": "split", "split": "view", "view": "edit"}[self.mode])
@@ -2633,6 +2784,7 @@ class App:
             v.insert("end", t, tuple(tg))
         v.config(state="disabled")
         v.yview_moveto(top)
+        self.find_later()   # 다시 그렸으면 찾은 곳의 강조도 다시 한다
 
     def data_image(self, src):
         """data:image/...;base64,… 주소 → 화면에 쓸 PhotoImage(실패하면 None). GIF·PNG 는 바로, 그 밖(JPEG 등)은 PNG 로 바꿔서"""
@@ -3569,8 +3721,12 @@ class App:
         r.bind_all("<Control-e>", lambda e: self.cur and self.cycle_mode())
         r.bind_all("<Control-L>", lambda e: (self.v["list"].set(not self.show["list"]), self.on_view_toggle()))
         r.bind_all("<Control-slash>", lambda e: self.toggle_syntax())
-        r.bind_all("<Control-f>", lambda e: self.focus_search())
+        r.bind_all("<Control-f>", lambda e: self.on_ctrl_f())
         r.bind_all("<Control-F>", lambda e: self.focus_search())
+        for w in (self.text, self.view):   # 글자 칸의 기본 Ctrl+F(커서를 한 글자 오른쪽으로)는 막는다
+            w.bind("<Control-f>", lambda e: (self.on_ctrl_f(), "break")[1])
+        r.bind_all("<F3>", lambda e: self.find_step(1) if self.findbar.winfo_ismapped() else None)
+        r.bind_all("<Shift-F3>", lambda e: self.find_step(-1) if self.findbar.winfo_ismapped() else None)
         r.bind_all("<Control-comma>", lambda e: self.show_options("general"))
         r.bind_all("<Control-minus>", lambda e: self.go(-1))
         r.bind_all("<Control-plus>", lambda e: self.go(1))
