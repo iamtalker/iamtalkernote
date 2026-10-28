@@ -254,7 +254,7 @@ def note_source(body, meta=None):
     return m.group(1) if m else ""
 
 
-INDEX_VERSION = 5   # 색인 DB 의 판(태그·색인 방식이 바뀌면 올리면 새로 만든다)
+INDEX_VERSION = 6   # 색인 DB 의 판(태그·색인 방식이 바뀌면 올리면 새로 만든다)
 
 
 class Note(dict):

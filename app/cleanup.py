@@ -205,9 +205,12 @@ def site_of(body):
     return h[4:] if h.startswith("www.") else h
 
 
+TAG_LINE = re.compile(r"^[ \t]*(?:태그|tags?)[ \t]*[:：]", re.I)   # 앱이 적는 '태그: #a #b' 줄(사용자의 태그라서 군더더기가 아니다)
+
+
 def line_key(line):
-    """사이트 공통 줄을 세기 위한 키(비교할 만한 글줄이면 그 글, 아니면 None). 제목·숫자뿐인 줄·기호뿐인 줄은 제외"""
-    if line.lstrip().startswith("#"):
+    """사이트 공통 줄을 세기 위한 키(비교할 만한 글줄이면 그 글, 아니면 None). 제목·태그 줄·숫자뿐인 줄·기호뿐인 줄은 제외"""
+    if line.lstrip().startswith("#") or TAG_LINE.match(line):
         return None
     if re.search(r"\]\([^)]*(youtube\.com|youtu\.be)", line):   # 영상 링크·썸네일은 본문이다
         return None
@@ -316,7 +319,7 @@ def clean_body(body, site_lines=frozenset()):
     for i, line in enumerate(lines):
         if line.lstrip().startswith(("```", "~~~")):
             fence = not fence
-        elif not fence and not line.lstrip().startswith("#"):   # 제목 줄은 건드리지 않는다
+        elif not fence and not line.lstrip().startswith("#") and not TAG_LINE.match(line):   # 제목 줄과 태그 줄은 건드리지 않는다
             plain = _plain(line)
             why = None
             if wire_from is not None and i >= wire_from:

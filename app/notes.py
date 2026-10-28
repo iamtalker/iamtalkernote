@@ -149,14 +149,27 @@ def line_tags(body):
     return out
 
 
+def mask_protected(text):
+    """코드·그림·주소 덩어리를 같은 길이의 공백으로 가린다(줄바꿈은 그대로): 그 속의 #는 태그가 아니라서 건너뛰되, 글자 위치는 그대로라
+    찾은 자리를 원문에서 그대로 바꿀 수 있다('#태그http://…' 처럼 주소가 붙어 있어도 '#태그' 만 잡힌다)."""
+    blank = lambda m: re.sub(r"[^\n]", " ", m.group(0))   # noqa: E731
+    return URL_RE.sub(blank, CODE_RE.sub(blank, st.DATA_IMG.sub(blank, text)))
+
+
+def body_after_fm(body):
+    """머리말(--- … ---)을 뺀 본문. 머리말의 title 등에 든 #는 태그가 아니고 이름 변경·삭제로 고칠 수도 없어서 태그를 찾을 때 뺀다"""
+    m = st.FM_RE.match(body)
+    return body[m.end():] if m else body
+
+
 def note_tags(body):
-    """태그: 머리말 tags, '태그: a, b' 줄, 본문 속 #해시태그(코드·제목 제외).
+    """태그: 머리말 tags, '태그: a, b' 줄, 본문 속 #해시태그(코드·주소·제목 제외).
     대부분의 노트에는 태그가 없으므로, 필요할 때만 무거운 처리를 한다."""
     tags = set(st.parse_meta(body)["tags"])
-    tags.update(line_tags(body))
-    if "#" in body and hashtags(body):
-        # 후보가 있을 때만 코드·그림 덩어리를 걷어 내고 다시 확인(코드 속 #은 태그가 아니므로)
-        tags.update(hashtags(URL_RE.sub(" ", CODE_RE.sub(" ", st.DATA_IMG.sub(" ", body)))))
+    rest = body_after_fm(body)
+    tags.update(line_tags(rest))
+    if "#" in rest and hashtags(rest):
+        tags.update(hashtags(mask_protected(rest)))   # 후보가 있을 때만 코드·그림·주소를 가리고 다시 확인
     return tags
 
 
@@ -193,13 +206,12 @@ def edit_tag(body, old, new):
         else:   # 줄에 태그가 하나도 안 남으면 줄째로 지운다
             end = m.end() + 1 if rest[m.end():m.end() + 1] == "\n" else m.end()
             rest = rest[:m.start()] + rest[end:]
-    if "#" in rest:   # 본문 속 #해시태그
-        skip = [mm.span() for rx in (CODE_RE, st.DATA_IMG, URL_RE) for mm in rx.finditer(rest)]
+    if "#" in rest:   # 본문 속 #해시태그(note_tags 와 같은 방법으로 찾는다: 코드·주소 속 #는 건너뛴다)
+        masked = mask_protected(rest)
         out, pos = [], 0
-        for mm in HASH_FAST.finditer(rest):
+        for mm in HASH_FAST.finditer(masked):
             i = mm.start()
-            if mm.group(1) != old or (i and (rest[i - 1].isalnum() or rest[i - 1] == "_" or rest[i - 1] in BAD_PREV)) \
-                    or any(a <= i < b for a, b in skip):
+            if mm.group(1) != old or (i and (masked[i - 1].isalnum() or masked[i - 1] == "_" or masked[i - 1] in BAD_PREV)):
                 continue
             if new is None:   # 지우기: '#이름' 과 바로 뒤의 공백 하나
                 end = mm.end() + 1 if rest[mm.end():mm.end() + 1] == " " else mm.end()
@@ -2363,7 +2375,8 @@ class App:
         T = self.text
         body = T.get("1.0", "end-1c")
         have = note_tags(body)
-        on_line = line_tags(body)
+        off = len(body) - len(body_after_fm(body))   # 머리말의 'tags:' 줄을 '태그:' 줄로 착각해 건드리지 않게 머리말 뒤부터만 본다
+        on_line = line_tags(body[off:])
         removed = have - set(want)
         stuck = sorted(t for t in removed if t not in on_line)       # 줄에 없는 태그는 지울 수 없다
         keep = [t for t in on_line if t not in removed]
@@ -2374,7 +2387,7 @@ class App:
             return
         line = "태그: " + " ".join("#" + t for t in new_line) if new_line else ""
         T.edit_separator()
-        spans = [(m.start(), m.end()) for m in TAG_LINE.finditer(body)]
+        spans = [(m.start() + off, m.end() + off) for m in TAG_LINE.finditer(body[off:])]
         if spans:
             for k, (a, b) in reversed(list(enumerate(spans))):
                 if k == 0 and line:
