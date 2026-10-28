@@ -41,7 +41,10 @@ import wikiconv  # noqa: E402
 APP = "iamtalkernote"
 LIST_CHUNK = 100   # 노트 목록은 이만큼씩 이어서 그린다(스크롤하면 계속)
 VIEWABLE = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg", ".ico", ".mp4", ".webm", ".mov", ".mp3", ".wav", ".pdf", ".txt"}   # 안 쓰는 미디어 목록에서 눌렀을 때 바로 열어도 되는 파일(실행 파일 등은 위치만 보여 준다)
-MORE_SCREENS = 4   # 목록 아래에 남은 글이 이만큼의 화면보다 적어지면 미리 다음 노트들을 이어 그린다
+SOURCE_LINE = re.compile(r"\A[ \t]*원본:[ \t]*<?https?://[^\s>]+>?[ \t]*(?:\r?\n)+")   # 글 맨 위의 '원본: <주소>' 줄
+MORE_MAX = 4000       # 목록을 이어 그릴 때 한 번에 붙이는 노트 수의 상한(이미 그린 만큼을 붙이되 이 이상은 안 붙인다)
+MORE_MAX_SEARCH = 600  # 검색 중에는 노트마다 본문을 읽어 미리 보기를 만들어서 더 적게
+MORE_SCREENS = 4  # 목록 아래에 남은 글이 이만큼의 화면보다 적어지면 미리 다음 노트들을 이어 그린다
 ALL = "*"
 FMT = "markdown"
 
@@ -1876,7 +1879,8 @@ class App:
             lo, hi = L.yview()
             if self.rendered >= len(self.results) or (1 - hi) >= MORE_SCREENS * (hi - lo):
                 break
-            self.append_cards(LIST_CHUNK * 2)
+            # 지금까지 그린 만큼을 한 번에 더 붙여서(핸들이 적어도 중간까지 올라오게), 검색 중에는 본문을 읽으니 적게
+            self.append_cards(max(LIST_CHUNK * 2, min(self.rendered, MORE_MAX_SEARCH if self.words else MORE_MAX)))
             grew = True
             L.update_idletasks()   # 늘어난 길이로 스크롤 위치(yview)를 다시 계산
         if grew:
@@ -2241,7 +2245,9 @@ class App:
             return
         title = self.title_var.get()
         try:
-            doc = wikiconv.parse(self.text.get("1.0", "end-1c"), bulk.SYNTAX[FMT], title)
+            # 클리퍼가 맨 위에 적는 '원본: <주소>' 줄은 렌더링 화면에서만 숨긴다(문서 정보의 URL 은 이 줄에서 읽는다)
+            src = SOURCE_LINE.sub("", self.text.get("1.0", "end-1c"), count=1)
+            doc = wikiconv.parse(src, bulk.SYNTAX[FMT], title)
             segs = preview.layout(doc)
         except Exception as ex:  # noqa: BLE001  (읽기 도구가 못 읽은 글도 편집은 계속할 수 있게)
             return self.status.config(text="렌더링 오류: " + str(ex))

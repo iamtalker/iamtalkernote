@@ -156,8 +156,8 @@ def start(store, get_token, on_saved):
         body = extract_images(body, nb)
         tags = [t.strip() for t in (b.get("tags") or "").split(",") if t.strip()]
         text = ""
-        if b.get("source_url"):
-            text += f"원본: <{b['source_url']}>\n\n"
+        if b.get("source_url"):   # 맨 위 머리말(front matter)에 둔다: 렌더링 화면에서는 숨겨지고 문서 정보의 URL 로 나온다
+            text += f"---\nsource: {b['source_url']}\n---\n\n"
         text += body
         if tags:
             text += "\n\n태그: " + " ".join("#" + re.sub(r"\s+", "_", t) for t in tags) + "\n"

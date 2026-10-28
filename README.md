@@ -13,8 +13,7 @@
 코드 서명이 없어 윈도 SmartScreen 경고가 뜰 수 있습니다("추가 정보 → 실행").
 
 - **필요한 것:** Windows 10/11. 그림 변환(GDI+), 영상 재생 창(Edge), 숨김 폴더 속성은 윈도 기능을 씁니다.
-- **소스로 실행:** Python 3.9+ (표준 라이브러리 `tkinter` 만 필요) → `실행.bat` 또는 `py -3 app/iamtalkernote.pyw`.
-  WebP 같은 형식의 그림을 보려면 `pip install pillow` (exe 에는 들어 있습니다).
+- **소스로 실행:** Python 3.9+ (표준 라이브러리 `tkinter` 만 필요) → `iamtalkernote.bat` 또는 `py -3 app/iamtalkernote.pyw`.  WebP 같은 형식의 그림을 보려면 `pip install pillow` (exe 에는 들어 있습니다).
 - 처음 실행하면 `문서\iamtalkernote` 폴더를 노트 폴더로 씁니다. 바꾸려면 **설정 → 폴더 설정**.
 
 ## 특징
@@ -70,6 +69,7 @@
 ### 웹 클리퍼
 [조플린 클리퍼 플러스](https://chromewebstore.google.com/detail/joplin-clipper-plus/fbieoidncnoalmenkkpbcbomppoenfoa)(크롬 확장)가 조플린 대신 이 앱에 저장하도록, 조플린 웹 클리퍼 API 의 일부(`/ping` `/folders` `/notes`)를 흉내 내는 로컬 서버를 둡니다.
 저장하면 본문에 박힌 그림은 리소스 폴더의 파일로 빼고, 하위 노트북도 고를 수 있습니다.
+원본 주소는 노트 맨 위 머리말(`---` `source: 주소` `---`)에 저장되어 렌더링 화면에는 안 보이고 문서 정보의 URL 로 나옵니다(0.3.2 까지 저장한 노트는 본문 맨 위 `원본: <주소>` 줄이며, 이것도 렌더링 화면에서는 숨겨집니다).
 
 1. 확장 프로그램을 설치합니다(위 크롬 웹스토어 주소, 또는 릴리즈의 `iamtalkernote-clipper-extension.zip` 을 풀어 `chrome://extensions` → 개발자 모드 → "압축해제된 확장 프로그램을 로드합니다").
 2. 이 앱의 **설정 → 웹 클리퍼 설정**에서 **포트**(기본 `41200`)와 **토큰**을 확인해 확장 옵션에 붙여 넣습니다.
@@ -105,7 +105,7 @@ iamtalkernote/
 ├─ clipper/        조플린 클리퍼 플러스 크롬 확장(이 앱에 맞춰 기본 포트·안내만 바꿈, MIT)
 ├─ tools/          build_exe.py(exe 만들기), make_icon.py(아이콘 그리기)
 ├─ docs/           스크린샷
-└─ 실행.bat         소스로 실행
+└─ iamtalkernote.bat   소스로 실행
 ```
 
 ## 직접 빌드
