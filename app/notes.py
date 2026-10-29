@@ -755,7 +755,7 @@ class App:
     def show_snapshots(self):
         """파일 > 복원 지점: 어느 시점의 모든 노트를 기억해 두었다가 그 상태로 되돌린다"""
         top = self.tool_window("복원 지점", "800x520")
-        tk.Label(top, text="복원 지점은 그 시점의 노트 목록을 기억해 두고, 앱이 노트를 바꾸기 직전에 바뀌기 전 내용만 따로 보관합니다(그림·첨부는 제외). 고르면 노트를 그 시점으로 되돌리고, 그 뒤에 새로 생긴 노트는 휴지통으로 보냅니다. 앱 밖에서 고친 노트는 되돌릴 수 없어 건드리지 않습니다.",
+        tk.Label(top, text="복원 지점은 그 시점의 노트 목록을 기억해 두고, 앱이 노트를 바꾸기 직전에 바뀌기 전 내용만 따로 보관합니다(그림·첨부는 아래 옵션을 켠 뒤에 만든 지점에만 넣습니다). 고르면 노트를 그 시점으로 되돌리고, 그 뒤에 새로 생긴 노트는 휴지통으로 보냅니다. 앱 밖에서 고친 노트는 되돌릴 수 없어 건드리지 않습니다.",
                  bg=C["bg"], fg=C["muted"], font=(self.ui, 9), anchor="w", justify="left", wraplength=760, padx=16, pady=10).pack(fill="x")
         cfgrow = tk.Frame(top, bg=C["bg"])
         cfgrow.pack(side="bottom", fill="x", padx=16, pady=(0, 6))
@@ -783,9 +783,11 @@ class App:
             mb = self.snap.usage() / 1048576
             info.config(text=f"지점 {len(pts)}개 · 보관 중인 내용 {mb:,.1f}MB")
 
+        media_var = tk.BooleanVar(value=bool(st.read_config().get("snap_media", False)))
+
         def save_cfg(*_):
             try:
-                st.write_config(snap_auto=auto_var.get(), snap_count=max(1, int(cnt_var.get())), snap_days=max(0, int(day_var.get())))
+                st.write_config(snap_media=media_var.get(), snap_auto=auto_var.get(), snap_count=max(1, int(cnt_var.get())), snap_days=max(0, int(day_var.get())))
             except ValueError:
                 pass
 
@@ -835,6 +837,7 @@ class App:
         Btn(btns, "이 지점으로 되돌리기", restore, kind="primary", padx=12, pady=3).pack(side="left", padx=6)
         Btn(btns, "지우기", delete, kind="danger", padx=12, pady=3).pack(side="right")
         Btn(btns, "오래된 것 정리", prune, padx=12, pady=3).pack(side="right", padx=6)
+        tk.Checkbutton(btns, text="그림·첨부도 포함(앞으로 만드는 지점부터. 용량이 커질 수 있음)", variable=media_var, command=save_cfg, bg=C["bg"], activebackground=C["bg"], font=(self.ui, 9)).pack(side="left", padx=10)
         tk.Checkbutton(cfgrow, text="하루에 한 번 자동으로 만들기", variable=auto_var, command=save_cfg, bg=C["bg"], activebackground=C["bg"], font=(self.ui, 9)).pack(side="left")
         for label, var, hi in (("  보관: 최근", cnt_var, 500), ("개 이거나", None, 0), ("", day_var, 3650)):
             if var is None:

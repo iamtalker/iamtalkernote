@@ -5,7 +5,8 @@
 <볼트>/.snapshots/blobs/ 에 그대로(압축 없이) 복사해 둔다(preserve). 안 바뀐 노트는 파일 자체가 그 시점의 내용이라
 공간을 쓰지 않는다. 되돌릴 때는 지금 파일이 지점과 같은지 해시로 비교해서 다른 것만 보관본으로 되돌린다.
 앱 밖에서 직접 고친 노트는 바뀌기 전 내용을 복사할 기회가 없어 되돌릴 수 없고, 그런 노트는 건드리지 않고 알려 준다.
-그림·첨부(리소스 폴더)는 넣지 않는다. 화면 코드가 없는 순수 로직이다."""
+그림·첨부(저장 폴더 안의 .resources · _resources)는 기본으로 넣지 않고, 옵션(snap_media)을 켠 뒤에 만든 지점에만 넣는다
+(지점이 media 표시를 가지고, 비교·복원은 그 지점의 표시를 따른다). 화면 코드가 없는 순수 로직이다."""
 import gzip
 import hashlib
 import json
@@ -14,6 +15,8 @@ import secrets
 import threading
 import time
 import zlib
+
+from store import read_config
 
 SNAP_DIR = ".snapshots"
 KEEP_COUNT = 30     # 기본 보관: 최근 30개 이거나
@@ -43,13 +46,23 @@ class Snapshots:
         return os.path.join(self.base, "objects")
 
     # ---- 노트 파일 훑기
-    def walk(self):
-        """볼트 안 모든 노트 파일 → {상대 경로: 절대 경로}. 점으로 시작하는 폴더(.history .trash .snapshots .resources)와 _resources 는 뺀다"""
+    @staticmethod
+    def media_on():
+        return bool(read_config().get("snap_media", False))
+
+    def walk(self, media=False):
+        """볼트 안 모든 노트 파일 → {상대 경로: 절대 경로}. 점으로 시작하는 폴더(.history .trash .snapshots)는 뺀다.
+        .resources · _resources 는 media=True 일 때만 그 안의 모든 파일을 넣고, 아니면 뺀다."""
         root, out = self.store.root, {}
         for dp, dn, fn in os.walk(root):
-            dn[:] = [d for d in dn if not d.startswith(".") and d != "_resources"]
+            in_media = os.path.basename(dp) in (".resources", "_resources") or any(
+                x in (".resources", "_resources") for x in os.path.relpath(dp, root).split(os.sep))
+            if in_media and not media:
+                dn[:] = []
+                continue
+            dn[:] = [d for d in dn if (not d.startswith(".") or (media and d == ".resources")) and (media or d != "_resources")]
             for f in fn:
-                if f.lower().endswith(".md"):
+                if in_media or f.lower().endswith(".md"):
                     p = os.path.join(dp, f)
                     out[os.path.relpath(p, root).replace("\\", "/")] = p
         return out
@@ -110,8 +123,6 @@ class Snapshots:
             pass
 
     def _preserve_file(self, path):
-        if not path.lower().endswith(".md"):
-            return
         rel = os.path.relpath(path, self.store.root).replace("\\", "/")
         if rel.startswith(".."):
             return
@@ -165,10 +176,10 @@ class Snapshots:
         return m
 
     # ---- 만들기
-    def scan(self, prev=None, progress=None, cancelled=lambda: False):
+    def scan(self, prev=None, progress=None, cancelled=lambda: False, media=False):
         """지금 노트들의 {상대 경로: [해시, 크기, mtime_ns]}. 크기·수정 시각이 이전 지점과 같으면 다시 읽지 않는다."""
         prev_files = prev if prev is not None else {}
-        cur, paths = {}, self.walk()
+        cur, paths = {}, self.walk(media)
         total = len(paths)
         for i, (rel, path) in enumerate(paths.items()):
             if cancelled():
@@ -191,11 +202,13 @@ class Snapshots:
     def create(self, label="", progress=None, cancelled=lambda: False, force=False):
         """복원 지점을 만든다(노트 내용은 복사하지 않고 목록만 적는다) → 지점 id (바뀐 게 없고 force 가 아니면 가장 최근 지점의 id)"""
         pts = self.points()
-        prev = self.load(pts[0]["id"])["files"] if pts else None
-        files = self.scan(prev, progress, cancelled)
+        last = self.load(pts[0]["id"]) if pts else None
+        prev = last["files"] if last else None
+        media = self.media_on()
+        files = self.scan(prev, progress, cancelled, media)
         if files is None:
             return None
-        if prev is not None and not force and {k: v[0] for k, v in files.items()} == {k: v[0] for k, v in prev.items()}:
+        if prev is not None and not force and bool(last.get("media")) == media and {k: v[0] for k, v in files.items()} == {k: v[0] for k, v in prev.items()}:
             return pts[0]["id"]
         now = time.time()
         pid = "%d-%s" % (int(now * 1000), secrets.token_hex(2))
@@ -203,7 +216,7 @@ class Snapshots:
         self.store.hide_dir(self.base)
         tmp = os.path.join(self.points_dir, pid + ".tmp")
         with gzip.open(tmp, "wt", encoding="utf-8") as f:
-            json.dump({"created": now, "label": label, "files": files}, f, ensure_ascii=False)
+            json.dump({"created": now, "label": label, "media": media, "files": files}, f, ensure_ascii=False)
         os.replace(tmp, os.path.join(self.points_dir, pid + ".json.gz"))
         with open(os.path.join(self.points_dir, pid + ".meta.json"), "w", encoding="utf-8") as f:
             json.dump({"created": now, "label": label, "count": len(files)}, f, ensure_ascii=False)
@@ -215,10 +228,11 @@ class Snapshots:
     def diff(self, pid, progress=None, cancelled=lambda: False):
         """그 지점으로 되돌리면 어떻게 되는지 → {"change": 내용을 되돌릴 노트, "add": 되살릴 노트, "remove": 휴지통으로 갈 노트,
         "lost": 되돌려야 하지만 보관본이 없어 되돌릴 수 없는 노트(앱 밖에서 고친 노트)} (상대 경로)"""
-        pf = self.load(pid)["files"]
+        pt = self.load(pid)
+        pf, media = pt["files"], bool(pt.get("media"))
         pts = self.points()
         base = self.load(pts[0]["id"])["files"] if pts else None
-        cur = self.scan(base, progress, cancelled)
+        cur = self.scan(base, progress, cancelled, media)
         if cur is None:
             return None
         change = sorted(k for k in pf if k in cur and cur[k][0] != pf[k][0])
