@@ -470,7 +470,7 @@ class App:
         self.build_menu()
         self.build()
         self.start_clipper()
-        self.tray = tray.Tray(os.path.join(HERE, "assets", "icon.ico"), APP)   # 닫기(X)를 누르면 들어가는 트레이 아이콘
+        self.tray = tray.Tray(os.path.join(HERE, "assets", "icon.ico"), f"{APP} {VERSION}")   # 닫기(X)를 누르면 들어가는 트레이 아이콘(마우스를 올리면 버전이 보인다: 트레이에 구버전이 남아 있는지 알아보려고)
         self.tray_hidden = self.tray_was_zoomed = False
         for cls in ("Entry", "Text"):    # 어느 칸에서 한글을 쳐도 조합 중인 글자가 그 칸 글꼴로 보이게
             self.root.bind_class(cls, "<FocusIn>", self.match_ime_font, add="+")
