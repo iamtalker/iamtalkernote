@@ -69,6 +69,7 @@ class Snapshots:
         if os.path.exists(path):
             return
         os.makedirs(os.path.dirname(path), exist_ok=True)
+        self.store.hide_dir(self.base)
         tmp = path + ".tmp"
         with open(tmp, "wb") as f:
             f.write(raw)

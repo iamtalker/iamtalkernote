@@ -14,7 +14,7 @@
 이미 쓰고 있다면 **도움말 → 업데이트 확인**으로 새 버전을 확인하고, 있으면 내려받아(릴리스 노트의 SHA-256 과 맞을 때만) 바꾼 뒤 자동으로 다시 시작합니다. 확인을 누를 때만 GitHub 에 접속하며, 노트·설정은 건드리지 않습니다. 현재 버전은 **도움말 → iamtalkernote 정보**에서 봅니다. (소스로 실행 중이면 릴리스 페이지만 안내합니다.)
 
 - **필요한 것:** Windows 10/11. 그림 변환(GDI+), 영상 재생 창(Edge), 숨김 폴더 속성은 윈도 기능을 씁니다.
-- **소스로 실행:** Python 3.9+ (표준 라이브러리 `tkinter` 만 필요) → `iamtalkernote.bat` 또는 `py -3 app/iamtalkernote.pyw`.  WebP 같은 형식의 그림을 보려면 `pip install pillow` (exe 에는 들어 있습니다).
+- **소스로 실행:** Python 3.9+ (표준 라이브러리 `tkinter` 만 필요) → `iamtalkernote.bat` 또는 `py -3 app/iamtalkernote.pyw`.  WebP 같은 형식의 그림은 `pip install pillow`, 가져온 폴더의 PDF·mp3 는 `pip install pypdf tinytag` (exe 에는 모두 들어 있습니다).
 - 처음 실행하면 `문서\iamtalkernote` 폴더를 노트 폴더로 씁니다. 바꾸려면 **설정 → 폴더 설정**.
 
 ## 특징
@@ -82,6 +82,14 @@
 2. 이 앱의 **설정 → 웹 클리퍼 설정**에서 **토큰**을 확인해 확장 옵션에 붙여 넣습니다. 포트는 조플린과 같은 기본값 `41184` 라서 웹스토어 버전은 바꿀 필요가 없습니다.
    조플린을 같이 켜 두면 이 앱은 `41185` 같은 옆 포트로 밀려 열립니다(상태 표시줄과 설정에 포트가 나오니 확장 옵션의 포트를 그 값으로). 기본 포트가 비면 5초 안에 자동으로 `41184` 로 돌아옵니다.
 
+### 다른 폴더 가져오기 (pdf · txt · mp3 …)
+노트 폴더 밖의 폴더도 **읽기 전용으로** 가져와 같은 검색 문법으로 찾습니다. 원본 파일은 건드리지 않고, 앱이 글만 뽑아 색인 DB(`%APPDATA%\iamtalkernote\docs-index.db`)에 적어 둡니다.
+- **가져오기:** 파일 → 폴더 가져오기… (또는 설정 → 옵션 → 가져오기)에서 폴더를 추가하고, **읽을 파일 종류**(확장자)를 고릅니다. 고른 확장자만 읽고 나머지는 무시합니다. 기본은 `pdf txt md mp3`.
+- **어디에 나오나:** 노트북 칸에 **가져온 폴더** 항목이 따로 생깁니다(내 `.md` 노트와 섞이지 않습니다). 고르면 가운데 목록에 파일이 나오고, 누르면 뽑은 글이 읽기 전용으로 열립니다. 더블클릭하거나 우클릭 → *기본 프로그램으로 열기*로 원래 파일을 엽니다. 열어 둔 문서 안에서는 `Ctrl+F` 로 찾습니다.
+- **검색:** 노트와 같은 `AND OR NOT`, `"구절"`, 정렬·기간 필터. 문서 안의 글도 항상 색인하며(PDF·txt·docx·pptx·xlsx 본문, mp3 는 파일 이름과 ID3 태그·가사), 옵션에서 *문서 안의 글도 색인*을 끄면 파일 이름과 경로로만 찾습니다.
+- **빠르게:** 한 번 읽은 파일은 DB 에 남아서 다음부터는 크기·수정 시각이 바뀐 파일만 다시 읽고, 사라진 파일은 색인에서 빠집니다. 앱을 켠 뒤 잠시 지나면 바뀐 파일을 뒤에서 저절로 다시 읽습니다. 글자가 없는 스캔 PDF 는 이름만 색인됩니다(OCR 은 없음).
+- 쓰는 오픈소스: PDF 는 [pypdf](https://github.com/py-pdf/pypdf)(BSD-3-Clause), 소리 태그는 [tinytag](https://github.com/tinytag/tinytag)(MIT). Office 문서는 표준 라이브러리로 읽습니다.
+
 ### 조플린에서 옮겨 오기
 조플린에서 **파일 → 내보내기 → "MD - Markdown + Front Matter"** 로 내보낸 폴더를 이 앱의 노트 폴더로 지정하면 됩니다(`_resources` 폴더 포함).
 파일 날짜가 모두 내보낸 시각이어도, 노트 맨 위 머리말의 `updated` / `created` 를 읽어 **원래 날짜로 정렬·표시**하고, 저장하면 `updated` 가 갱신됩니다. 머리말의 `tags` 도 태그로 읽습니다.
@@ -109,7 +117,7 @@
 iamtalkernote/
 ├─ app/            앱 소스 (notes.py: 화면, store.py: 저장·색인·휴지통, search.py: 검색, clipserver.py: 클리퍼 서버,
 │                  cleanup.py: 중복·군더더기·안 쓰는 미디어 찾기, snapshots.py: 복원 지점,
-│                  updater.py: 업데이트 확인·교체, version.py: 버전(릴리스할 때 올림),
+│                  docs.py: 가져온 폴더(pdf·txt·mp3 …) 읽기·색인, updater.py: 업데이트 확인·교체, version.py: 버전(릴리스할 때 올림),
 │                  editor.py·preview.py·wikiconv/: 위키나루에서 가져온 마크다운 읽기·렌더링·서식 도구)
 ├─ clipper/        조플린 클리퍼 플러스 크롬 확장(이 앱에 맞춰 기본 포트·안내만 바꿈, MIT)
 ├─ tools/          build_exe.py(exe 만들기), make_icon.py(아이콘 그리기)
@@ -120,7 +128,7 @@ iamtalkernote/
 ## 직접 빌드
 
 ```
-py -3 -m pip install pyinstaller pillow
+py -3 -m pip install pyinstaller pillow pypdf tinytag
 py -3 tools/build_exe.py        # → iamtalkernote.exe (앱이 켜져 있으면 iamtalkernote.new.exe)
 ```
 
@@ -128,6 +136,7 @@ py -3 tools/build_exe.py        # → iamtalkernote.exe (앱이 켜져 있으면
 
 - 영상은 썸네일 카드와 재생 창으로만 보여 줍니다(노트 안 직접 재생 불가).
 - 그림이 든 표는 칸을 세로로 맞추지 않고 가로로 늘어놓아 보여 줍니다. 그림이 없는 표는 상자 글자 표입니다(칸이 하나뿐인 표는 표가 아니라 글로 풀어서 보여 줍니다).
+- 가져온 폴더는 읽기 전용입니다(노트처럼 고치거나 태그를 달 수 없고, 목록에서 빼도 원본은 그대로입니다). 스캔한 PDF 의 글자 인식(OCR)과 소리 → 글 변환은 없습니다.
 - 움직이는 GIF 는 첫 장면만 보입니다. SVG 는 보이지 않습니다.
 - 노트 안에서 마우스로 끌어다 놓기·맞춤법 검사·동기화는 없습니다(파일이라 폴더 동기화 도구와 함께 쓰면 됩니다).
 - 복원 지점에는 그림·첨부가 들어가지 않습니다(노트만). 앱 밖에서 고친 노트는 되돌릴 수 없습니다. 군더더기 정리는 글자 규칙과 사이트별 반복 줄로 찾기 때문에 틀릴 수 있어서, 적용 전에 미리 보기를 꼭 봅니다.
@@ -149,5 +158,5 @@ py -3 tools/build_exe.py        # → iamtalkernote.exe (앱이 켜져 있으면
 - `app/editor.py` · `app/preview.py` · `app/bulk.py` · `app/wikiconv/` 는 같은 저작자의 [위키나루](https://github.com/iamtalker/wiki-naru) 코드를 가져온 것입니다.
 - `clipper/` 는 [Joplin Clipper Plus](https://github.com/iamtalker/joplin-clipper-plus)(MIT, `clipper/LICENSE`)이며 [Readability](https://github.com/mozilla/readability)(Apache-2.0)와 [Turndown](https://github.com/mixmark-io/turndown)(MIT)을 포함합니다.
 - 검색 문법과 정렬은 [folder-search](https://github.com/iamtalker/folder-search) 를 따랐습니다.
-- exe 에는 [Pillow](https://python-pillow.org)(HPND)와 [PyInstaller](https://pyinstaller.org) 런타임이 들어 있습니다.
+- exe 에는 [Pillow](https://python-pillow.org)(HPND), [pypdf](https://github.com/py-pdf/pypdf)(BSD-3-Clause), [tinytag](https://github.com/tinytag/tinytag)(MIT)와 [PyInstaller](https://pyinstaller.org) 런타임이 들어 있습니다.
 - "조플린(Joplin)", "에버노트(Evernote)"는 각 소유자의 상표이며, 이 프로젝트는 그들과 관련이 없는 비공식 프로젝트입니다.

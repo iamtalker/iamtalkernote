@@ -31,7 +31,8 @@ if HERE not in sys.path:
 import bulk  # noqa: E402
 import cleanup  # noqa: E402
 import clipserver  # noqa: E402
-import editor as ed  # noqa: E402   (위키나루: 서식 도구·그림 불러오기)
+import docs as docidx  # noqa: E402   (노트 폴더 밖의 pdf·txt·mp3 … 가져오기)
+import editor as ed # noqa: E402   (위키나루: 서식 도구·그림 불러오기)
 import preview  # noqa: E402
 import search  # noqa: E402
 import snapshots as sn  # noqa: E402
@@ -403,11 +404,13 @@ class App:
         apply_theme(theme.get("name", DEFAULT_THEME), theme.get("accent"))
         self.root = tk.Tk()
         self.root.title(APP)
+        win = st.read_config().get("window", {})
         self.root.geometry("1440x860")
         self.root.minsize(900, 520)
+        self.restore_window(win)
         self.root.configure(bg=C["bg"])
         try:
-            self.root.iconbitmap(os.path.join(HERE, "assets", "icon.ico"))
+            self.root.iconbitmap(default=os.path.join(HERE, "assets", "icon.ico"))   # 옵션·대화상자 등 이후에 열리는 모든 창도 같은 아이콘
         except tk.TclError:
             pass
         fams = set(tkfont.families())
@@ -421,20 +424,22 @@ class App:
         self.mode = view.get("mode") if view.get("mode") in ("edit", "split", "view") else "split"
         self.store = st.Store()
         self.store.tagger = note_tags   # 색인에 태그도 함께 기억
+        self.docs = docidx.DocIndex()  # 가져온 폴더의 문서 색인
+        self.doc_open = False          # 가져온 문서(읽기 전용)를 열어 둔 중인가
         self.snap = sn.Snapshots(self.store)   # 복원 지점
         self.store.on_change = self.snap.preserve   # 노트를 바꾸기 직전에 그 내용을 복원 지점용으로 보관
         try:
             self.store.purge_trash()   # 휴지통에 보관 기간(기본 30일)이 지난 항목은 완전히 지운다
         except OSError:
             pass
-        self.nb = ALL                  # '*' 모든 노트 · '' 기본 · 그 밖은 노트북 폴더 이름
+        self.nb = win.get("nb") if isinstance(win.get("nb"), str) else ALL   # '*' 모든 노트 · '' 기본 · 그 밖은 노트북 폴더 이름(없어졌으면 읽은 뒤 '*' 로)
         self.tag = None                # 태그로 거르는 중이면 그 태그
         self.nb_keys, self.tag_keys = [], []
         self.all_notes, self.notes, self.results, self.words = [], [], [], []
         self.cards = []                # 목록에 그려진 카드 → note
         self.rendered, self.card_starts, self.next_line = 0, [], 1   # 목록에 그려 놓은 노트 수 / 카드 시작 줄 / 다음 카드 줄
-        self.sort, self.asc = "relevance", False
-        self.cur = None                # 열어 둔 노트(dict)
+        self.sort, self.asc = win.get("sort") if win.get("sort") in ("relevance", "time", "ctime", "title") else "relevance", bool(win.get("asc", False))
+        self.cur = None               # 열어 둔 노트(dict)
         self.hist, self.hpos = [], -1  # 이동 > 뒤로/앞으로
         self.declined = set()          # 그림 분리 제안을 거절한 노트
         self.snap_done = False         # 노트를 연 뒤 이전 내용을 버전으로 남겼는가
@@ -462,6 +467,7 @@ class App:
         self.set_mode(self.mode)
         self.relayout()
         self.reload_notes(background=True)
+        self.root.after(20000, self.auto_scan_docs)   # 가져온 폴더에서 바뀐 파일만 뒤에서 다시 읽기
         self.root.after(15000, self.auto_snapshot)   # 시작하고 한참 뒤(목록을 다 읽은 다음) 하루 한 번 복원 지점
         self.root.after(600, self.poll_clip)
 
@@ -537,6 +543,8 @@ class App:
         m.add_command(label="새 노트", accelerator="Ctrl+N", command=self.new_note)
         m.add_command(label="새 노트북", accelerator="Ctrl+Shift+N", command=self.add_notebook)
         m.add_command(label="새 하위 노트북", command=self.add_subnotebook)
+        m.add_separator()
+        m.add_command(label="폴더 가져오기…", command=lambda: self.show_options("imports"))
         m.add_separator()
         m.add_command(label="복원 지점…", command=self.show_snapshots)
         m.add_command(label="휴지통…", command=self.show_trash)
@@ -844,7 +852,8 @@ class App:
                 done += 1
             except OSError:
                 pass
-        self.reload_notes()
+        self.multi.clear()
+        self.reload_notes(keep_scroll=True)   # 지운 뒤에도 보던 자리를 유지
         return done
 
     def show_trash(self):
@@ -1335,6 +1344,12 @@ class App:
         self.pane = tk.PanedWindow(self.root, orient="horizontal", sashwidth=4, sashrelief="flat", bg=C["line"], bd=0)
         self.pane.pack(fill="both", expand=True)
         self.widths = {"left": 230, "list": 360, "syntax": 300}
+        nbh = st.read_config().get("window", {}).get("nb_h")
+        if not getattr(self, "nb_h", 0):   # 노트북·태그 사이 경계 높이(테마를 바꿔 다시 만들 때는 지금 값을 유지)
+            self.nb_h = nbh if isinstance(nbh, int) and 90 <= nbh <= 3000 else 0
+        for k, v in st.read_config().get("window", {}).get("widths", {}).items():
+            if k in self.widths and isinstance(v, int) and 150 <= v <= 1200:
+                self.widths[k] = v
         self.build_left()
         self.build_list()
         self.build_editor()
@@ -1369,6 +1384,7 @@ class App:
         self.pane.add(self.editf, minsize=360, stretch="always")
         if self.show["syntax"]:
             self.pane.add(self.sidebar, minsize=220, width=self.widths["syntax"], stretch="never")
+        self.capture_nb_height()
         inner = [str(p) for p in self.left_pane.panes()]
         for w in (self.nb_sec, self.tag_sec):
             if str(w) in inner:
@@ -1377,6 +1393,26 @@ class App:
             self.left_pane.add(self.nb_sec, minsize=90, stretch="always")
         if self.show["tags"]:
             self.left_pane.add(self.tag_sec, minsize=90, stretch="always")
+        if self.show["notebooks"] and self.show["tags"] and self.nb_h:   # 노트북·태그 사이 경계를 끌어 둔 자리를 다시 켜도 유지
+            self.left_pane.paneconfigure(self.nb_sec, height=self.nb_h)
+            self.root.after_idle(self.place_nb_sash)
+
+    def capture_nb_height(self):
+        """노트북·태그가 같이 보이는 동안의 노트북 칸 높이를 기억"""
+        try:
+            inner = [str(p) for p in self.left_pane.panes()]
+            if str(self.nb_sec) in inner and str(self.tag_sec) in inner and self.nb_sec.winfo_height() > 1:
+                self.nb_h = self.nb_sec.winfo_height()
+        except tk.TclError:
+            pass
+
+    def place_nb_sash(self):
+        try:
+            if len(self.left_pane.panes()) == 2 and self.nb_h:
+                self.root.update_idletasks()
+                self.left_pane.sash_place(0, 0, min(self.nb_h, max(90, self.left_pane.winfo_height() - 90)))
+        except tk.TclError:
+            pass
 
     # -- 1단: 노트북 + 태그
     def section_head(self, parent, title, action=None):
@@ -1491,8 +1527,9 @@ class App:
         L.config(selectbackground=C["bg"], selectforeground=C["text"], inactiveselectbackground=C["bg"])
         L.bind("<<Selection>>", lambda e: L.tag_remove("sel", "1.0", "end"))
         # 끌기·더블/트리플 클릭으로 글자가 여러 카드에 걸쳐 선택되는 Text 기본 동작을 막는다(여러 개 선택은 Shift/Ctrl+클릭만)
-        for seq in ("<B1-Motion>", "<Double-Button-1>", "<Triple-Button-1>", "<Shift-B1-Motion>", "<Control-B1-Motion>"):
+        for seq in ("<B1-Motion>", "<Triple-Button-1>", "<Shift-B1-Motion>", "<Control-B1-Motion>"):
             L.bind(seq, lambda e: "break")
+        L.bind("<Double-Button-1>", self.on_list_double)
         L.bind("<Escape>", lambda e: self.clear_multi())
         L.bind("<Delete>", lambda e: self.trash_multi() if self.multi else None)
         L.bind("<Button-3>", self.on_list_menu)
@@ -1720,6 +1757,11 @@ class App:
     # ------------------------------------------------------------ 노트북·태그
     def nb_label(self, key):
         """노트북 경로 → 보여 줄 이름 (하위 노트북은 '업무 › 프로젝트')"""
+        if key == "@docs":
+            return "가져온 폴더"
+        if key.startswith("@doc:"):
+            f = next((f for f in self.docs.folders() if f["id"] == key[5:]), None)
+            return f.get("name") or f["path"] if f else "가져온 폴더"
         if not key or key == ALL:
             return self.store.root_name if key == "" else "모든 노트"
         return " › ".join(wikiconv.markdown.md_title(p + ".md") for p in key.split("/"))
@@ -1737,9 +1779,12 @@ class App:
 
     def reload_notebooks(self):
         names = self.store.notebooks()
-        if self.nb not in (ALL, "") and self.nb not in names:
+        dfolders = self.docs.folders()
+        doc_keys = (["@docs"] + ["@doc:" + f["id"] for f in dfolders]) if dfolders else []
+        if self.nb not in (ALL, "") and self.nb not in names and self.nb not in doc_keys:
             self.nb = ALL
-        self.nb_keys = [ALL, ""] + names
+        self.nb_keys = [ALL, ""] + names + doc_keys
+        dcounts = self.docs.counts() if dfolders else {}
         direct = {}
         for n in self.all_notes:
             direct[n["nb"]] = direct.get(n["nb"], 0) + 1
@@ -1752,6 +1797,10 @@ class App:
                 label, count, parent = "모든 노트", len(self.all_notes), ""
             elif key == "":
                 label, count, parent = self.store.root_name, None, ""   # 저장 폴더 줄에는 숫자를 달지 않는다(아래 노트북들이 실제 내용)
+            elif key == "@docs":
+                label, count, parent = "가져온 폴더", sum(dcounts.values()), ""
+            elif key.startswith("@doc:"):
+                label, count, parent = self.nb_label(key), dcounts.get(key[5:], 0), f"nb{idx['@docs']}"
             else:
                 label, count = self.nb_short(key), total(key)
                 # 최상위 노트북은 저장 폴더 항목(scrapbook) 아래에 들여써서 보여 준다
@@ -1818,6 +1867,14 @@ class App:
         self.nb_menu_target = key
         m = self.nbmenu
         m.delete(0, "end")
+        if key.startswith("@doc"):   # 가져온 폴더: 원본 파일은 건드리지 않는다
+            if key.startswith("@doc:"):
+                m.add_command(label="다시 읽기", command=lambda: self.scan_docs(key[5:]))
+                m.add_command(label="목록에서 빼기 (원본 파일은 그대로)", command=lambda: self.remove_doc_folder(key[5:]))
+            else:
+                m.add_command(label="모두 다시 읽기", command=lambda: self.scan_docs())
+            m.add_command(label="가져오기 설정…", command=lambda: self.show_options("imports"))
+            return m.tk_popup(e.x_root, e.y_root)
         if key == ALL:   # '모든 노트'는 노트북이 아니므로 최상위에 새 노트북을 만든다
             m.add_command(label="새 노트북 만들기", command=self.add_notebook)
         else:            # 저장 폴더(최상위)도 노트북처럼 상위가 될 수 있다
@@ -1851,7 +1908,7 @@ class App:
             sel = self.nbtree.selection()
             key = self.nb_keys[int(sel[0][2:])] if sel else None
         self.nb_menu_target = None
-        if key in (None, ALL):
+        if key in (None, ALL) or key.startswith("@doc"):   # 가져온 폴더는 노트북이 아니라 휴지통으로 보내지 않는다
             return
         if key == "":
             return self.delete_root()
@@ -1905,13 +1962,64 @@ class App:
         self.reload_notes()
         return True
 
+    # ------------------------------------------------------------ 가져온 폴더 (노트 폴더 밖의 pdf·txt·mp3 …)
+    def after_docs_changed(self):
+        """색인이 바뀐 뒤: 노트북 칸의 개수를 새로 쓰고, 가져온 폴더를 보고 있으면 목록도 새로"""
+        self.reload_notebooks()
+        if self.nb.startswith("@doc"):
+            self.reload_notes(keep_scroll=True)
+
+    def scan_docs(self, only=None, quiet=False):
+        """가져온 폴더를 훑어 새로 생기거나 바뀐 파일만 읽는다(진행 창, 취소 가능). 파일이 많으면 처음 한 번은 오래 걸린다"""
+        if not self.docs.folders():
+            return
+
+        def done(res):
+            read, gone, total = res
+            self.after_docs_changed()
+            self.status.config(text=f"가져온 폴더: 파일 {total:,}개 (새로 읽은 것 {read:,}, 사라진 것 {gone:,})")
+        self.run_task("가져온 폴더 읽는 중", lambda prog, cancel: self.docs.scan(prog, cancel, only), done,
+                      text="가져온 폴더의 문서를 읽는 중… (처음 한 번은 오래 걸립니다)")
+
+    def auto_scan_docs(self):
+        """시작하고 한참 뒤 조용히: 가져온 폴더에서 바뀐 파일만 다시 읽는다(창 없이 뒤에서)"""
+        if not self.docs.folders():
+            return
+        q = queue.Queue()
+
+        def job():
+            try:
+                q.put(("ok", self.docs.scan()))
+            except Exception as ex:  # noqa: BLE001
+                q.put(("err", str(ex)))
+        threading.Thread(target=job, daemon=True).start()
+
+        def poll():
+            try:
+                kind, val = q.get_nowait()
+            except queue.Empty:
+                return self.root.after(1000, poll)
+            if kind == "ok" and (val[0] or val[1]):
+                self.after_docs_changed()
+        poll()
+
+    def remove_doc_folder(self, fid):
+        f = next((f for f in self.docs.folders() if f["id"] == fid), None)
+        if not f or not messagebox.askyesno(APP, f"「{f['path']}」을(를) 가져온 폴더 목록에서 뺄까요?\n(원본 파일은 그대로 두고, 이 앱의 색인만 지웁니다)", parent=self.root):
+            return
+        self.docs.remove_folder(fid)
+        if self.nb == "@doc:" + fid:
+            self.close_note()
+            self.nb = "@docs"
+        self.after_docs_changed()
+
     # ------------------------------------------------------------ 목록: 불러오기·검색·그리기
-    def reload_notes(self, background=False):
+    def reload_notes(self, background=False, keep_scroll=False):
         """저장 폴더의 노트를 다시 읽는다. background=True 면 창을 먼저 보이고 뒤에서 읽는다(노트가 많을 때 시작이 느려지지 않게)."""
         self.load_gen += 1
         gen = self.load_gen
         if not background:
-            return self.apply_loaded(self.read_all_notes())
+            return self.apply_loaded(self.read_all_notes(), keep_scroll)
         self.count.config(text="노트를 불러오는 중…")
         q = queue.Queue()
 
@@ -1942,14 +2050,17 @@ class App:
         self.load_prog = (0, 0)
         return self.store.list_notes(ALL, tagger=note_tags, progress=lambda d, t: setattr(self, "load_prog", (d, t)))
 
-    def apply_loaded(self, loaded):
+    def apply_loaded(self, loaded, keep_scroll=False):
         keep = self.cur["path"] if self.cur else None
         self.all_notes = loaded
-        self.notes = [n for n in self.all_notes if self.in_nb(n)]
+        if self.nb.startswith("@doc"):   # 가져온 폴더를 골랐으면 목록은 노트가 아니라 가져온 문서
+            self.notes = self.docs.list_docs(self.nb[5:] if self.nb.startswith("@doc:") else None)
+        else:
+            self.notes = [n for n in self.all_notes if self.in_nb(n)]
         self.cur = next((n for n in self.notes if n["path"] == keep), None) if keep else None
         self.reload_notebooks()
         self.reload_tags()
-        self.refresh()
+        self.refresh(keep_page=keep_scroll)
 
     def schedule_search(self):
         if self.search_job:
@@ -1960,7 +2071,8 @@ class App:
         """검색·정렬을 다시 하고 목록을 그린다. keep_page=True 는 자동 저장 때처럼 보던 자리를 유지"""
         self.search_job = None
         pool = [n for n in self.notes if self.tag in n["tags"]] if self.tag else self.notes
-        self.results, self.words = search.run(pool, self.q.get(), self.sort, self.asc, self.d_from.get(), self.d_to.get(), index=self.store)
+        self.results, self.words = search.run(pool, self.q.get(), self.sort, self.asc, self.d_from.get(), self.d_to.get(),
+                                           index=self.docs if self.nb.startswith("@doc") else self.store)
         self.draw_list(keep_scroll=keep_page)
 
     def draw_list(self, keep_scroll=False):
@@ -1973,7 +2085,8 @@ class App:
         L = self.lst
         if not keep_scroll:
             self.multi.clear()
-        top = L.yview()[0] if keep_scroll else 0.0   # 자동 저장 때만 스크롤을 유지하고, 정렬·검색·노트북을 바꾸면 맨 위부터
+        top = L.yview()[0] if keep_scroll else 0.0   # 자동 저장·삭제 때만 스크롤을 유지하고, 정렬·검색·노트북을 바꾸면 맨 위부터
+        top_line = L.index("@0,0") if keep_scroll else None   # 목록이 줄어도 같은 자리에 머물도록 맨 위 줄로 되돌린다
         want = max(LIST_CHUNK, self.rendered) if keep_scroll else LIST_CHUNK
         L.config(state="normal")
         L.delete("1.0", "end")
@@ -1981,6 +2094,8 @@ class App:
         self.cards, self.card_starts, self.rendered, self.next_line = [], [], 0, 1
         self.append_cards(want)
         L.yview_moveto(top)
+        if top_line:
+            L.yview(top_line)
         self.mark_selected()
         for k, b in self.sort_btns.items():
             arrow = ""
@@ -2124,7 +2239,11 @@ class App:
 
     def on_list_click(self, e):
         n = self.card_at(e)
-        if n and e.state & 0x1:       # Shift+클릭: 범위 선택(노트는 열지 않는다)
+        if isinstance(n, docidx.Doc):   # 가져온 파일은 여러 개 고르기·이동·삭제가 없다: 그냥 연다
+            self.anchor = n["path"]
+            self.clear_multi()
+            self.open_note(n)
+        elif n and e.state & 0x1:       # Shift+클릭: 범위 선택(노트는 열지 않는다)
             self.select_range(n)
         elif n and e.state & 0x4:     # Ctrl+클릭: 하나씩 넣고 빼기
             self.toggle_multi(n)
@@ -2137,11 +2256,36 @@ class App:
         self.root.after_idle(self.lst.focus_set)
         return "break"
 
+    def on_list_double(self, e):
+        """가져온 파일을 더블클릭하면 그 파일의 기본 프로그램으로 연다(노트는 Text 의 기본 글자 선택을 막기만 한다)"""
+        n = self.card_at(e)
+        if isinstance(n, docidx.Doc):
+            self.open_doc_file(n)
+        return "break"
+
+    def open_doc_file(self, n):
+        try:
+            os.startfile(n["path"])
+        except OSError as ex:
+            messagebox.showerror(APP, f"파일을 열지 못했습니다.\n{ex}", parent=self.root)
+
+    def doc_menu(self, e, n):
+        self.open_note(n)
+        lm = self.listmenu
+        lm.delete(0, "end")
+        lm.add_command(label="기본 프로그램으로 열기", command=lambda: self.open_doc_file(n))
+        lm.add_command(label="파일 위치 열기", command=lambda: subprocess.Popen(["explorer", "/select,", os.path.normpath(n["path"])]))
+        lm.add_command(label="경로 복사", command=lambda: (self.root.clipboard_clear(), self.root.clipboard_append(n["path"])))
+        lm.tk_popup(e.x_root, e.y_root)
+        return "break"
+
     def on_list_menu(self, e):
         """노트 우클릭 메뉴 (조플린: 삭제 · 노트북으로 이동 · 링크 복사 …)"""
         n = self.card_at(e)
         if not n:
             return
+        if isinstance(n, docidx.Doc):
+            return self.doc_menu(e, n)
         if self.multi and n["path"] in self.multi:   # 여러 개를 고른 채 그 안에서 우클릭
             return self.multi_menu(e)
         self.clear_multi()
@@ -2198,6 +2342,7 @@ class App:
         else:
             self.sort, self.asc = mode, False
         self.refresh()
+        st.write_config(window={**st.read_config().get("window", {}), "sort": self.sort, "asc": self.asc})
 
     def toggle_date(self):
         if self.date_row.winfo_ismapped():
@@ -2215,8 +2360,52 @@ class App:
         self.text.edit_modified(False)
         self.loading = False
 
-    def open_note(self, n, record=True):
+    def open_doc(self, n, record=True):
+        """가져온 문서(pdf·txt·mp3 …)를 읽기 전용으로 연다: 색인해 둔 글을 편집 칸에 보여 준다(Ctrl+F 로 문서 안에서 찾을 수 있다)"""
         self.flush()
+        if self.cur is not None and self.cur is not n:
+            self.hide_find(focus=False)
+        self.cur = n
+        self.doc_open = True
+        self.snap_done = False
+        if record and not (self.hist and self.hpos >= 0 and self.hist[self.hpos] == n["path"]):
+            del self.hist[self.hpos + 1:]
+            self.hist.append(n["path"])
+            self.hpos = len(self.hist) - 1
+        self.show_empty(False)
+        self.apply_layout("edit")   # 렌더링 칸 없이 글만
+        self.title_var.set(n["title"])
+        self.title_entry.config(state="readonly")
+        body = n.read()
+        if not body.strip():
+            body = ("(이 파일에서 뽑은 글이 없습니다.)\n\n" if n["ext"] not in docidx.AUDIO_EXT else "") + "위치: " + n["path"]
+        n["body"] = body
+        self.text.config(state="normal", wrap="word")
+        self.set_text(body)
+        self.text.config(state="disabled")
+        self.text.yview_moveto(0)
+        self.dirty = False
+        self.status.config(text=f"가져온 파일 (읽기 전용)   ·   {n['path']}   ·   더블클릭이나 우클릭 → 기본 프로그램으로 열기")
+        self.tagbtn.config(text="", fg=C["muted"])
+        self.mark_selected()
+        if self.findbar.winfo_ismapped():
+            self.find_run()
+
+    def leave_doc(self):
+        """가져온 문서를 보던 상태를 풀고 노트 편집 상태로 돌아간다"""
+        if not self.doc_open:
+            return
+        self.doc_open = False
+        self.text.config(state="normal")
+        self.title_entry.config(state="normal")
+        self.apply_layout(self.mode)
+        self.hide_find(focus=False)
+
+    def open_note(self, n, record=True):
+        if isinstance(n, docidx.Doc):
+            return self.open_doc(n, record)
+        self.flush()
+        self.leave_doc()
         if self.cur is not None and self.cur is not n:
             self.hide_find(focus=False)   # 다른 노트로 가면 찾기 막대는 닫는다
         if self.cur is not None and self.cur is not n and not self.dirty:
@@ -2275,6 +2464,7 @@ class App:
             pos += step
 
     def close_note(self):
+        self.leave_doc()
         self.cur = None
         self.dirty = False
         self.show_empty(True)
@@ -2330,7 +2520,7 @@ class App:
 
     def edit_tags(self, e=None):
         """맨 아래 줄의 태그를 누르면 그 자리에 입력칸이 열린다: 공백이나 쉼표로 나눠 쓰고 Enter 로 저장, Esc 로 취소"""
-        if not self.cur or self.tag_edit:
+        if not self.cur or self.tag_edit or self.doc_open:
             return
         self.flush()
         tags = sorted(self.cur.get("tags", ()))
@@ -2552,7 +2742,7 @@ class App:
             self.open_note(n, record=False)   # 바뀐 글을 다시 읽어 와서 낡은 내용으로 덮어쓰지 않게
 
     def commit_title(self):
-        if not self.cur:
+        if not self.cur or self.doc_open:
             return
         new = self.title_var.get().strip()
         if new == self.cur["title"]:
@@ -2591,6 +2781,8 @@ class App:
             self.title_entry.select_range(0, "end")
 
     def delete_note(self):
+        if self.doc_open:
+            return messagebox.showinfo(APP, "가져온 파일은 여기서 지우지 않습니다(원본 파일은 그대로 둡니다).\n목록에서 빼려면 노트북 칸의 가져온 폴더를 우클릭하세요.", parent=self.root)
         if not self.cur or not messagebox.askyesno(APP, f"이 노트를 휴지통으로 보낼까요?\n({self.store.trash_days}일 동안 보관하며 파일 → 휴지통에서 복원할 수 있습니다)", parent=self.root):
             return
         if self.save_job:
@@ -2605,13 +2797,13 @@ class App:
         self.hist = [p for p in self.hist if p != path]
         self.hpos = min(self.hpos, len(self.hist) - 1)
         self.close_note()
-        self.reload_notes()
+        self.reload_notes(keep_scroll=True)
 
     # ------------------------------------------------------------ 보기 모드·렌더링 (위키나루)
     # ------------------------------------------------------------ 문서 안에서 찾기
     def find_target(self):
         """찾은 곳을 옮겨 다니는 칸: 렌더링만 볼 때는 렌더링 화면, 그 밖에는 편집 칸(둘 다 보이면 양쪽에 강조하고 편집 칸으로 옮긴다)"""
-        return self.view if self.mode == "view" else self.text
+        return self.view if self.mode == "view" and not self.doc_open else self.text
 
     def show_find(self):
         if not self.cur:
@@ -2723,6 +2915,14 @@ class App:
         self.v_mode.set(m)
         for k, b in self.mode_btns.items():
             b.set_on(k == m)
+        if not self.doc_open:
+            self.apply_layout(m)
+        self.save_view()
+        self.render()
+        if self.findbar.winfo_ismapped():
+            self.root.after(60, self.find_run)
+
+    def apply_layout(self, m):
         for w in (self.edit_frame, self.view_frame):
             w.grid_forget()
         if m in ("edit", "split"):
@@ -2732,17 +2932,13 @@ class App:
         two = m == "split"
         self.body.grid_columnconfigure(0, weight=1, uniform="pane" if two else "")
         self.body.grid_columnconfigure(1, weight=1 if two else 0, uniform="pane" if two else "")
-        self.save_view()
-        self.render()
-        if self.findbar.winfo_ismapped():
-            self.root.after(60, self.find_run)
 
     def cycle_mode(self):
         self.set_mode({"edit": "split", "split": "view", "view": "edit"}[self.mode])
 
     def render(self):
         self.render_job = None
-        if not self.cur or self.mode == "edit":
+        if not self.cur or self.mode == "edit" or self.doc_open:
             return
         title = self.title_var.get()
         try:
@@ -3168,8 +3364,8 @@ class App:
 
     # ------------------------------------------------------------ 노트 속성 (조플린의 ⓘ)
     def show_properties(self):
-        if not self.cur:
-            return messagebox.showinfo(APP, "먼저 노트를 여세요.", parent=self.root)
+        if not self.cur or self.doc_open:
+            return messagebox.showinfo(APP, "먼저 노트를 여세요." if not self.cur else "가져온 파일에는 노트 속성이 없습니다.", parent=self.root)
         self.flush()
         n = self.cur
         meta = st.parse_meta(n["body"])
@@ -3268,8 +3464,8 @@ class App:
 
     def show_versions(self):
         """편집 > 노트 버전…: 이 노트의 이전 내용을 보고, 골라서 되돌린다."""
-        if not self.cur:
-            return messagebox.showinfo(APP, "먼저 노트를 여세요.", parent=self.root)
+        if not self.cur or self.doc_open:
+            return messagebox.showinfo(APP, "먼저 노트를 여세요." if not self.cur else "가져온 파일에는 노트 버전이 없습니다.", parent=self.root)
         self.flush()
         n = self.cur
         top = tk.Toplevel(self.root)
@@ -3356,6 +3552,7 @@ class App:
         cur_path = self.cur["path"] if self.cur else None
         q, d1, d2 = self.q.get(), self.d_from.get(), self.d_to.get()
         widths = dict(self.widths)
+        self.capture_nb_height()
         for job in (self.render_job, self.search_job):
             if job:
                 self.root.after_cancel(job)
@@ -3446,14 +3643,7 @@ class App:
                                activebackground=C["bg"], font=(self.ui, 10), selectcolor=C["bg"]).pack(anchor="w")
 
         def clipper(p):
-            title(p, "웹 클리퍼", "웹 페이지를 이 앱으로 바로 저장하는 방법을 고릅니다.")
-            lab(p, "클리퍼", font=(self.ui, 10, "bold")).pack(anchor="w")
-            method = tk.StringVar(value="joplin")
-            tk.Radiobutton(p, text="조플린 클리퍼 플러스 (크롬 확장)", variable=method, value="joplin", bg=C["bg"],
-                           activebackground=C["bg"], font=(self.ui, 10), selectcolor=C["bg"]).pack(anchor="w", pady=(4, 0))
-            tk.Radiobutton(p, text="기본 제공 클리퍼 (준비 중)", variable=method, value="builtin", state="disabled",
-                           bg=C["bg"], font=(self.ui, 10), selectcolor=C["bg"]).pack(anchor="w")
-            hr(p)
+            title(p, "웹 클리퍼", "조플린 클리퍼 플러스(크롬 확장)로 웹 페이지를 이 앱에 바로 저장합니다.")
             on = tk.BooleanVar(value=bool(st.read_config().get("clipEnabled", True)))
             status = lab(p, "", fg=C["muted"], font=(self.ui, 9))
             port_var, tok_var = tk.StringVar(), tk.StringVar(value=st.clipper_token())
@@ -3492,7 +3682,103 @@ class App:
                             anchor="w", justify="left", wraplength=480)
             link.pack(anchor="w", pady=(4, 0))
             link.bind("<Button-1>", lambda e: webbrowser.open(store_url))
+            git_url = "https://github.com/iamtalker/joplin-clipper-plus"
+            lab(p, "GitHub (소스·설치 방법)", font=(self.ui, 10, "bold")).pack(anchor="w", pady=(12, 0))
+            glink = tk.Label(p, text=git_url, bg=C["bg"], fg=C["accent"], cursor="hand2", font=(self.ui, 9, "underline"), anchor="w")
+            glink.pack(anchor="w", pady=(4, 0))
+            glink.bind("<Button-1>", lambda e: webbrowser.open(git_url))
             refresh_state()
+
+        def imports_tab(p):
+            title(p, "가져오기", "노트 폴더 밖의 폴더에 있는 pdf·txt·mp3 등을 읽어 노트처럼 검색합니다. 원본 파일은 건드리지 않고 읽기만 합니다.")
+            cfg = self.docs.cfg()
+            avail = docidx.available()
+            lab(p, "가져올 폴더", font=(self.ui, 10, "bold")).pack(anchor="w")
+            box = tk.Frame(p, bg=C["bg"])
+            box.pack(fill="x", pady=(4, 0))
+            lb = tk.Listbox(box, height=5, relief="flat", bd=0, bg=C["panel"], fg=C["text"], highlightthickness=1, highlightbackground=C["line"],
+                            selectbackground=C["soft"], selectforeground=C["text"], activestyle="none", font=(self.ui, 10), exportselection=False)
+            lb.pack(fill="x", ipady=2)
+            ids = []
+
+            def fill():
+                lb.delete(0, "end")
+                ids.clear()
+                counts = self.docs.counts()
+                for f in self.docs.folders():
+                    ids.append(f["id"])
+                    lb.insert("end", f"{f['path']}    ({counts.get(f['id'], 0):,}개)")
+            fill()
+
+            def add():
+                path = filedialog.askdirectory(title="가져올 폴더 고르기", parent=top, mustexist=True)
+                if not path:
+                    return
+                path = os.path.normpath(path)
+                r = os.path.normcase(self.store.root)
+                if os.path.normcase(path) == r or os.path.normcase(path).startswith(r + os.sep) or r.startswith(os.path.normcase(path) + os.sep):
+                    return messagebox.showwarning(APP, "노트 폴더와 겹치는 폴더는 가져올 수 없습니다(노트는 이미 읽고 있습니다).", parent=top)
+                if not self.docs.add_folder(path):
+                    return messagebox.showinfo(APP, "이미 가져온 폴더입니다.", parent=top)
+                fill()
+                self.after_docs_changed()
+                if messagebox.askyesno(APP, "지금 이 폴더의 파일을 읽어 색인할까요?\n(파일이 많으면 처음 한 번은 오래 걸리고, 이후에는 바뀐 파일만 읽습니다)", parent=top):
+                    self.scan_docs(self.docs.fid(path))
+
+            def remove():
+                sel = lb.curselection()
+                if sel:
+                    self.remove_doc_folder(ids[sel[0]])
+                    fill()
+            row = tk.Frame(p, bg=C["bg"])
+            row.pack(anchor="w", pady=(8, 0))
+            Btn(row, "폴더 추가…", add, padx=12, pady=3).pack(side="left")
+            Btn(row, "목록에서 빼기", remove, padx=12, pady=3).pack(side="left", padx=6)
+            Btn(row, "지금 다시 읽기", lambda: self.scan_docs(), padx=12, pady=3).pack(side="left")
+            lab(p, "빼도 원본 파일은 그대로입니다. 앱을 켜고 잠시 뒤 바뀐 파일은 저절로 다시 읽습니다.", fg=C["muted"], font=(self.ui, 9)).pack(anchor="w", pady=(6, 0))
+            hr(p)
+
+            lab(p, "읽을 파일 종류 (고른 확장자만 읽습니다)", font=(self.ui, 10, "bold")).pack(anchor="w")
+            common = ["pdf", "txt", "md", "mp3", "docx", "pptx", "xlsx", "csv", "html", "m4a", "flac", "wav", "ogg", "log", "json"]
+            chosen = {e.lower().lstrip(".") for e in cfg["exts"]}
+            vars_ = {e: tk.BooleanVar(value=e in chosen) for e in common}
+            extra = tk.StringVar(value=" ".join(sorted(chosen - set(common))))
+
+            def save_exts(*_):
+                exts = [e for e in common if vars_[e].get()]
+                exts += [x.lower().lstrip(".") for x in re.split(r"[\s,;]+", extra.get()) if x.strip(".")]
+                c = self.docs.cfg()
+                c["exts"] = exts or list(docidx.DEFAULT_EXTS)
+                self.docs.save_cfg(c)
+            grid = tk.Frame(p, bg=C["bg"])
+            grid.pack(anchor="w", pady=(6, 0))
+            for i, e in enumerate(common):
+                tk.Checkbutton(grid, text="." + e, variable=vars_[e], command=save_exts, bg=C["bg"], activebackground=C["bg"], selectcolor=C["bg"],
+                               font=(self.ui, 10), width=7, anchor="w").grid(row=i // 5, column=i % 5, sticky="w")
+            erow = tk.Frame(p, bg=C["bg"])
+            erow.pack(anchor="w", pady=(6, 0))
+            lab(erow, "그 밖의 확장자").pack(side="left")
+            ent = tk.Entry(erow, textvariable=extra, width=24, relief="flat", bd=0, bg=C["panel"], fg=C["text"], highlightthickness=1,
+                           highlightbackground=C["line"], insertbackground=C["accent"], font=(self.ui, 10))
+            ent.pack(side="left", padx=8, ipady=3)
+            ent.bind("<FocusOut>", save_exts)
+            ent.bind("<Return>", save_exts)
+            missing = [n for n, ok in (("pdf", "pypdf"), ("mp3", "tinytag")) if n not in avail]
+            lab(p, "글을 읽는 도구가 없는 확장자는 파일 이름만 색인됩니다. 종류를 바꾼 뒤에는 '지금 다시 읽기'를 누르세요."
+                + (f"\n(이 컴퓨터에는 {', '.join(missing)} 라이브러리가 없어 해당 형식은 이름만 색인됩니다)" if missing else ""),
+                fg=C["muted"], font=(self.ui, 9)).pack(anchor="w", pady=(6, 0))
+            hr(p)
+
+            content = tk.BooleanVar(value=cfg["content"])
+
+            def save_content():
+                c = self.docs.cfg()
+                c["content"] = bool(content.get())
+                self.docs.save_cfg(c)
+            tk.Checkbutton(p, text="문서 안의 글도 색인 (pdf·txt·docx 본문, mp3 태그와 가사)", variable=content, command=save_content, bg=C["bg"],
+                           activebackground=C["bg"], selectcolor=C["bg"], font=(self.ui, 10)).pack(anchor="w")
+            lab(p, "끄면 파일 이름과 경로로만 찾습니다(빠르고 DB 가 작아집니다). 문서를 열어 둔 상태에서 Ctrl+F 로 그 문서 안에서 찾는 것은 켜든 끄든 쓸 수 있습니다.",
+                fg=C["muted"], font=(self.ui, 9), wraplength=500).pack(anchor="w", pady=(2, 0))
 
         def versions_tab(p):
             title(p, "노트 버전", "노트를 고칠 때마다 이전 내용을 노트별로 보관해 두고, 나중에 골라서 되돌릴 수 있습니다.")
@@ -3648,6 +3934,41 @@ class App:
                         messagebox.showinfo(APP, f"리소스 {moved}개를 옮기고 노트 {relinked}개의 링크를 고쳤습니다.", parent=top)
                 self.checkpoint("리소스 폴더 이전 전", go) if migrate else go()   # 노트의 링크가 바뀌므로 먼저 복원 지점
 
+            def adopt_folder():
+                """마크다운마다 미디어 폴더 이름이 다르니, 고른 폴더를 .resources 로 바꾸고 모든 노트의 링크도 고친다(확인 후)"""
+                old = filedialog.askdirectory(title="미디어(그림·첨부)가 들어 있는 폴더 고르기", initialdir=self.store.root, mustexist=True, parent=top)
+                if not old:
+                    return
+                old = os.path.normpath(old)
+                why = self.store.check_media_folder(old)
+                if why:
+                    return messagebox.showwarning(APP, why, parent=top)
+
+                def confirm(res):
+                    files, notes = res
+                    if not files:
+                        return messagebox.showinfo(APP, "이 폴더에는 옮길 파일이 없습니다.", parent=top)
+                    if not messagebox.askyesno(
+                            "미디어 폴더를 .resources 로 바꾸기",
+                            f"「{old}」\n\n안의 {files:,}개 항목을 볼트의 .resources 로 옮기고,\n모든 노트 중 {notes:,}개의 그림·링크 경로를 고칩니다.\n"
+                            "(.md 노트는 옮기지 않고, 이름이 겹치는 파일은 번호를 붙입니다. 먼저 복원 지점을 만듭니다.)\n\n바꿀까요?", parent=top):
+                        return
+                    self.flush()
+                    cur_path = self.cur["path"] if self.cur else None
+
+                    def finish(r):
+                        moved, relinked = r
+                        self.reload_notes()
+                        n = next((x for x in self.notes if x["path"] == cur_path), None) if cur_path else None
+                        if n:
+                            self.open_note(n, record=False)
+                        refresh()
+                        messagebox.showinfo(APP, f"{moved:,}개 항목을 옮기고 노트 {relinked:,}개의 링크를 고쳤습니다.\n이제 새 그림도 .resources 에 저장됩니다.", parent=top)
+                    self.checkpoint("미디어 폴더 이전 전", lambda: self.run_task(
+                        "미디어 폴더 옮기는 중", lambda prog, cancel: self.store.move_media_folder(old, prog), finish,
+                        text="파일을 옮기고 노트의 링크를 고치는 중…", cancellable=False))
+                self.run_task("확인하는 중", lambda prog, cancel: self.store.preview_media_folder(old, prog), confirm, text="노트에서 이 폴더를 가리키는 링크를 세는 중…")
+
             lab(p, "노트 폴더", font=(self.ui, 10, "bold")).pack(anchor="w")
             lab(p, "노트북 = 폴더(하위 폴더는 하위 노트북), 노트 = .md 파일", fg=C["muted"], font=(self.ui, 9)).pack(anchor="w", pady=(0, 6))
             field(p, "경로", root_var, 52, ("변경…", change_root))
@@ -3662,6 +3983,9 @@ class App:
             move_btn = Btn(row, "볼트 안으로 옮기기", lambda: apply_media("vault"), padx=10, pady=3)
             move_btn.pack(side="left")
             Btn(row, "열기", lambda: (self.store.ensure_media(), os.startfile(self.store.media_dir)), padx=10, pady=3).pack(side="left", padx=6)
+            Btn(row, "다른 폴더를 .resources 로 바꾸기…", adopt_folder, padx=10, pady=3).pack(side="left")
+            lab(p, "노트가 쓰던 미디어 폴더 이름이 다르면(attachments, images 등) 그 폴더를 직접 골라 .resources 로 모으고,\n모든 노트의 링크를 한꺼번에 고칩니다. 고른 뒤 몇 곳이 바뀌는지 보여 주고 확인을 받습니다.",
+                fg=C["muted"], font=(self.ui, 9)).pack(anchor="w", padx=(64, 0), pady=(6, 0))
             mode_note.pack(anchor="w", padx=(64, 0), pady=(8, 0))
             refresh()
             if self.store.media_is_vault:
@@ -3708,7 +4032,7 @@ class App:
                 kind="primary", bold=True, padx=22, pady=5).pack(side="left")
             Btn(row, "기본값으로", lambda: self.root.after(20, lambda: self.set_fonts(10, False, 11, False)), padx=14, pady=5).pack(side="left", padx=8)
 
-        pages = (("general", "일반", general), ("folders", "폴더", folders_tab), ("fonts", "글꼴", fonts_tab), ("theme", "테마·색상", theme_tab), ("versions", "노트 버전", versions_tab), ("clipper", "웹 클리퍼", clipper))
+        pages = (("general", "일반", general), ("folders", "폴더", folders_tab), ("imports", "가져오기", imports_tab), ("fonts", "글꼴", fonts_tab), ("theme", "테마·색상", theme_tab), ("versions", "노트 버전", versions_tab), ("clipper", "웹 클리퍼", clipper))
 
         def select(key):
             for k, b in tabs.items():
@@ -3790,7 +4114,43 @@ class App:
             target.yview_scroll(direction, "pages")
             return "break"
 
+    def restore_window(self, win):
+        """지난번 창 크기·위치·최대화 상태로 연다(화면 밖이면 위치는 버린다)"""
+        m = re.fullmatch(r"(\d+)x(\d+)(?:([+-]-?\d+)([+-]-?\d+))?", str(win.get("geometry", "")))
+        if m:
+            w, h = int(m[1]), int(m[2])
+            w, h = max(900, min(w, self.root.winfo_screenwidth())), max(520, min(h, self.root.winfo_screenheight()))
+            pos = ""
+            if m[3] and m[4]:
+                x, y = int(m[3]), int(m[4])
+                if -w + 100 < x < self.root.winfo_screenwidth() - 100 and 0 <= y < self.root.winfo_screenheight() - 100:
+                    pos = f"+{x}+{y}"
+            self.root.geometry(f"{w}x{h}{pos}")
+        if win.get("zoomed"):
+            try:
+                self.root.state("zoomed")
+            except tk.TclError:
+                pass
+
+    def save_window(self):
+        """창 크기·칸 너비·정렬·노트북을 기억해 다음 실행 때 되살린다"""
+        try:
+            zoomed = self.root.state() == "zoomed"
+            if zoomed:
+                self.root.state("normal")
+                self.root.update_idletasks()
+            geo = self.root.geometry()
+            self.capture_nb_height()
+            managed = [str(p) for p in self.pane.panes()]
+            for key, w in (("left", self.leftf), ("list", self.listf), ("syntax", self.sidebar)):
+                if str(w) in managed and w.winfo_width() > 1:
+                    self.widths[key] = max(w.winfo_width(), 150)
+            st.write_config(window={"geometry": geo, "zoomed": zoomed, "widths": self.widths, "sort": self.sort, "asc": self.asc, "nb": self.nb, "nb_h": self.nb_h})
+        except (tk.TclError, OSError):
+            pass
+
     def quit(self):
+        self.save_window()
         self.flush()
         self.stop_clipper()
         self.root.destroy()

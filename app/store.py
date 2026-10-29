@@ -313,6 +313,7 @@ class Store:
         os.makedirs(root, exist_ok=True)
         self.root = os.path.abspath(root)
         self._jlast = {}   # 변경 이력에 노트별로 마지막으로 적은 시각
+        self.hide_system_dirs()
 
     def before_change(self, path):
         """노트 파일(또는 폴더)을 바꾸거나 지우거나 옮기기 직전에 부른다: 복원 지점이 그 바뀌기 전 내용을 보관해 둔다(on_change)"""
@@ -324,6 +325,14 @@ class Store:
         self.root = os.path.abspath(root)
         os.makedirs(self.root, exist_ok=True)
         write_config(root=self.root)
+        self.hide_system_dirs()
+
+    def hide_system_dirs(self):
+        """볼트 안의 앱 전용 폴더(.history .snapshots .trash .resources)에 윈도 '숨김' 속성을 준다(이미 있는 것만)"""
+        for name in (HISTORY_DIR, ".snapshots", TRASH_DIR, MEDIA_DIR):
+            p = os.path.join(self.root, name)
+            if os.path.isdir(p):
+                self.hide_dir(p)
 
     @property
     def root_name(self):
@@ -391,6 +400,7 @@ class Store:
             if detail:
                 rec["d"] = detail
             os.makedirs(os.path.dirname(self.journal_path), exist_ok=True)
+            self.hide_dir(os.path.join(self.root, HISTORY_DIR))
             with open(self.journal_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(rec, ensure_ascii=False) + "\n")
             if os.path.getsize(self.journal_path) > 4_000_000:   # 너무 커지면 최근 2만 줄만 남긴다
@@ -911,9 +921,10 @@ class Store:
         except OSError:
             return 0
 
-    def relink(self, old_dir, new_dir, progress=None):
+    def relink(self, old_dir, new_dir, progress=None, rename=None, dry=False, keep_md=False):
         """모든 노트에서 old_dir 안의 파일을 가리키는 그림·링크를 new_dir 쪽으로 고친다 → 고친 노트 수
-        progress(읽은 노트 수, 전체 노트 수, 단계 이름) 으로 진행을 알린다."""
+        progress(읽은 노트 수, 전체 노트 수, 단계 이름) 으로 진행을 알린다.
+        rename = {소문자 이전 이름: 새 이름} (옮기다 이름이 바뀐 최상위 항목), dry=True 면 파일은 건드리지 않고 고칠 노트 수만 센다."""
         old_n = os.path.normcase(os.path.abspath(old_dir))
         pat = re.compile(r'(\]\(|\bsrc=")([^)"\s]+)')
         changed = 0
@@ -934,7 +945,14 @@ class Store:
                 nc = os.path.normcase(cand)
                 if nc != old_n and not nc.startswith(old_n + os.sep):
                     return m.group(0)
-                new_path = os.path.join(new_dir, os.path.relpath(cand, old_dir))
+                if keep_md and nc.endswith(".md"):
+                    return m.group(0)   # 옮기지 않은 노트 파일을 가리키는 링크
+                inner = os.path.relpath(cand, old_dir)
+                if rename:
+                    parts = inner.split(os.sep)
+                    parts[0] = rename.get(parts[0].lower(), parts[0])
+                    inner = os.sep.join(parts)
+                new_path = os.path.join(new_dir, inner)
                 try:
                     rel = os.path.relpath(new_path, d).replace("\\", "/")
                 except ValueError:
@@ -943,11 +961,60 @@ class Store:
             text = n.read()
             body = pat.sub(fix, text)
             if body != text:
-                self.before_change(n["path"])
-                with open(n["path"], "w", encoding="utf-8", newline="\n") as f:
-                    f.write(body)
+                if not dry:
+                    self.before_change(n["path"])
+                    with open(n["path"], "w", encoding="utf-8", newline="\n") as f:
+                        f.write(body)
                 changed += 1
         return changed
+
+    def check_media_folder(self, old):
+        """옮길 폴더로 쓸 수 있는지 검사한다 → 이유(문자열) 또는 None"""
+        o, r, m = (os.path.normcase(os.path.abspath(x)) for x in (old, self.root, os.path.join(self.root, MEDIA_DIR)))
+        if not os.path.isdir(old):
+            return "폴더가 없습니다."
+        if o == m:
+            return "이미 .resources 폴더입니다."
+        if o == r or r.startswith(o + os.sep):
+            return "노트 폴더 전체이거나 그것을 품은 폴더는 고를 수 없습니다."
+        if o.startswith(m + os.sep) or m.startswith(o + os.sep):
+            return ".resources 와 서로 안에 들어 있는 폴더는 고를 수 없습니다."
+        return None
+
+    def preview_media_folder(self, old, progress=None):
+        """폴더를 .resources 로 옮기면 → (옮길 항목 수, 링크가 바뀔 노트 수). 아무것도 바꾸지 않는다."""
+        items = [e for e in os.listdir(old) if not e.lower().endswith(".md")]
+        return len(items), self.relink(old, os.path.join(self.root, MEDIA_DIR), progress, dry=True, keep_md=True)
+
+    def move_media_folder(self, old, progress=None):
+        """임의의 폴더(이름은 사람마다 다르다)의 내용을 볼트의 .resources 로 옮기고 모든 노트의 링크를 고친 뒤,
+        앞으로 저장할 리소스 폴더도 .resources 로 정한다. .md 노트는 옮기지 않고, 이름이 겹치면 번호를 붙인다. → (옮긴 항목 수, 고친 노트 수)"""
+        why = self.check_media_folder(old)
+        if why:
+            raise ValueError(why)
+        new = os.path.join(self.root, MEDIA_DIR)
+        os.makedirs(new, exist_ok=True)
+        self.hide_dir(new)
+        entries = [e for e in os.listdir(old) if not e.lower().endswith(".md")]
+        rename, moved = {}, 0
+        for i, entry in enumerate(entries):
+            if progress and i % 50 == 0:
+                progress(i, len(entries), "1/2단계 — 파일 옮기는 중…")
+            dst, stem, ext, k = os.path.join(new, entry), *os.path.splitext(entry), 1
+            while os.path.exists(dst):
+                dst = os.path.join(new, f"{stem}-{k}{ext}")
+                k += 1
+            if os.path.basename(dst) != entry:
+                rename[entry.lower()] = os.path.basename(dst)
+            shutil.move(os.path.join(old, entry), dst)
+            moved += 1
+        relinked = self.relink(old, new, progress, rename=rename, keep_md=True)
+        write_config(media={"mode": "vault", "path": ""})
+        try:
+            os.rmdir(old)
+        except OSError:
+            pass
+        return moved, relinked
 
     def set_media(self, mode, path=None, migrate=False, progress=None):
         """리소스 폴더를 바꾼다. migrate=True 면 기존 파일을 새 폴더로 옮기고 노트의 링크도 고친다 → (옮긴 파일 수, 고친 노트 수)"""
@@ -1027,6 +1094,7 @@ class Store:
             return False
         d = self.hist_dir(path)
         os.makedirs(d, exist_ok=True)
+        self.hide_dir(os.path.join(self.root, HISTORY_DIR))
         with open(os.path.join(d, f"{int(time.time() * 1000)}.md"), "w", encoding="utf-8", newline="\n") as fh:
             fh.write(old)
         self.prune(path, keep)
