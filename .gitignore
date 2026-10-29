@@ -15,3 +15,9 @@ electron-version/
 index-*.db*
 .history/
 config.json
+
+# 안드로이드
+android/.gradle/
+android/local.properties
+android/**/build/
+*.apk
