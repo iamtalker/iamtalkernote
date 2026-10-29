@@ -426,6 +426,47 @@ class Store:
         out.reverse()
         return out
 
+    def undo_event(self, rec):
+        """변경 이력 한 줄(journal_read 의 항목)을 되돌린다 → 한 일을 설명하는 글. 못 하면 OSError(이유).
+        수정: 그 저장 직전 버전(저널과 10초 안)으로 / 새 노트: 휴지통으로 / 삭제: 휴지통에서 복원 / 이름 바꿈·이동: 원래 이름·노트북으로"""
+        ev, rel = rec["ev"], rec["path"]
+        full = os.path.join(self.root, rel.replace("/", os.sep))
+        if ev == "edit":
+            if not os.path.isfile(full):
+                raise OSError("이 노트는 지금 없습니다(삭제되었거나 이름이 바뀌었습니다).")
+            near = [v for v in self.versions(full) if abs(v[0] - rec["t"]) <= 10]
+            if not near:
+                raise OSError("이 저장 직전의 버전이 없습니다(같은 노트의 잦은 저장은 버전을 간격을 두고 남기거나, 버전 기록이 꺼져 있었을 수 있습니다).")
+            ts, _, fp = min(near, key=lambda v: abs(v[0] - rec["t"]))
+            body = self.read_version(fp)
+            self.snapshot(full, body, max(1, version_settings()["keep"]), 0)   # 지금 내용은 새 버전으로 남겨 다시 돌아올 수 있게
+            self.save(full, body, versioned=False, ev="restore")
+            return "%s 저장 직전의 내용으로 되돌렸습니다." % time.strftime("%H:%M:%S", time.localtime(ts))
+        if ev == "create":
+            if not os.path.isfile(full):
+                raise OSError("이 노트는 지금 없습니다.")
+            self.to_trash(full)
+            return "새로 만든 노트를 휴지통으로 보냈습니다."
+        if ev == "delete":
+            if rel == ".":
+                raise OSError("여러 파일을 한꺼번에 지운 항목은 파일 → 휴지통에서 복원하세요.")
+            cands = [x for x in self.trash_items() if x["rel"] == rel and abs(x["deleted"] - rec["t"]) <= 10]
+            if not cands:
+                raise OSError("휴지통에 없습니다(이미 복원했거나 비웠습니다).")
+            return "휴지통에서 복원했습니다: " + os.path.relpath(self.restore_trash(cands[0]["id"]), self.root)
+        if ev in ("rename", "move") and rec.get("to"):
+            cur = os.path.join(self.root, rec["to"].replace("/", os.sep))
+            if not os.path.isfile(cur):
+                raise OSError("바뀐 뒤의 노트가 지금 없습니다.")
+            if ev == "rename":
+                if os.path.exists(full):
+                    raise OSError("원래 이름의 노트가 이미 있습니다.")
+                _, new = self.rename(cur, md_title(os.path.basename(full)))
+            else:
+                new = self.move(cur, os.path.dirname(rel))
+            return "원래대로 되돌렸습니다: " + os.path.relpath(new, self.root)
+        raise OSError("이 종류의 변경은 이력에서 되돌릴 수 없습니다.")
+
     # ---- 휴지통: <볼트>/.trash/<번호>/{item, meta.json}. 지운 지 TRASH_DAYS 일이 지나면 시작할 때 완전히 지운다.
     @property
     def trash_dir(self):

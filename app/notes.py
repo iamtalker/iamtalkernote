@@ -1091,10 +1091,12 @@ class App:
         tv.pack(side="left", fill="both", expand=True)
         recs = self.store.journal_read()
         rel_of = {}
+        rec_of = {}
 
         def fill():
             tv.delete(*tv.get_children())
             rel_of.clear()
+            rec_of.clear()
             want = var.get()
             shown = 0
             for r in recs:
@@ -1104,6 +1106,7 @@ class App:
                 path = r["path"] + (" → " + r["to"] if r.get("to") else "")
                 iid = tv.insert("", "end", values=(time.strftime("%Y.%m.%d %H:%M:%S", time.localtime(r["t"])), label, path, r.get("d", "")))
                 rel_of[iid] = r.get("to") or r["path"]
+                rec_of[iid] = r
                 shown += 1
                 if shown >= 3000:
                     break
@@ -1120,6 +1123,47 @@ class App:
             else:
                 messagebox.showinfo(APP, "이 노트는 지금 없습니다(삭제되었거나 이름이 바뀌었습니다). 휴지통에서 찾아 보세요.", parent=top)
         tv.bind("<Double-1>", open_sel)
+
+        def undo():
+            sel = tv.selection()
+            if not sel:
+                return messagebox.showinfo(APP, "되돌릴 변경을 고르세요.", parent=top)
+            r = rec_of.get(sel[0])
+            if not r:
+                return
+            if r["ev"] not in ("edit", "create", "delete", "rename", "move"):
+                return messagebox.showinfo(APP, "이 종류의 변경은 이력에서 되돌릴 수 없습니다.", parent=top)
+            what = {"edit": "이 수정 직전의 내용으로 되돌릴까요?\n(지금 내용은 새 버전으로 남겨 둡니다)", "create": "이 새 노트를 휴지통으로 보낼까요?",
+                    "delete": "휴지통에서 복원할까요?", "rename": "원래 이름으로 되돌릴까요?", "move": "원래 노트북으로 되돌릴까요?"}[r["ev"]]
+            if not messagebox.askyesno(APP, r["path"] + "\n\n" + what, parent=top):
+                return
+            self.flush()
+            cur_path = self.cur["path"] if self.cur else None
+            try:
+                msg = self.store.undo_event(r)
+            except (OSError, ValueError) as ex:
+                return messagebox.showerror(APP, str(ex), parent=top)
+            self.reload_notes()
+            if cur_path:   # 열어 둔 노트가 바뀌었으면 다시 연다
+                fresh = next((x for x in self.all_notes if os.path.normcase(x["path"]) in (os.path.normcase(cur_path),)
+                              or os.path.normcase(x["path"]) == os.path.normcase(os.path.join(self.store.root, r["path"].replace("/", os.sep)))), None)
+                if fresh:
+                    self.open_note(fresh)
+            recs[:] = self.store.journal_read()
+            fill()
+            messagebox.showinfo(APP, msg, parent=top)
+        menu = tk.Menu(top, tearoff=0)
+        menu.add_command(label="이 변경 되돌리기", command=undo)
+
+        def on_menu(e):
+            iid = tv.identify_row(e.y)
+            if iid:
+                tv.selection_set(iid)
+                menu.tk_popup(e.x_root, e.y_root)
+        tv.bind("<Button-3>", on_menu)
+        bar = tk.Frame(top, bg=C["bg"])
+        bar.pack(side="bottom", fill="x", padx=16, pady=(0, 12))
+        Btn(bar, "이 변경 되돌리기", undo, kind="primary", padx=14).pack(side="right")
 
     def show_unused_media(self):
         """도구 > 안 쓰는 미디어 파일 정리: 어떤 노트도 가리키지 않는 그림·첨부를 찾아 한꺼번에 휴지통으로"""
