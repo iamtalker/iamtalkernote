@@ -37,6 +37,7 @@ import ime  # noqa: E402   (한글 입력기가 조합 중인 글자를 자동�
 import preview  # noqa: E402
 import search  # noqa: E402
 import snapshots as sn  # noqa: E402
+import single  # noqa: E402   (앱을 한 번에 하나만: 두 번째 실행은 실행 중인 앱의 창을 열어 달라고 알리고 끝난다)
 import store as st  # noqa: E402
 import tray  # noqa: E402   (닫기 버튼을 누르면 앱을 끄지 않고 알림 영역 아이콘으로)
 import updater  # noqa: E402
@@ -480,6 +481,7 @@ class App:
         self.relayout()
         self.reload_notes(background=True)
         self.root.after(300, self.fit_panes)
+        self.root.after(400, self.poll_single)
         self.root.after(20000, self.auto_scan_docs)   # 가져온 폴더에서 바뀐 파일만 뒤에서 다시 읽기
         self.root.after(15000, self.auto_snapshot)   # 시작하고 한참 뒤(목록을 다 읽은 다음) 하루 한 번 복원 지점
         self.root.after(600, self.poll_clip)
@@ -4733,6 +4735,22 @@ class App:
         self.tray_hidden = True
         self.root.after(200, self.poll_tray)
 
+    def poll_single(self):
+        """두 번째 실행이 보낸 '창을 열어 달라'는 신호를 0.4초마다 확인한다"""
+        self.root.after(400, self.poll_single)
+        if single.signaled():
+            self.bring_to_front()
+
+    def bring_to_front(self):
+        """트레이에 들어가 있거나 최소화된 창을 다시 열어 앞으로 가져온다"""
+        if self.tray_hidden:
+            return self.show_from_tray()
+        self.root.deiconify()
+        self.root.lift()
+        self.root.attributes("-topmost", True)                      # 윈도가 포커스를 안 줘도 일단 맨 앞에 보이게
+        self.root.after(250, lambda: self.root.attributes("-topmost", False))
+        self.root.focus_force()
+
     def poll_tray(self):
         if not self.tray_hidden:
             return
@@ -4777,6 +4795,8 @@ def main():
             ctypes.windll.shcore.SetProcessDpiAwareness(1)
         except Exception:  # noqa: BLE001
             pass
+    if not single.acquire():   # 이미 실행 중(창이 열려 있거나 트레이에 있음): 그 앱에 창을 열어 달라고 알렸으니 여기서는 끝낸다
+        return
     App().run()
 
 
