@@ -3,6 +3,8 @@
 **마크다운 파일로 저장하는 노트 앱** — 에버노트처럼 3단 목록, 조플린처럼 메뉴와 웹 클리퍼, 위키나루의 마크다운 편집·렌더링.
 노트는 그냥 `.md` 파일이라 다른 프로그램과 함께 쓰거나 백업하기 쉽고, 앱이 없어도 읽을 수 있습니다. 내 컴퓨터 안에서만 동작합니다(웹 클리퍼 서버도 `127.0.0.1` 전용).
 
+> **안드로이드 앱은 별도 저장소입니다 — 개발할 때는 둘 다 읽으세요.** [iamtalkernote-android](https://github.com/iamtalker/iamtalkernote-android)(비공개, 로컬 `C:\MyData\claude program\1. 개발중\iamtalkernote-android`, 이 폴더의 `..\iamtalkernote-android`)의 README 에 폰 쪽 현황·로드맵이 있습니다. 노트 폴더의 파일 형식을 두 앱이 공유하므로, 형식(머리말·`태그:` 줄·`.history`·`.trash`·`.imported`)을 바꿀 때는 폰 쪽도 같이 고쳐야 합니다.
+
 ![밝은 테마](docs/screenshot-light.png)
 
 ![다크 테마](docs/screenshot-dark.png)
