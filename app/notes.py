@@ -472,6 +472,8 @@ class App:
         self.start_clipper()
         self.tray = tray.Tray(os.path.join(HERE, "assets", "icon.ico"), APP)   # 닫기(X)를 누르면 들어가는 트레이 아이콘
         self.tray_hidden = self.tray_was_zoomed = False
+        for cls in ("Entry", "Text"):    # 어느 칸에서 한글을 쳐도 조합 중인 글자가 그 칸 글꼴로 보이게
+            self.root.bind_class(cls, "<FocusIn>", self.match_ime_font, add="+")
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.bind_keys()
         self.set_mode(self.mode)
@@ -1629,6 +1631,17 @@ class App:
             self.ac_polling = True
             self.ac_poll()
 
+    def match_ime_font(self, ev=None, widget=None):
+        """한글 입력기의 조합 글꼴을 지금 칸(입력칸·편집 칸 …)의 글꼴과 같게 맞춘다 — 안 맞추면 치는 글자가 잠깐 더 크게 보인다"""
+        w = widget or (ev.widget if ev is not None else None)
+        try:
+            f = tkfont.Font(root=self.root, font=w.cget("font"))
+            size = f.actual("size")
+            px = size if size < 0 else -round(size * float(self.root.tk.call("tk", "scaling")))   # 음수 = 글자 높이 픽셀
+            return ime.set_font(f.actual("family"), px, f.actual("weight") == "bold")
+        except (tk.TclError, AttributeError):
+            return False
+
     def ac_signature(self):
         """입력칸의 값 + 한글 입력기가 아직 확정하지 않은 조합 중인 글자. 이게 바뀌면 후보를 다시 띄운다"""
         return (self.q.get(), ime.composing())
@@ -1644,6 +1657,10 @@ class App:
         except KeyError:
             return
         sig = self.ac_signature()
+        if sig[1] and not getattr(self, "ime_font_set", False):   # 조합이 막 시작됐으면 그 글꼴을 입력칸에 맞춘다(한 조합에 한 번)
+            self.ime_font_set = self.match_ime_font(widget=self.search_entry)
+        elif not sig[1]:
+            self.ime_font_set = False
         if self.ac_sig is None:
             self.ac_sig = sig
             return

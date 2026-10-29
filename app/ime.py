@@ -18,6 +18,35 @@ if sys.platform == "win32":
     _imm.ImmGetCompositionStringW.argtypes = [ctypes.c_void_p, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD]
     _imm.ImmGetCompositionStringW.restype = ctypes.c_long
     _imm.ImmNotifyIME.argtypes = [ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, wintypes.DWORD]
+    _imm.ImmSetCompositionFontW.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    _imm.ImmSetCompositionFontW.restype = wintypes.BOOL
+
+
+class LOGFONTW(ctypes.Structure):
+    _fields_ = [("lfHeight", ctypes.c_long), ("lfWidth", ctypes.c_long), ("lfEscapement", ctypes.c_long), ("lfOrientation", ctypes.c_long),
+                ("lfWeight", ctypes.c_long), ("lfItalic", ctypes.c_ubyte), ("lfUnderline", ctypes.c_ubyte), ("lfStrikeOut", ctypes.c_ubyte),
+                ("lfCharSet", ctypes.c_ubyte), ("lfOutPrecision", ctypes.c_ubyte), ("lfClipPrecision", ctypes.c_ubyte), ("lfQuality", ctypes.c_ubyte),
+                ("lfPitchAndFamily", ctypes.c_ubyte), ("lfFaceName", ctypes.c_wchar * 32)]
+
+
+def set_font(family, height_px, bold=False):
+    """입력기가 조합 중인 글자를 그릴 글꼴을 입력칸과 같게 맞춘다(안 맞추면 입력기 기본 글꼴로 그려져 칠 때 글자가 잠깐 커 보인다).
+    height_px 는 음수(글자 높이 픽셀). 성공하면 True"""
+    if sys.platform != "win32":
+        return False
+    try:
+        hwnd = _user.GetFocus()
+        himc = _imm.ImmGetContext(hwnd) if hwnd else None
+        if not himc:
+            return False
+        try:
+            lf = LOGFONTW()
+            lf.lfHeight, lf.lfWeight, lf.lfCharSet, lf.lfFaceName = int(height_px), 700 if bold else 400, 1, (family or "")[:31]   # DEFAULT_CHARSET
+            return bool(_imm.ImmSetCompositionFontW(himc, ctypes.byref(lf)))
+        finally:
+            _imm.ImmReleaseContext(hwnd, himc)
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def composing():
