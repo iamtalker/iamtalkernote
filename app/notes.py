@@ -1241,7 +1241,71 @@ class App:
 
     def show_cleanup(self):
         """도구 > 스크랩 군더더기 정리: 노트마다 지울 줄을 미리 보여 주고, 골라서 적용(적용 전 내용은 노트 버전으로 남는다)"""
-        self.scan_notes("스크랩 군더더기 찾기", lambda notes, prog, cancel: cleanup.scan_junk(notes, prog, cancel), self.cleanup_dialog)
+        self.cleanup_options()
+
+    def cleanup_cfg(self):
+        c = st.read_config().get("cleanup", {})
+        try:
+            ratio = min(100, max(5, int(c.get("ratio", round(cleanup.DEFAULT_RATIO * 100)))))
+            docs = min(200, max(2, int(c.get("min_docs", cleanup.DEFAULT_MIN_DOCS))))
+        except (TypeError, ValueError):
+            ratio, docs = round(cleanup.DEFAULT_RATIO * 100), cleanup.DEFAULT_MIN_DOCS
+        return {"ratio": ratio, "min_docs": docs, "keep": [k for k in c.get("keep", []) if isinstance(k, str)]}
+
+    def cleanup_options(self):
+        """군더더기 찾기 전에 기준을 고른다: 사이트 공통 줄로 볼 비율·최소 노트 수, 지우지 않기로 한 줄 목록"""
+        cfg = self.cleanup_cfg()
+        top = self.tool_window("스크랩 군더더기 정리 — 기준", "560x470", native=True)
+        tk.Label(top, text="같은 사이트에서 스크랩한 노트 여럿에 똑같이 나오는 줄(메뉴·머리글·바닥글)을 군더더기로 봅니다. 기준을 높이면 덜 지우고, 낮추면 더 지웁니다.\n"
+                           "찾은 뒤 미리 보기에서 지우기 싫은 줄을 오른쪽 클릭해 \"이 줄은 지우지 않기\" 를 고르면 아래 목록에 쌓입니다.",
+                 bg=C["bg"], fg=C["muted"], font=(self.ui, 9), anchor="w", justify="left", wraplength=520, padx=16, pady=10).pack(fill="x")
+        f = tk.Frame(top, bg=C["bg"])
+        f.pack(fill="x", padx=16)
+        ratio = tk.IntVar(value=cfg["ratio"])
+        docs = tk.IntVar(value=cfg["min_docs"])
+        tk.Label(f, text="사이트 노트의", bg=C["bg"], fg=C["text"], font=(self.ui, 10)).grid(row=0, column=0, sticky="w")
+        tk.Spinbox(f, from_=5, to=100, increment=5, width=4, textvariable=ratio, font=(self.ui, 10)).grid(row=0, column=1, padx=4)
+        tk.Label(f, text="% 이상에 나오는 줄 (기본 30)", bg=C["bg"], fg=C["text"], font=(self.ui, 10)).grid(row=0, column=2, sticky="w")
+        tk.Label(f, text="그리고 최소", bg=C["bg"], fg=C["text"], font=(self.ui, 10)).grid(row=1, column=0, sticky="w", pady=6)
+        tk.Spinbox(f, from_=2, to=200, width=4, textvariable=docs, font=(self.ui, 10)).grid(row=1, column=1, padx=4)
+        tk.Label(f, text="개 노트에 나와야 함 (기본 4)", bg=C["bg"], fg=C["text"], font=(self.ui, 10)).grid(row=1, column=2, sticky="w")
+        tk.Label(top, text="지우지 않기로 한 줄", bg=C["bg"], fg=C["text"], font=(self.ui, 10, "bold"), anchor="w", padx=16, pady=10).pack(fill="x")
+        btns = tk.Frame(top, bg=C["bg"])
+        btns.pack(side="bottom", fill="x", padx=16, pady=12)
+        wrap = tk.Frame(top, bg=C["panel"])
+        wrap.pack(fill="both", expand=True, padx=16)
+        lb = tk.Listbox(wrap, bg=C["panel"], fg=C["text"], relief="flat", bd=0, highlightthickness=0, activestyle="none", selectmode="extended",
+                        selectbackground=C["soft"], selectforeground=C["accent"], font=(self.ui, 10), exportselection=False)
+        lb.pack(fill="both", expand=True, padx=6, pady=6)
+        keep = list(cfg["keep"])
+        for k in keep:
+            lb.insert("end", k)
+
+        def drop():
+            for i in reversed(lb.curselection()):
+                lb.delete(i)
+                del keep[i]
+
+        def save():
+            try:
+                r, d = int(ratio.get()), int(docs.get())
+            except (tk.TclError, ValueError):
+                r, d = cfg["ratio"], cfg["min_docs"]
+            c = {"ratio": min(100, max(5, r)), "min_docs": min(200, max(2, d)), "keep": keep}
+            st.write_config(cleanup=c)
+            return c
+
+        def go():
+            c = save()
+            top.destroy()
+            self.cleanup_scan(c)
+        Btn(btns, "군더더기 찾기", go, kind="primary", bold=True, padx=16).pack(side="right")
+        Btn(btns, "닫기", lambda: (save(), top.destroy()), padx=14).pack(side="right", padx=6)
+        Btn(btns, "고른 줄 목록에서 빼기", drop, padx=12).pack(side="left")
+
+    def cleanup_scan(self, c):
+        opts = {"ratio": c["ratio"] / 100, "min_docs": c["min_docs"], "keep": c["keep"]}
+        self.scan_notes("스크랩 군더더기 찾기", lambda notes, prog, cancel: cleanup.scan_junk(notes, prog, cancel, opts), self.cleanup_dialog)
 
     def cleanup_dialog(self, found):
         if not found:
@@ -1267,6 +1331,29 @@ class App:
         pv.config(yscrollcommand=autohide(psb, pv))
         pv.pack(side="left", fill="both", expand=True)
         pv.tag_configure("rm", foreground=C["danger"], overstrike=True)
+        shown_lines = {}   # 미리 보기의 행 번호 → 지워지는 줄
+
+        def keep_line(row):
+            line = shown_lines.get(row)
+            if line is None:
+                return
+            cfg = self.cleanup_cfg()
+            k = cleanup.keep_key(line)
+            if k not in cfg["keep"]:
+                cfg["keep"].append(k)
+                st.write_config(cleanup=cfg)
+            if messagebox.askyesno(APP, "이 줄은 앞으로 지우지 않도록 했습니다:\n" + k[:80] + "\n\n지금 결과에 반영하려면 다시 찾아야 합니다. 다시 찾을까요?", parent=top):
+                top.destroy()
+                self.cleanup_scan(self.cleanup_cfg())
+        pmenu = tk.Menu(pv, tearoff=0)
+
+        def on_pv_menu(e):
+            row = int(pv.index(f"@{e.x},{e.y}").split(".")[0])
+            if row in shown_lines:
+                pmenu.delete(0, "end")
+                pmenu.add_command(label="이 줄은 지우지 않기", command=lambda: keep_line(row))
+                pmenu.tk_popup(e.x_root, e.y_root)
+        pv.bind("<Button-3>", on_pv_menu)
 
         def fill():
             lb.delete(0, "end")
@@ -1282,8 +1369,10 @@ class App:
                 self.open_path_note(n["path"])
             pv.config(state="normal")
             pv.delete("1.0", "end")
-            pv.insert("end", f"{n['title']} — {self.nb_label(n['nb'])}\n지워지는 줄 {len(removed)}개:\n\n")
+            pv.insert("end", f"{n['title']} — {self.nb_label(n['nb'])}\n지워지는 줄 {len(removed)}개 (줄을 오른쪽 클릭하면 \"이 줄은 지우지 않기\"):\n\n")
+            shown_lines.clear()
             for no, line, why in removed[:300]:
+                shown_lines[int(pv.index("end-1c").split(".")[0])] = line
                 pv.insert("end", f"{no:>5}  [{why}] {line}\n", "rm")
             pv.config(state="disabled")
         fill()

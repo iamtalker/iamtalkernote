@@ -184,6 +184,16 @@ EDGE_LINES = 40         # 맨 위/아래 몇 줄(빈 줄 빼고)을 가장자리
 EDGE_MIN_DOCS = 6       # 가장자리에서 반복되는 줄은 이만큼의 노트에 나오면 틀로 본다
 NAV_RUN = 5             # 글 맨 위·맨 아래에 짧은 링크/목록 줄이 이만큼 이어지면 메뉴 덩어리로 본다
 NAV_EDGE = 25           # 맨 위/아래 몇 줄 안쪽을 가장자리로 볼지
+KEEP = frozenset()      # 사용자가 "이 줄은 지우지 않기"로 정한 줄(keep_key)
+DEFAULT_RATIO, DEFAULT_MIN_DOCS = SITE_RATIO, SITE_MIN_DOCS
+
+
+def configure(ratio=None, min_docs=None, keep=()):
+    """정리 기준을 바꾼다(앱 옵션). ratio: 0~1, min_docs: 사이트 공통 줄이 나와야 하는 최소 노트 수, keep: 지우지 않을 줄 목록"""
+    global SITE_RATIO, SITE_MIN_DOCS, KEEP
+    SITE_RATIO = DEFAULT_RATIO if ratio is None else max(0.05, min(1.0, float(ratio)))
+    SITE_MIN_DOCS = DEFAULT_MIN_DOCS if min_docs is None else max(2, min(200, int(min_docs)))
+    KEEP = frozenset(keep)
 
 
 def _plain(line):
@@ -225,6 +235,11 @@ def line_key(line):
     if not (2 <= len(plain) <= 120) or re.fullmatch(r"[\d\W_]+", plain):
         return None
     return plain
+
+
+def keep_key(line):
+    """"이 줄은 지우지 않기" 목록의 키: 사이트 공통 키가 있으면 그것(숫자만 다른 같은 줄도 함께), 없으면 줄의 글"""
+    return line_key(line) or _plain(line) or line.strip()
 
 
 def _split(body):
@@ -336,6 +351,8 @@ def clean_body(body, site_lines=frozenset()):
                 why = "메뉴 덩어리"
             elif plain and len(plain) <= 40 and JUNK_RE.match(plain):
                 why = "흔한 군더더기"
+            if why and KEEP and keep_key(line) in KEEP:   # 사용자가 지우지 않기로 한 줄
+                why = None
             if why and RES_REF.search(line):   # 리소스 폴더(.resources·_resources)의 그림·첨부를 가리키는 줄은 지우지 않는다
                 why = None
             if why:
@@ -411,10 +428,12 @@ def site_boilerplate(notes, progress=None, cancelled=lambda: False, site_map=Non
 SETTLE_ROUNDS = 4   # 지운 뒤의 본문으로 사이트 공통 줄을 다시 구해서 더 지울 게 나오는지 보는 일을 몇 번까지 되풀이할지
 
 
-def scan_junk(notes, progress=None, cancelled=lambda: False):
+def scan_junk(notes, progress=None, cancelled=lambda: False, opts=None):
     """[(노트, 새 본문, 뺀 줄들)] — 뺄 게 있는 노트만. 1단계: 사이트별 공통 줄 찾기, 2단계: 노트마다 적용.
     적용하고 나서 다시 돌려도 또 나오지 않도록(정리하면 사이트 공통 줄의 통계와 가장자리가 달라진다),
     지운 노트가 있는 사이트는 지운 뒤의 본문으로 통계를 다시 구해 더 나올 게 없을 때까지 되풀이한다."""
+    if opts is not None:
+        configure(opts.get("ratio"), opts.get("min_docs"), opts.get("keep", ()))
     site_map = {}
     sites = site_boilerplate(notes, progress, cancelled, site_map)
     info, total = {}, len(notes)    # 경로 → [노트, 새 본문, 뺀 줄들]
