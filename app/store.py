@@ -764,6 +764,8 @@ class Store:
                 if batch:
                     conn.executemany("INSERT OR REPLACE INTO notes VALUES (?,?,?,?,?,?,?)", batch)
                 stale = set(cached) - {x[0] for x in entries}
+                if cached:   # 처음 색인이 아닐 때: 앱이 모르는 사이 바뀐 노트를 기록한다(앱이 저장·이동한 건 색인에 그때그때 반영되어 여기 걸리지 않는다)
+                    self.note_external([m for m in misses if m[0] in cached], stale)
                 if stale:
                     conn.executemany("DELETE FROM notes WHERE path=?", [(k,) for k in stale])
                 conn.commit()
@@ -779,6 +781,33 @@ class Store:
                             ctime=cre or getattr(stt, "st_birthtime", stt.st_ctime),    # 생성 시각: 머리말 created, 없으면 파일
                             tags=tags))
         return out
+
+    def note_external(self, changed, gone):
+        """앱 밖에서(다른 편집기·동기화 도구) 고친 노트와 사라진 노트를 변경 이력에 적는다. 바뀌기 전 내용은 앱이 볼 기회가 없어 되돌릴 수 없지만,
+        고친 뒤의 내용은 노트 버전으로 남겨 두어서(200개까지) 이후에 앱에서 고쳐도 그 상태로 돌아올 수 있게 한다."""
+        last, moved = {}, set()   # 앱이 직접 한 일은 이력에 있으므로 거른다: 노트별 마지막 기록 시각 / 앱이 지우거나 옮긴 노트
+        for r in reversed(self.journal_read(20000)):
+            last[r["path"]] = r["t"]
+            if r["ev"] in ("delete", "rename", "move"):
+                moved.add(r["path"])
+        changed = [m for m in changed if m[3].st_mtime > last.get(m[0], 0) + 5]
+        gone = [k for k in gone if k not in moved]
+        if len(changed) > 200:   # 동기화 도구가 한꺼번에 바꾼 경우: 개수만 적는다
+            self.journal("external", ".", detail="앱 밖에서 노트 %d개 수정" % len(changed))
+        else:
+            v = version_settings()
+            for key, name, path, stt in changed:
+                self.journal("external", key, detail="앱 밖에서 수정")
+                if v["keep"] > 0:
+                    try:
+                        self.snapshot(path, "", v["keep"], 0)   # 지금 파일 내용을 버전으로
+                    except OSError:
+                        pass
+        if len(gone) > 200:
+            self.journal("external", ".", detail="앱 밖에서 노트 %d개 사라짐" % len(gone))
+        else:
+            for key in sorted(gone):
+                self.journal("external", key, detail="앱 밖에서 사라짐(지우기·이름 바꿈·이동)")
 
     def create_note(self, nb, title="제목 없음", body=""):
         d = self.nb_dir(nb)

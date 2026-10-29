@@ -1077,7 +1077,7 @@ class App:
                  bg=C["bg"], fg=C["muted"], font=(self.ui, 9), anchor="w", padx=16, pady=10).pack(fill="x")
         flt = tk.Frame(top, bg=C["bg"])
         flt.pack(fill="x", padx=16)
-        names = {"edit": "수정", "create": "새 노트", "delete": "삭제", "restore": "복원", "rename": "이름 바꿈", "move": "이동", "cleanup": "군더더기 정리", "tags": "태그 정리"}
+        names = {"edit": "수정", "create": "새 노트", "delete": "삭제", "restore": "복원", "rename": "이름 바꿈", "move": "이동", "cleanup": "군더더기 정리", "tags": "태그 정리", "external": "앱 밖 수정"}
         var = tk.StringVar(value="전체")
         for label in ["전체"] + list(names.values()):
             tk.Radiobutton(flt, text=label, value=label, variable=var, command=lambda: fill(), indicatoron=False, bd=0, padx=8, pady=2,
