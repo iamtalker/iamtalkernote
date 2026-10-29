@@ -39,13 +39,16 @@ import snapshots as sn  # noqa: E402
 import store as st  # noqa: E402
 import updater  # noqa: E402
 import wikiconv  # noqa: E402
+import winpreview  # noqa: E402   (윈도 미리보기 처리기를 노트 화면 안에: pdf·mp3 …)
 from version import VERSION  # noqa: E402
 
 APP = "iamtalkernote"
 LIST_CHUNK = 100   # 노트 목록은 이만큼씩 이어서 그린다(스크롤하면 계속)
 VIEWABLE = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg", ".ico", ".mp4", ".webm", ".mov", ".mp3", ".wav", ".pdf", ".txt"}   # 안 쓰는 미디어 목록에서 눌렀을 때 바로 열어도 되는 파일(실행 파일 등은 위치만 보여 준다)
 SOURCE_LINE = re.compile(r"\A[ \t]*원본:[ \t]*<?https?://[^\s>]+>?[ \t]*(?:\r?\n)+")   # 글 맨 위의 '원본: <주소>' 줄
-MORE_MAX = 4000       # 목록을 이어 그릴 때 한 번에 붙이는 노트 수의 상한(이미 그린 만큼을 붙이되 이 이상은 안 붙인다)
+DOC_RESCAN_SECONDS = 300   # 앱을 열어 두는 동안 가져온 폴더를 이 간격(초)마다 훑어 바뀐 파일만 다시 읽는다
+PREVIEW_EXT = ("pdf", *docidx.AUDIO_EXT, *docidx.OFFICE_EXT)   # 윈도 미리보기 처리기로 원본을 보여 줄 형식(txt·md 같은 글 파일은 글로)
+MORE_MAX = 4000      # 목록을 이어 그릴 때 한 번에 붙이는 노트 수의 상한(이미 그린 만큼을 붙이되 이 이상은 안 붙인다)
 MORE_MAX_SEARCH = 600  # 검색 중에는 노트마다 본문을 읽어 미리 보기를 만들어서 더 적게
 MORE_SCREENS = 4  # 목록 아래에 남은 글이 이만큼의 화면보다 적어지면 미리 다음 노트들을 이어 그린다
 ALL = "*"
@@ -426,13 +429,16 @@ class App:
         self.store.tagger = note_tags   # 색인에 태그도 함께 기억
         self.docs = docidx.DocIndex()  # 가져온 폴더의 문서 색인
         self.doc_open = False          # 가져온 문서(읽기 전용)를 열어 둔 중인가
+        self.doc_scanning = False      # 가져온 폴더를 뒤에서 다시 읽는 중인가(겹쳐 돌지 않게)
+        self.pv = winpreview.Preview() # 윈도 미리보기 처리기(pdf → Edge, mp3 → Media Player …)
+        self.pv_active = False         # 지금 노트 화면에 윈도 미리보기를 띄워 두었는가
         self.snap = sn.Snapshots(self.store)   # 복원 지점
         self.store.on_change = self.snap.preserve   # 노트를 바꾸기 직전에 그 내용을 복원 지점용으로 보관
         try:
             self.store.purge_trash()   # 휴지통에 보관 기간(기본 30일)이 지난 항목은 완전히 지운다
         except OSError:
             pass
-        self.nb = win.get("nb") if isinstance(win.get("nb"), str) else ALL   # '*' 모든 노트 · '' 기본 · 그 밖은 노트북 폴더 이름(없어졌으면 읽은 뒤 '*' 로)
+        self.nb = win.get("nb") if isinstance(win.get("nb"), str) and not win["nb"].startswith("@smart") else ALL   # '*' 모든 노트 · '' 기본 · 그 밖은 노트북 폴더 이름(없어졌으면 읽은 뒤 '*' 로)
         self.tag = None                # 태그로 거르는 중이면 그 태그
         self.nb_keys, self.tag_keys = [], []
         self.all_notes, self.notes, self.results, self.words = [], [], [], []
@@ -467,6 +473,7 @@ class App:
         self.set_mode(self.mode)
         self.relayout()
         self.reload_notes(background=True)
+        self.root.after(300, self.fit_panes)
         self.root.after(20000, self.auto_scan_docs)   # 가져온 폴더에서 바뀐 파일만 뒤에서 다시 읽기
         self.root.after(15000, self.auto_snapshot)   # 시작하고 한참 뒤(목록을 다 읽은 다음) 하루 한 번 복원 지점
         self.root.after(600, self.poll_clip)
@@ -545,6 +552,7 @@ class App:
         m.add_command(label="새 하위 노트북", command=self.add_subnotebook)
         m.add_separator()
         m.add_command(label="폴더 가져오기…", command=lambda: self.show_options("imports"))
+        m.add_command(label="지금의 검색 저장…", command=self.save_search)
         m.add_separator()
         m.add_command(label="복원 지점…", command=self.show_snapshots)
         m.add_command(label="휴지통…", command=self.show_trash)
@@ -581,7 +589,7 @@ class App:
         m.add_command(label="날짜 및 시간 삽입", accelerator="Ctrl+Shift+T", command=self.insert_datetime)
         m.add_separator()
         m.add_command(label="문서에서 찾기", accelerator="Ctrl+F", command=lambda: self.cur and self.show_find())
-        m.add_command(label="모든 노트에서 검색", accelerator="Ctrl+Shift+F", command=self.focus_search)
+        m.add_command(label="모든 파일에서 검색", accelerator="Ctrl+Shift+F", command=self.focus_search)
         m.add_separator()
         m.add_command(label="노트 속성…", command=self.show_properties)
         m.add_command(label="노트 버전…", command=self.show_versions)
@@ -1348,7 +1356,7 @@ class App:
         if not getattr(self, "nb_h", 0):   # 노트북·태그 사이 경계 높이(테마를 바꿔 다시 만들 때는 지금 값을 유지)
             self.nb_h = nbh if isinstance(nbh, int) and 90 <= nbh <= 3000 else 0
         for k, v in st.read_config().get("window", {}).get("widths", {}).items():
-            if k in self.widths and isinstance(v, int) and 150 <= v <= 1200:
+            if k in self.widths and isinstance(v, int) and 100 <= v <= 8000:
                 self.widths[k] = v
         self.build_left()
         self.build_list()
@@ -1396,6 +1404,25 @@ class App:
         if self.show["notebooks"] and self.show["tags"] and self.nb_h:   # 노트북·태그 사이 경계를 끌어 둔 자리를 다시 켜도 유지
             self.left_pane.paneconfigure(self.nb_sec, height=self.nb_h)
             self.root.after_idle(self.place_nb_sash)
+
+    def fit_panes(self):
+        """저장해 둔 칸 너비의 합이 지금 창보다 크면(창을 줄였거나 작은 화면) 노트 칸이 최소 너비를 지키도록 목록 → 노트북 → 문법 해설 순으로 줄인다"""
+        try:
+            total = self.pane.winfo_width()
+            if total < 300:
+                return
+            managed = [str(p) for p in self.pane.panes()]
+            cols = [(k, w, mn) for k, w, mn in (("left", self.leftf, 150), ("list", self.listf, 240), ("syntax", self.sidebar, 220)) if str(w) in managed]
+            width = {k: max(w.winfo_width(), mn) for k, w, mn in cols}
+            excess = sum(width.values()) + 360 + 4 * len(cols) - total
+            for k, w, mn in sorted(cols, key=lambda c: ("list", "left", "syntax").index(c[0])):
+                cut = min(max(excess, 0), width[k] - mn)
+                if cut > 0:
+                    self.pane.paneconfigure(w, width=width[k] - cut)
+                    self.widths[k] = width[k] - cut
+                    excess -= cut
+        except tk.TclError:
+            pass
 
     def capture_nb_height(self):
         """노트북·태그가 같이 보이는 동안의 노트북 칸 높이를 기억"""
@@ -1470,10 +1497,17 @@ class App:
         self.q = tk.StringVar()
         self.q.trace_add("write", lambda *a: (self.schedule_search(), self.update_placeholder()))
         self.search_entry = tk.Entry(box, textvariable=self.q, relief="flat", bd=0, bg=C["panel"], fg=C["text"],
-                                     insertbackground=C["accent"], font=(self.ui, 10))
-        self.search_entry.pack(fill="x", padx=10, pady=7)
-        self.ph = tk.Label(box, text="검색  (예: 회의록 AND 예산)", bg=C["panel"], fg=C["muted"], font=(self.ui, 10))
+                                     insertbackground=C["text"], insertwidth=2, insertborderwidth=0, insertontime=600, insertofftime=400,
+                                     font=(self.ui, 10))   # 세로 막대 커서가 깜빡인다
+        self.search_entry.pack(fill="x", padx=(10, 28), pady=7)
+        self.clear_btn = tk.Label(box, text="×", bg=C["panel"], fg=C["muted"], font=(self.ui, 13), cursor="hand2")   # 오른쪽 끝 × : 검색 초기화
+        self.clear_btn.bind("<Button-1>", lambda e: self.clear_search())
+        self.clear_btn.bind("<Enter>", lambda e: self.clear_btn.config(fg=C["text"]))
+        self.clear_btn.bind("<Leave>", lambda e: self.clear_btn.config(fg=C["muted"]))
+        self.ph =tk.Label(box, text="검색  (예: 회의록 AND 예산)", bg=C["panel"], fg=C["muted"], font=(self.ui, 10))
         self.ph.bind("<Button-1>", lambda e: self.search_entry.focus_set())
+        self.search_entry.bind("<FocusIn>", lambda e: self.update_placeholder())    # 안내 문구가 커서를 가리지 않게
+        self.search_entry.bind("<FocusOut>", lambda e: self.update_placeholder())
         bar = tk.Frame(f, bg=C["bg"])
         bar.pack(fill="x", padx=10, pady=(0, 2))
         self.sort_names = {"relevance": "관련도순", "time": "수정순", "ctime": "생성순", "title": "제목순"}
@@ -1481,6 +1515,9 @@ class App:
         self.b_date = Btn(bar, "기간", self.toggle_date, padx=6, pady=3)
         for b in (*self.sort_btns.values(), self.b_date):
             b.pack(side="left", padx=1)
+        b_save = Btn(bar, "검색 저장", self.save_search, padx=6, pady=3)   # 지금의 검색식·기간·태그·정렬을 '저장된 검색'으로
+        b_save.pack(side="right", padx=1)
+        self.tip(b_save, "지금의 검색을 왼쪽 '저장된 검색'에 이름을 붙여 저장합니다(스마트 폴더)")
         self.tip(self.sort_btns["time"], "마지막으로 고친 시각 순 (조플린 내보내기 노트는 머리말의 updated)")
         self.tip(self.sort_btns["ctime"], "만든 시각 순 (조플린 내보내기 노트는 머리말의 created)")
         self.date_row = tk.Frame(f, bg=C["bg"])
@@ -1537,8 +1574,20 @@ class App:
         self.movemenu = tk.Menu(self.listmenu, tearoff=0)
         self.update_placeholder()
 
+    def clear_search(self):
+        """검색어를 지우고 전체 목록으로 돌아간다(기간 필터와 태그 거르기는 그대로)"""
+        self.q.set("")
+        if self.search_job:
+            self.root.after_cancel(self.search_job)
+        self.refresh()
+        self.search_entry.focus_set()
+
     def update_placeholder(self):
         if self.q.get():
+            self.clear_btn.place(relx=1.0, x=-8, rely=0.5, anchor="e")
+        else:
+            self.clear_btn.place_forget()
+        if self.q.get() or self.root.focus_get() is self.search_entry:
             self.ph.place_forget()
         else:
             self.ph.place(x=10, rely=0.5, anchor="w")
@@ -1605,7 +1654,10 @@ class App:
             b.pack(side="left")
             self.tip(b, hint)
             self.mode_btns[m] = b
-        self.title_entry = tk.Entry(head, textvariable=self.title_var, relief="flat", bd=0, font=self.fonts["title"],
+        self.mode_seg = seg
+        self.doc_toggle = Btn(head, "", self.toggle_doc_view, kind="tab", padx=9, pady=3)   # 가져온 문서: 원본 미리보기 ↔ 뽑은 글(찾기). 평소엔 숨김
+        self.memo_btn = Btn(head, "메모", self.edit_memo, kind="tab", padx=9, pady=3)       # 가져온 문서: 메모 붙이기. 평소엔 숨김
+        self.title_entry =tk.Entry(head, textvariable=self.title_var, relief="flat", bd=0, font=self.fonts["title"],
                                     bg=C["bg"], fg=C["text"], insertbackground=C["accent"], width=8)
         self.title_entry.pack(side="left", fill="x", expand=True, ipady=3)
         self.title_entry.bind("<Return>", lambda e: (self.commit_title(), self.text.focus_set()))
@@ -1658,6 +1710,13 @@ class App:
         self.text.config(yscrollcommand=autohide(sb1, self.text))
         self.text.pack(side="left", fill="both", expand=True)
         self.text.bind("<<Modified>>", self.on_modified)
+
+        # 윈도 미리보기 처리기가 그림을 그리는 자리. 한 번 미리보기를 품은 틀은 숨겼다 다시 붙이면 화면에 안 올라오므로(Tk 의 map/unmap)
+        # 숨기지 않고 항상 이 자리에 둔 채 위로 올리고(미리보기) 아래로 내린다(평소). 평소에는 편집·렌더링 칸이 그 위를 완전히 덮는다.
+        self.pv_frame = tk.Frame(self.body, bg=C["bg"])
+        self.pv_frame.grid(row=0, column=0, columnspan=2, sticky="nsew")
+        self.pv_frame.lower()
+        self.pv_frame.bind("<Configure>", lambda e: self.pv_active and self.pv.resize(e.width, e.height))
 
         self.view_frame = tk.Frame(self.body, bg=C["panel"])
         self.pane_head(self.view_frame, "렌더링", "읽기 전용")
@@ -1759,15 +1818,97 @@ class App:
         """노트북 경로 → 보여 줄 이름 (하위 노트북은 '업무 › 프로젝트')"""
         if key == "@docs":
             return "가져온 폴더"
+        if key.startswith("@smart"):
+            s = next((x for x in self.smart_list() if "@smart:" + x["id"] == key), None)
+            return s["name"] if s else "저장된 검색"
         if key.startswith("@doc:"):
             f = next((f for f in self.docs.folders() if f["id"] == key[5:]), None)
             return f.get("name") or f["path"] if f else "가져온 폴더"
         if not key or key == ALL:
-            return self.store.root_name if key == "" else "모든 노트"
+            return self.store.root_name if key == "" else "모든 파일"
         return " › ".join(wikiconv.markdown.md_title(p + ".md") for p in key.split("/"))
 
     def nb_short(self, key):
         return wikiconv.markdown.md_title(key.split("/")[-1] + ".md")
+
+    def scope_all(self):
+        """'모든 파일'이나 저장된 검색을 보는 중인가(내 노트 + 가져온 파일 전체가 범위)"""
+        return self.nb == ALL or self.nb.startswith("@smart:")
+
+    def md_nb(self):
+        """새 노트·하위 노트북을 만들 노트북: 노트북이 아닌 항목(모든 파일·가져온 폴더·저장된 검색)을 보고 있으면 저장 폴더 바로 아래"""
+        return "" if self.nb == ALL or self.nb.startswith("@") else self.nb
+
+    # ---- 저장된 검색(스마트 폴더): 검색식·기간·태그·정렬을 이름 붙여 저장해 두고, 고르면 그 조건을 그대로 적용한다
+    def smart_list(self):
+        return [s for s in st.read_config().get("smart", []) if isinstance(s, dict) and s.get("id")]
+
+    def save_search(self, overwrite=None):
+        """지금의 검색(검색어·기간·태그·정렬)을 저장한다. overwrite 는 덮어쓸 저장된 검색의 id"""
+        q, f, t, tag = self.q.get().strip(), self.d_from.get().strip(), self.d_to.get().strip(), self.tag
+        if not (q or f or t or tag):
+            return messagebox.showinfo(APP, "저장할 검색이 없습니다. 검색어나 기간, 태그를 먼저 정하세요.", parent=self.root)
+        lst = self.smart_list()
+        cond = {"q": q, "d_from": f, "d_to": t, "tag": tag or "", "sort": self.sort, "asc": self.asc}
+        if overwrite:
+            for s in lst:
+                if s["id"] == overwrite:
+                    s.update(cond)
+            sid = overwrite
+        else:
+            name = simpledialog.askstring("검색 저장", "이 검색의 이름:", initialvalue=q or (f"# {tag}" if tag else "검색"), parent=self.root)
+            if not name or not name.strip():
+                return
+            sid = secrets.token_hex(4)
+            lst.append({"id": sid, "name": name.strip(), **cond})
+        st.write_config(smart=lst)
+        self.nb = "@smart:" + sid
+        self.reload_notebooks()
+        self.status.config(text="검색을 저장했습니다 (왼쪽 '저장된 검색')")
+
+    def open_smart(self, key):
+        s = next((x for x in self.smart_list() if "@smart:" + x["id"] == key), None)
+        if not s:
+            return
+        self.flush()
+        self.close_note()
+        self.nb = key
+        self.tag = s.get("tag") or None
+        self.sort, self.asc = (s.get("sort") if s.get("sort") in self.sort_names else "relevance"), bool(s.get("asc"))
+        self.d_from.set(s.get("d_from", ""))
+        self.d_to.set(s.get("d_to", ""))
+        if (s.get("d_from") or s.get("d_to")) and not self.date_row.winfo_ismapped():
+            self.toggle_date()
+        self.q.set(s.get("q", ""))
+        self.apply_loaded(self.all_notes)
+
+    def smart_menu(self, key):
+        """저장된 검색 우클릭 메뉴용: (이름 바꾸기 · 지금 검색으로 덮어쓰기 · 삭제)"""
+        sid = key[7:]
+        s = next((x for x in self.smart_list() if x["id"] == sid), None)
+        if not s:
+            return
+
+        def rename():
+            name = simpledialog.askstring("이름 바꾸기", "저장된 검색의 이름:", initialvalue=s["name"], parent=self.root)
+            if name and name.strip():
+                lst = self.smart_list()
+                for x in lst:
+                    if x["id"] == sid:
+                        x["name"] = name.strip()
+                st.write_config(smart=lst)
+                self.reload_notebooks()
+
+        def delete():
+            if not messagebox.askyesno(APP, f"저장된 검색 「{s['name']}」을(를) 지울까요?\n(노트와 파일은 그대로입니다)", parent=self.root):
+                return
+            st.write_config(smart=[x for x in self.smart_list() if x["id"] != sid])
+            if self.nb == key:
+                self.nb = ALL
+                self.apply_loaded(self.all_notes)
+            else:
+                self.reload_notebooks()
+        return [("이름 바꾸기…", rename), ("지금의 검색으로 덮어쓰기", lambda: self.save_search(overwrite=sid)), ("삭제", delete)]
 
     def in_nb(self, n):
         """지금 고른 노트북에 속한 노트인가 (하위 노트북의 노트 포함)"""
@@ -1781,9 +1922,11 @@ class App:
         names = self.store.notebooks()
         dfolders = self.docs.folders()
         doc_keys = (["@docs"] + ["@doc:" + f["id"] for f in dfolders]) if dfolders else []
-        if self.nb not in (ALL, "") and self.nb not in names and self.nb not in doc_keys:
+        smarts = self.smart_list()
+        smart_keys = (["@smarts"] + ["@smart:" + s["id"] for s in smarts]) if smarts else []
+        if self.nb not in (ALL, "") and self.nb not in names and self.nb not in doc_keys and self.nb not in smart_keys:
             self.nb = ALL
-        self.nb_keys = [ALL, ""] + names + doc_keys
+        self.nb_keys = [ALL, ""] + names + doc_keys + smart_keys
         dcounts = self.docs.counts() if dfolders else {}
         direct = {}
         for n in self.all_notes:
@@ -1794,13 +1937,17 @@ class App:
         idx = {key: i for i, key in enumerate(self.nb_keys)}
         for i, key in enumerate(self.nb_keys):
             if key == ALL:
-                label, count, parent = "모든 노트", len(self.all_notes), ""
+                label, count, parent = "모든 파일", len(self.all_notes) + sum(dcounts.values()), ""   # 노트 + 가져온 문서
             elif key == "":
                 label, count, parent = self.store.root_name, None, ""   # 저장 폴더 줄에는 숫자를 달지 않는다(아래 노트북들이 실제 내용)
             elif key == "@docs":
                 label, count, parent = "가져온 폴더", sum(dcounts.values()), ""
             elif key.startswith("@doc:"):
                 label, count, parent = self.nb_label(key), dcounts.get(key[5:], 0), f"nb{idx['@docs']}"
+            elif key == "@smarts":
+                label, count, parent = "저장된 검색", None, ""
+            elif key.startswith("@smart:"):
+                label, count, parent = self.nb_label(key), None, f"nb{idx['@smarts']}"
             else:
                 label, count = self.nb_short(key), total(key)
                 # 최상위 노트북은 저장 폴더 항목(scrapbook) 아래에 들여써서 보여 준다
@@ -1825,6 +1972,8 @@ class App:
         for n in self.all_notes:
             for t in n["tags"]:
                 counts[t] = counts.get(t, 0) + 1
+        for t, c in self.docs.tag_counts().items():   # 가져온 파일에 붙인 태그도 같은 목록에
+            counts[t] = counts.get(t, 0) + c
         self.tag_keys = sorted(counts, key=lambda t: (-counts[t], t.lower()))
         self.quiet = True
         self.tagtree.delete(*self.tagtree.get_children())
@@ -1854,6 +2003,13 @@ class App:
         key = self.nb_keys[int(sel[0][2:])]
         if key == self.nb:
             return
+        if key == "@smarts":   # 머리글: 고를 수 없다. 원래 선택으로 되돌린다
+            self.quiet = True
+            self.nbtree.selection_set(f"nb{self.nb_keys.index(self.nb)}")
+            self.quiet = False
+            return
+        if key.startswith("@smart:"):
+            return self.open_smart(key)
         self.flush()
         self.nb = key
         self.close_note()
@@ -1867,6 +2023,13 @@ class App:
         self.nb_menu_target = key
         m = self.nbmenu
         m.delete(0, "end")
+        if key.startswith("@smart"):   # 저장된 검색
+            if key == "@smarts":
+                m.add_command(label="지금의 검색 저장…", command=self.save_search)
+            else:
+                for label, cmd in self.smart_menu(key) or []:
+                    m.add_command(label=label, command=cmd)
+            return m.tk_popup(e.x_root, e.y_root)
         if key.startswith("@doc"):   # 가져온 폴더: 원본 파일은 건드리지 않는다
             if key.startswith("@doc:"):
                 m.add_command(label="다시 읽기", command=lambda: self.scan_docs(key[5:]))
@@ -1885,8 +2048,8 @@ class App:
 
     def add_subnotebook(self):
         """고른 노트북(저장 폴더 자체 포함) 안에 하위 노트북을 만든다. '모든 노트'를 골랐으면 최상위에 만든다."""
-        parent = "" if self.nb == ALL else self.nb
-        self.add_notebook(parent=parent, show_parent=self.nb != ALL)
+        parent = self.md_nb()
+        self.add_notebook(parent=parent, show_parent=not (self.nb == ALL or self.nb.startswith("@")))
 
     def add_notebook(self, parent="", show_parent=False):
         where = f"\n상위: {self.nb_label(parent)}" if (parent or show_parent) else ""
@@ -1908,7 +2071,7 @@ class App:
             sel = self.nbtree.selection()
             key = self.nb_keys[int(sel[0][2:])] if sel else None
         self.nb_menu_target = None
-        if key in (None, ALL) or key.startswith("@doc"):   # 가져온 폴더는 노트북이 아니라 휴지통으로 보내지 않는다
+        if key in (None, ALL) or key.startswith("@"):   # 가져온 폴더·저장된 검색은 노트북이 아니라 휴지통으로 보내지 않는다
             return
         if key == "":
             return self.delete_root()
@@ -1966,7 +2129,7 @@ class App:
     def after_docs_changed(self):
         """색인이 바뀐 뒤: 노트북 칸의 개수를 새로 쓰고, 가져온 폴더를 보고 있으면 목록도 새로"""
         self.reload_notebooks()
-        if self.nb.startswith("@doc"):
+        if self.nb.startswith("@doc") or self.scope_all():
             self.reload_notes(keep_scroll=True)
 
     def scan_docs(self, only=None, quiet=False):
@@ -1982,9 +2145,11 @@ class App:
                       text="가져온 폴더의 문서를 읽는 중… (처음 한 번은 오래 걸립니다)")
 
     def auto_scan_docs(self):
-        """시작하고 한참 뒤 조용히: 가져온 폴더에서 바뀐 파일만 다시 읽는다(창 없이 뒤에서)"""
-        if not self.docs.folders():
+        """조용히(창 없이 뒤에서) 가져온 폴더에서 바뀐 파일만 다시 읽는다. 시작하고 20초 뒤에 한 번, 그 뒤로는 앱을 열어 두는 동안 5분마다 되풀이"""
+        self.root.after(DOC_RESCAN_SECONDS * 1000, self.auto_scan_docs)
+        if self.doc_scanning or not self.docs.folders():
             return
+        self.doc_scanning = True
         q = queue.Queue()
 
         def job():
@@ -1999,6 +2164,7 @@ class App:
                 kind, val = q.get_nowait()
             except queue.Empty:
                 return self.root.after(1000, poll)
+            self.doc_scanning = False
             if kind == "ok" and (val[0] or val[1]):
                 self.after_docs_changed()
         poll()
@@ -2055,9 +2221,13 @@ class App:
         self.all_notes = loaded
         if self.nb.startswith("@doc"):   # 가져온 폴더를 골랐으면 목록은 노트가 아니라 가져온 문서
             self.notes = self.docs.list_docs(self.nb[5:] if self.nb.startswith("@doc:") else None)
+        elif self.scope_all():           # 모든 파일(저장된 검색 포함) = 내 노트 + 가져온 문서
+            self.notes = list(self.all_notes) + self.docs.list_docs()
         else:
             self.notes = [n for n in self.all_notes if self.in_nb(n)]
         self.cur = next((n for n in self.notes if n["path"] == keep), None) if keep else None
+        if keep and self.cur is None and self.doc_open:   # 보던 가져온 문서가 목록에서 사라졌으면 미리보기도 닫는다
+            self.close_note()
         self.reload_notebooks()
         self.reload_tags()
         self.refresh(keep_page=keep_scroll)
@@ -2072,13 +2242,15 @@ class App:
         self.search_job = None
         pool = [n for n in self.notes if self.tag in n["tags"]] if self.tag else self.notes
         self.results, self.words = search.run(pool, self.q.get(), self.sort, self.asc, self.d_from.get(), self.d_to.get(),
-                                           index=self.docs if self.nb.startswith("@doc") else self.store)
+                                           index=self.docs if self.nb.startswith("@doc") else
+                                           docidx.Combined(self.store, self.docs) if self.scope_all() else self.store)
         self.draw_list(keep_scroll=keep_page)
 
     def draw_list(self, keep_scroll=False):
         total = len(self.results)
         searching = self.q.get().strip() or self.d_from.get().strip() or self.d_to.get().strip() or self.tag
-        text = f"{len(self.notes):,}개 중 {total:,}개 찾음" if searching else f"{total:,}개의 노트"
+        unit = "파일" if self.scope_all() or self.nb.startswith("@doc") else "노트"
+        text = f"{len(self.notes):,}개 중 {total:,}개 찾음" if searching else f"{total:,}개의 {unit}"
         if self.tag:
             text += f"  ·  # {self.tag}"
         self.count.config(text=text)
@@ -2117,7 +2289,7 @@ class App:
             L.insert("end", n["title"] + "\n", "title")
             shown_t = n.get("ctime", n["mtime"]) if self.sort == "ctime" else n["mtime"]   # 생성순이면 생성 시각을 보여 준다
             meta = time.strftime("%Y.%m.%d %H:%M", time.localtime(shown_t))
-            if self.nb == ALL or n["nb"] != self.nb:   # 모든 노트이거나 하위 노트북의 노트면 어느 노트북인지 보여 준다
+            if self.scope_all() or n["nb"] != self.nb:   # 모든 노트이거나 하위 노트북의 노트면 어느 노트북인지 보여 준다
                 meta += "   " + self.nb_label(n["nb"])
             if self.words:   # 검색 중일 때만 일치한 부분을 보여 준다
                 L.insert("end", meta + "\n", "meta")
@@ -2180,7 +2352,8 @@ class App:
             self.status.config(text="")
 
     def pick_multi(self, items):
-        """items: 고른 노트들. 한 개 이하면 다중 선택을 끝낸다"""
+        """items: 고른 노트들. 한 개 이하면 다중 선택을 끝낸다. 가져온 문서는 이동·삭제 대상이 아니라서 뺀다"""
+        items = [n for n in items if not isinstance(n, docidx.Doc)]
         self.multi = {n["path"]: n for n in items} if len(items) > 1 else {}
         self.mark_selected()
         self.status.config(text=f"노트 {len(self.multi)}개 선택됨 (우클릭: 휴지통·이동, Esc: 해제)" if self.multi else "")
@@ -2274,6 +2447,9 @@ class App:
         lm = self.listmenu
         lm.delete(0, "end")
         lm.add_command(label="기본 프로그램으로 열기", command=lambda: self.open_doc_file(n))
+        lm.add_command(label="태그 추가·고치기…", command=self.edit_tags)
+        lm.add_command(label="메모…", command=self.edit_memo)
+        lm.add_separator()
         lm.add_command(label="파일 위치 열기", command=lambda: subprocess.Popen(["explorer", "/select,", os.path.normpath(n["path"])]))
         lm.add_command(label="경로 복사", command=lambda: (self.root.clipboard_clear(), self.root.clipboard_append(n["path"])))
         lm.tk_popup(e.x_root, e.y_root)
@@ -2373,29 +2549,73 @@ class App:
             self.hist.append(n["path"])
             self.hpos = len(self.hist) - 1
         self.show_empty(False)
-        self.apply_layout("edit")   # 렌더링 칸 없이 글만
         self.title_var.set(n["title"])
         self.title_entry.config(state="readonly")
-        body = n.read()
-        if not body.strip():
-            body = ("(이 파일에서 뽑은 글이 없습니다.)\n\n" if n["ext"] not in docidx.AUDIO_EXT else "") + "위치: " + n["path"]
-        n["body"] = body
-        self.text.config(state="normal", wrap="word")
-        self.set_text(body)
-        self.text.config(state="disabled")
-        self.text.yview_moveto(0)
+        for b in self.mode_btns.values():   # 가져온 문서에는 원문·분할 보기가 없다
+            b.enabled = False
+            b.set_on(False)
         self.dirty = False
-        self.status.config(text=f"가져온 파일 (읽기 전용)   ·   {n['path']}   ·   더블클릭이나 우클릭 → 기본 프로그램으로 열기")
-        self.tagbtn.config(text="", fg=C["muted"])
+        self.show_doc(n, native=True)
         self.mark_selected()
-        if self.findbar.winfo_ismapped():
-            self.find_run()
+
+    def doc_can_preview(self, n):
+        return n["ext"] in PREVIEW_EXT and winpreview.available(n["ext"])
+
+    def show_doc(self, n, native):
+        """가져온 문서를 보여 준다. native=True 이고 윈도에 그 형식의 미리보기 처리기가 있으면 그 프로그램(pdf → Edge, mp3 → Media Player …)이
+        노트 화면 안에 직접 그리고, 아니면(또는 실패하면) 색인해 둔 글을 읽기 전용으로 보여 준다(Ctrl+F 로 찾을 수 있다)."""
+        self.pv.unload()
+        self.pv_active = False
+        can = self.doc_can_preview(n)
+        if native and can:
+            self.apply_layout("pv")
+            self.root.update_idletasks()
+            self.pv_active = self.pv.show(self.pv_frame.winfo_id(), n["path"], self.pv_frame.winfo_width(), self.pv_frame.winfo_height())
+        if self.pv_active:
+            self.hide_find(focus=False)
+            self.status.config(text=f"원본 미리보기 (윈도 기본 프로그램)   ·   {n['path']}   ·   글로 바꾸면 Ctrl+F 로 찾을 수 있습니다")
+        else:
+            self.apply_layout("edit")
+            body = n.read()
+            if not body.strip():
+                body = ("(이 파일에서 뽑은 글이 없습니다.)\n\n" if n["ext"] not in docidx.AUDIO_EXT else "") + "위치: " + n["path"]
+            if n.get("memo"):
+                body = "[메모]\n" + n["memo"] + "\n\n" + "─" * 24 + "\n\n" + body
+            n["body"] = body
+            self.text.config(state="normal", wrap="word")
+            self.set_text(body)
+            self.text.config(state="disabled")
+            self.text.yview_moveto(0)
+            self.status.config(text=f"가져온 파일 (읽기 전용)   ·   {n['path']}   ·   더블클릭이나 우클릭 → 기본 프로그램으로 열기")
+            if self.findbar.winfo_ismapped():
+                self.find_run()
+        if can:
+            if not self.doc_toggle.winfo_ismapped():
+                self.doc_toggle.pack(side="right", padx=(8, 0), before=self.mode_seg)
+            self.doc_toggle.config(text="뽑은 글로 보기" if self.pv_active else "원본으로 보기")
+        else:
+            self.doc_toggle.pack_forget()
+        if not self.memo_btn.winfo_ismapped():
+            self.memo_btn.pack(side="right", padx=(8, 0), before=self.doc_toggle if self.doc_toggle.winfo_ismapped() else self.mode_seg)
+        self.memo_btn.config(text="메모 ●" if n.get("memo") else "메모")
+        self.update_status()
+
+    def toggle_doc_view(self):
+        if self.doc_open and self.cur:
+            self.show_doc(self.cur, native=not self.pv_active)
 
     def leave_doc(self):
         """가져온 문서를 보던 상태를 풀고 노트 편집 상태로 돌아간다"""
         if not self.doc_open:
             return
         self.doc_open = False
+        self.pv.unload()
+        self.pv_active = False
+        self.doc_toggle.pack_forget()
+        self.memo_btn.pack_forget()
+        for k, b in self.mode_btns.items():
+            b.enabled = True
+            b.set_on(k == self.mode)
         self.text.config(state="normal")
         self.title_entry.config(state="normal")
         self.apply_layout(self.mode)
@@ -2510,6 +2730,12 @@ class App:
         self.update_status("저장됨 " + time.strftime("%H:%M:%S"))
 
     def update_status(self, extra=""):
+        if self.cur and self.doc_open:   # 가져온 파일: 아랫줄 상태 글은 그대로 두고 태그만 갱신
+            if not self.tag_edit:
+                tags = sorted(self.cur.get("tags", ()))
+                shown = "   ".join("# " + t for t in tags[:6]) + (f"   … +{len(tags) - 6}" if len(tags) > 6 else "")
+                self.tagbtn.config(text=shown or "# 태그 추가", fg=C["accent"] if tags else C["muted"])
+            return
         if self.cur:
             self.status.config(text=f"{self.nb_label(self.cur['nb'])}/{os.path.basename(self.cur['path'])}   ·   "
                                     f"{len(self.cur['body']):,}자" + (f"   ·   {extra}" if extra else "") + "   ·")
@@ -2520,7 +2746,7 @@ class App:
 
     def edit_tags(self, e=None):
         """맨 아래 줄의 태그를 누르면 그 자리에 입력칸이 열린다: 공백이나 쉼표로 나눠 쓰고 Enter 로 저장, Esc 로 취소"""
-        if not self.cur or self.tag_edit or self.doc_open:
+        if not self.cur or self.tag_edit:
             return
         self.flush()
         tags = sorted(self.cur.get("tags", ()))
@@ -2557,6 +2783,8 @@ class App:
     def apply_tags(self, value):
         """입력칸의 태그로 노트를 고친다. 글 맨 아래의 '태그: #a #b' 줄에 적는다(없으면 만든다).
         본문 속 #해시태그나 머리말 tags 로 생긴 태그는 여기서 지울 수 없어서(글 자체를 고쳐야 한다) 알려 준다."""
+        if self.doc_open:
+            return self.apply_doc_tags(value)
         want = []
         for t in re.split(r"[,\s]+", value):
             t = t.strip().lstrip("#").strip()
@@ -2615,6 +2843,46 @@ class App:
             m.add_command(label=f"태그 {len(tags)}개 삭제…", command=lambda: self.tag_delete(tags))
         m.tk_popup(e.x_root, e.y_root)
         return "break"
+
+    def apply_doc_tags(self, value):
+        """가져온 파일의 태그: 원본은 건드리지 않고 앱의 DB 에만 적는다(입력칸의 태그가 곧 전체 태그)"""
+        n = self.cur
+        want = [t for t in (clean_tag_name(x) for x in re.split(r"[,\s]+", value)) if t]
+        want = list(dict.fromkeys(want))
+        if set(want) != set(n.get("tags", ())):
+            self.docs.set_annot(n["path"], tags=want)
+            n["tags"] = set(want)
+            self.reload_tags()
+            self.refresh(keep_page=True)
+            self.status.config(text="태그를 저장했습니다 (원본 파일은 그대로)")
+        self.update_status()
+
+    def edit_memo(self):
+        """가져온 파일에 메모를 붙인다: 앱의 DB 에만 저장되고 검색에도 잡힌다(원본 파일은 그대로)"""
+        n = self.cur
+        if not (self.doc_open and n):
+            return
+        top = self.tool_window("메모 — " + n["title"], "520x340")
+        tk.Label(top, text="이 파일에 붙이는 메모입니다. 원본 파일은 건드리지 않고 앱의 DB 에만 저장되며, 검색에도 잡힙니다.",
+                 bg=C["bg"], fg=C["muted"], font=(self.ui, 9), anchor="w", justify="left", wraplength=480, padx=16, pady=10).pack(fill="x")
+        btns = tk.Frame(top, bg=C["bg"])
+        btns.pack(side="bottom", fill="x", padx=16, pady=12)
+        box = tk.Text(top, wrap="word", font=(self.ui, 10), bg=C["panel"], fg=C["text"], insertbackground=C["accent"], relief="flat", bd=0,
+                      highlightthickness=1, highlightbackground=C["line"], highlightcolor=C["accent"], padx=10, pady=8, undo=True)
+        box.pack(fill="both", expand=True, padx=16)
+        box.insert("1.0", n.get("memo", ""))
+        box.focus_set()
+
+        def save():
+            memo = box.get("1.0", "end-1c").strip()
+            self.docs.set_annot(n["path"], memo=memo)
+            n["memo"] = memo
+            top.destroy()
+            self.refresh(keep_page=True)
+            if self.cur is n:
+                self.show_doc(n, native=self.pv_active)
+        Btn(btns, "저장", save, kind="primary", bold=True, padx=22, pady=5).pack(side="right")
+        Btn(btns, "취소", top.destroy, padx=14, pady=5).pack(side="right", padx=8)
 
     def tag_new(self, targets):
         """노트 목록에서 고른 노트(들)에 태그를 붙인다(공백·쉼표로 여러 개 가능)"""
@@ -2696,7 +2964,8 @@ class App:
             if res is None:
                 return
             items, c = res
-            if not items:
+            dcount = self.docs.tag_use_count(tags)   # 가져온 파일에 붙인 같은 태그(원본은 그대로, 앱의 DB 만 바뀐다)
+            if not items and not dcount:
                 return messagebox.showinfo(APP, "바꿀 곳이 없습니다." + (f"\n(본문 속 #태그 {c['stuck']}곳은 이 이름으로 바꿀 수 없습니다)" if c["stuck"] else ""), parent=self.root)
             parts = [f"{label} {c[k]}곳" for k, label in (("fm", "머리말"), ("line", "태그 줄"), ("inline", "본문 #태그")) if c[k]]
             what = (f"{names} → '{new}' 로 " + ("합칩니다" if len(tags) > 1 else "바꿉니다")) if new else f"{names} 를 지웁니다"
@@ -2705,6 +2974,8 @@ class App:
                 extra += "\n본문 속 #태그는 글에서 그 글자가 지워집니다."
             if c["stuck"]:
                 extra += f"\n본문 속 #태그 {c['stuck']}곳은 '{new}' 가 본문 태그로 쓸 수 없는 이름이라 그대로 남습니다."
+            if dcount:
+                parts.append(f"가져온 파일 {dcount:,}개")
             if not messagebox.askyesno(APP, f"{what}.\n\n노트 {len(items):,}개 ({', '.join(parts)}){extra}\n\n"
                                             "이전 내용은 노트 버전으로 남고, 수정 시각은 바뀌지 않습니다. 계속할까요?", parent=self.root):
                 return
@@ -2728,10 +2999,11 @@ class App:
             except OSError:
                 pass
         top.destroy()
+        dn = self.docs.rename_tags(tags, new)   # 가져온 파일의 태그
         if self.tag in tags:
             self.tag = new
         self.after_tag_change(cur_path)
-        messagebox.showinfo(APP, f"노트 {done:,}개의 태그를 " + ("바꿨습니다." if new else "지웠습니다."), parent=self.root)
+        messagebox.showinfo(APP, f"노트 {done:,}개" + (f", 가져온 파일 {dn:,}개" if dn else "") + "의 태그를 " + ("바꿨습니다." if new else "지웠습니다."), parent=self.root)
 
     def after_tag_change(self, cur_path):
         """태그를 바꾼 뒤: 노트를 다시 읽고 사이드바·목록·열려 있던 노트를 갱신한다"""
@@ -2767,7 +3039,7 @@ class App:
         self.d_from.set("")
         self.d_to.set("")
         self.tag = None
-        nb = "" if self.nb == ALL else self.nb
+        nb = self.md_nb()
         try:
             made = self.store.create_note(nb)
         except OSError as ex:
@@ -2808,6 +3080,8 @@ class App:
     def show_find(self):
         if not self.cur:
             return
+        if self.doc_open and self.pv_active:   # 윈도 미리보기 안에서는 앱이 찾을 수 없으니, 색인해 둔 글로 바꿔서 찾는다
+            self.show_doc(self.cur, native=False)
         for w in (self.text, self.view):
             w.tag_configure("find", background=C["mark"], foreground=C["text"])
             w.tag_configure("findcur", background="#ff9f43", foreground="#000000")
@@ -2923,8 +3197,17 @@ class App:
             self.root.after(60, self.find_run)
 
     def apply_layout(self, m):
+        if m != "pv":
+            self.pv.unload()
+            self.pv_active = False
+            self.pv_frame.lower()
         for w in (self.edit_frame, self.view_frame):
             w.grid_forget()
+        if m == "pv":   # 윈도 미리보기 처리기가 한 칸 전체를 쓴다
+            self.pv_frame.lift()
+            self.body.grid_columnconfigure(0, weight=1, uniform="")
+            self.body.grid_columnconfigure(1, weight=0, uniform="")
+            return
         if m in ("edit", "split"):
             self.edit_frame.grid(row=0, column=0, sticky="nsew")
         if m in ("view", "split"):
@@ -2934,6 +3217,8 @@ class App:
         self.body.grid_columnconfigure(1, weight=1 if two else 0, uniform="pane" if two else "")
 
     def cycle_mode(self):
+        if self.doc_open:   # 가져온 문서에는 원문·분할 보기가 없다
+            return
         self.set_mode({"edit": "split", "split": "view", "view": "edit"}[self.mode])
 
     def render(self):
@@ -4116,14 +4401,23 @@ class App:
 
     def restore_window(self, win):
         """지난번 창 크기·위치·최대화 상태로 연다(화면 밖이면 위치는 버린다)"""
-        m = re.fullmatch(r"(\d+)x(\d+)(?:([+-]-?\d+)([+-]-?\d+))?", str(win.get("geometry", "")))
+        m = re.fullmatch(r"(\d+)x(\d+)(?:([+-]+\d+)([+-]+\d+))?", str(win.get("geometry", "")))
         if m:
-            w, h = int(m[1]), int(m[2])
-            w, h = max(900, min(w, self.root.winfo_screenwidth())), max(520, min(h, self.root.winfo_screenheight()))
+            def num(s):   # Tk 는 화면 왼쪽·위쪽 밖의 좌표를 '+-1900' 으로 적는다
+                return int(s.replace("+-", "-").lstrip("+"))
+            vx, vy, vw, vh = 0, 0, self.root.winfo_screenwidth(), self.root.winfo_screenheight()
+            if sys.platform == "win32":   # 모니터가 여러 개면 전체 가상 화면 기준(주 모니터 왼쪽·위쪽 모니터는 좌표가 음수)
+                try:
+                    import ctypes
+                    gm = ctypes.windll.user32.GetSystemMetrics
+                    vx, vy, vw, vh = gm(76), gm(77), gm(78) or vw, gm(79) or vh
+                except Exception:  # noqa: BLE001
+                    pass
+            w, h = max(900, min(int(m[1]), vw)), max(520, min(int(m[2]), vh))
             pos = ""
             if m[3] and m[4]:
-                x, y = int(m[3]), int(m[4])
-                if -w + 100 < x < self.root.winfo_screenwidth() - 100 and 0 <= y < self.root.winfo_screenheight() - 100:
+                x, y = num(m[3]), num(m[4])
+                if vx - w + 100 < x < vx + vw - 100 and vy <= y < vy + vh - 100:
                     pos = f"+{x}+{y}"
             self.root.geometry(f"{w}x{h}{pos}")
         if win.get("zoomed"):
@@ -4150,6 +4444,7 @@ class App:
             pass
 
     def quit(self):
+        self.pv.unload()
         self.save_window()
         self.flush()
         self.stop_clipper()

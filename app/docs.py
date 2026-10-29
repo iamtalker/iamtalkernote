@@ -15,6 +15,7 @@ import sqlite3
 import time
 import zlib
 import zipfile
+from concurrent.futures import ProcessPoolExecutor, wait, FIRST_COMPLETED
 from xml.etree import ElementTree
 
 import store as st
@@ -27,6 +28,9 @@ KNOWN_EXTS = ["pdf", *TEXT_EXT, *OFFICE_EXT, *AUDIO_EXT]
 MAX_TEXT_BYTES = 30_000_000     # 이보다 큰 글 파일은 이름만 색인
 MAX_PDF_BYTES = 300_000_000
 MAX_CHARS = 3_000_000           # 파일 하나에서 색인할 글자 수 상한
+PDF_SECONDS = 120               # PDF 한 개를 읽는 데 쓸 시간 상한(넘으면 읽은 데까지만)
+STUCK_SECONDS = PDF_SECONDS + 60   # 이 시간이 넘도록 끝나지 않는 파일은 멈춘 것으로 보고 그 작업 프로세스를 죽인다
+HEAVY_EXT = ("pdf", *OFFICE_EXT)   # 오래 걸려서 다른 프로세스에서 나눠 읽는 형식
 DOC_VERSION = 1
 
 
@@ -52,7 +56,7 @@ def _read_pdf(path, size):
             reader.decrypt("")
         except Exception:  # noqa: BLE001
             return ""
-    out, total = [], 0
+    out, total, deadline = [], 0, time.time() + PDF_SECONDS
     for page in reader.pages:
         try:
             t = page.extract_text() or ""
@@ -60,7 +64,7 @@ def _read_pdf(path, size):
             continue
         out.append(t)
         total += len(t)
-        if total > MAX_CHARS:
+        if total > MAX_CHARS or time.time() > deadline:   # 너무 큰·느린 PDF 는 읽은 데까지만 색인
             break
     return "\n\n".join(out)
 
@@ -143,12 +147,92 @@ def extract(path, ext, size):
         return ""
 
 
+def extract_job(path, ext, size):
+    """작업 프로세스에서 도는 함수(최상위여야 다른 프로세스가 부를 수 있다)"""
+    return extract(path, ext, size)
+
+
+def _kill(pool):
+    for proc in list((getattr(pool, "_processes", None) or {}).values()):
+        try:
+            proc.terminate()
+        except Exception:  # noqa: BLE001
+            pass
+    pool.shutdown(wait=False, cancel_futures=True)
+
+
+def heavy_results(jobs, cancelled=None, name_of=None, progress=None):
+    """[(경로, 확장자, 크기)] 를 여러 프로세스로 나눠 읽으며 끝나는 대로 (경로, 글) 을 낸다.
+    한 파일이 PDF_SECONDS+60 초가 넘게 멈춰 있으면 그 작업 프로세스를 죽이고 그 파일은 이름만 색인한 뒤 나머지를 이어서 읽는다.
+    프로세스를 못 만드는 환경이면 같은 프로세스에서 하나씩 읽는다."""
+    todo = list(jobs)
+    workers = max(1, min(4, (os.cpu_count() or 2) - 1))
+    while todo:
+        if cancelled and cancelled():
+            return
+        try:
+            pool = ProcessPoolExecutor(max_workers=workers)
+            futs = {pool.submit(extract_job, p, ext, size): (p, ext, size) for p, ext, size in todo}
+        except Exception:  # noqa: BLE001  (프로세스를 못 만드는 환경)
+            for p, ext, size in todo:
+                if cancelled and cancelled():
+                    return
+                if progress and name_of:
+                    progress(name_of(p))
+                yield p, extract(p, ext, size)
+            return
+        finished, started, stuck = set(), {}, None
+        pending = set(futs)
+        while pending and stuck is None:
+            if cancelled and cancelled():
+                _kill(pool)
+                return
+            done, pending = wait(pending, timeout=0.5, return_when=FIRST_COMPLETED)
+            for f in done:
+                p = futs[f][0]
+                finished.add(p)
+                try:
+                    text = f.result()
+                except Exception:  # noqa: BLE001
+                    text = ""
+                if progress and name_of:
+                    progress(name_of(p))
+                yield p, text
+            now = time.time()
+            for f in pending:
+                if f.running():
+                    started.setdefault(f, now)
+                    if now - started[f] > STUCK_SECONDS:
+                        stuck = f
+                        break
+        if stuck is None:
+            pool.shutdown()
+            return
+        _kill(pool)                       # 멈춘 파일: 이름만 색인하고 나머지는 새 프로세스로 이어서
+        finished.add(futs[stuck][0])
+        yield futs[stuck][0], ""
+        todo = [t for t in todo if t[0] not in finished]
+
+
 def sql_cond(node, params):
     if node[0] == "WORD":
         params.append(node[1].encode("utf-8"))
         return "instr(hay, ?) > 0"
     left, right = sql_cond(node[1], params), sql_cond(node[2], params)
     return f"({left} {'AND' if node[0] in ('AND', 'NOT') else 'OR'}{' NOT' if node[0] == 'NOT' else ''} {right})"
+
+
+class Combined:
+    """노트 색인과 문서 색인을 하나처럼 검색한다('모든 파일'): query_hits 결과를 합친다(노트 키는 상대 경로, 문서 키는 절대 경로라 겹치지 않는다)"""
+
+    def __init__(self, *indexes):
+        self.indexes = indexes
+
+    def query_hits(self, node, words, scoring=False):
+        hits = {}
+        for ix in self.indexes:
+            hits.update(ix.query_hits(node, words, scoring))
+        return hits
 
 
 class Doc(dict):
@@ -215,17 +299,91 @@ class DocIndex:
         conn.execute("CREATE TABLE IF NOT EXISTS docs (path TEXT PRIMARY KEY, folder TEXT, ext TEXT, size INTEGER, mtime_ns INTEGER, "
                      "mtime REAL, ctime REAL, title TEXT, hay BLOB, body BLOB, content INTEGER)")
         conn.execute("CREATE INDEX IF NOT EXISTS docs_folder ON docs(folder)")
+        # 내가 붙인 태그·메모. 원본 파일은 건드리지 않고 여기에만 적으며, docs 표를 다시 만들어도(색인 판이 바뀌어도) 남는다
+        conn.execute("CREATE TABLE IF NOT EXISTS annot (path TEXT PRIMARY KEY, tags TEXT, memo TEXT)")
         conn.commit()
         return conn
 
+    # ---- 태그·메모
+    def annots(self):
+        """{경로: (태그 목록, 메모)}"""
+        conn = self._db()
+        try:
+            return {p: (json.loads(t or "[]"), m or "") for p, t, m in conn.execute("SELECT path, tags, memo FROM annot")}
+        finally:
+            conn.close()
+
+    @staticmethod
+    def make_hay(title, rel, text, tags, memo):
+        """검색용 사본: 이름·경로·본문에 내가 붙인 태그와 메모도 넣어서 함께 찾아지게"""
+        extra = " ".join("#" + t for t in tags) + "\n" + memo if (tags or memo) else ""
+        return (title + "\n" + rel + "\n" + text + ("\n" + extra if extra else "")).lower().encode("utf-8", "ignore")
+
+    def set_annot(self, path, tags=None, memo=None):
+        """태그나 메모를 바꾼다(None 이면 그대로). 검색용 사본도 새로 만든다. 둘 다 비면 기록을 지운다"""
+        roots = {self.fid(f["path"]): f["path"] for f in self.cfg()["folders"]}
+        conn = self._db()
+        try:
+            row = conn.execute("SELECT folder, title, body FROM docs WHERE path=?", (path,)).fetchone()
+            if not row or row[0] not in roots:
+                return False
+            old = conn.execute("SELECT tags, memo FROM annot WHERE path=?", (path,)).fetchone()
+            cur_tags = json.loads(old[0] or "[]") if old else []
+            cur_memo = (old[1] or "") if old else ""
+            tags = cur_tags if tags is None else list(dict.fromkeys(tags))
+            memo = cur_memo if memo is None else memo.strip()
+            if tags or memo:
+                conn.execute("INSERT OR REPLACE INTO annot VALUES (?,?,?)", (path, json.dumps(tags, ensure_ascii=False), memo))
+            else:
+                conn.execute("DELETE FROM annot WHERE path=?", (path,))
+            text = zlib.decompress(row[2]).decode("utf-8", "ignore") if row[2] else ""
+            hay = self.make_hay(row[1], os.path.relpath(path, roots[row[0]]), text, tags, memo)
+            conn.execute("UPDATE docs SET hay=? WHERE path=?", (hay, path))
+            conn.commit()
+            return True
+        finally:
+            conn.close()
+
+    def tag_counts(self):
+        """가져온 문서에 붙인 태그별 개수"""
+        out = {}
+        conn = self._db()
+        try:
+            for (t,) in conn.execute("SELECT annot.tags FROM annot JOIN docs ON docs.path = annot.path"):
+                for tag in json.loads(t or "[]"):
+                    out[tag] = out.get(tag, 0) + 1
+        finally:
+            conn.close()
+        return out
+
+    def rename_tags(self, olds, new):
+        """olds 의 태그를 모두 new 로 바꾼다(None 이면 지운다) → 바뀐 문서 수"""
+        olds = set(olds)
+        changed = 0
+        for path, (tags, memo) in self.annots().items():
+            if not olds & set(tags):
+                continue
+            moved = [t for t in tags if t not in olds]
+            if new and new not in moved:
+                moved.append(new)
+            if self.set_annot(path, tags=moved):
+                changed += 1
+        return changed
+
+    def tag_use_count(self, tags):
+        """tags 중 하나라도 붙은 가져온 문서 수"""
+        want = set(tags)
+        return sum(1 for tg, _m in self.annots().values() if want & set(tg))
+
     def scan(self, progress=None, cancelled=None, only=None):
         """가져온 폴더를 훑어 새로 생기거나 바뀐 파일만 읽고, 사라진 파일은 색인에서 뺀다 → (읽은 수, 뺀 수, 총 수)
-        content=False(문서 안 검색 끔)면 글은 뽑지 않고 파일 이름만 색인한다."""
+        content=False(문서 안 검색 끔)면 글은 뽑지 않고 파일 이름만 색인한다.
+        pdf·Office 는 오래 걸리고 멈출 수도 있어서 다른 프로세스에서 나눠 읽는다(앱 화면이 얼지 않는다)."""
         cfg = self.cfg()
         exts = {e.lower().lstrip(".") for e in cfg["exts"]}
         content = cfg["content"]
         conn = self._db()
-        done = removed = total = 0
+        count = {"done": 0, "removed": 0, "total": 0}
         try:
             for f in cfg["folders"]:
                 fid = self.fid(f["path"])
@@ -233,7 +391,7 @@ class DocIndex:
                     continue
                 cached = {p: (sz, mt, ct) for p, sz, mt, ct in conn.execute(
                     "SELECT path, size, mtime_ns, content FROM docs WHERE folder=?", (fid,))}
-                seen, todo = set(), []
+                seen, todo = set(), {}
                 for dirpath, dirs, files in os.walk(f["path"]):
                     dirs[:] = [d for d in dirs if not d.startswith(".") and d.lower() not in ("$recycle.bin", "system volume information")]
                     for name in files:
@@ -249,35 +407,46 @@ class DocIndex:
                         ent = cached.get(p)
                         if ent and ent[0] == stt.st_size and ent[1] == stt.st_mtime_ns and bool(ent[2]) == content:
                             continue
-                        todo.append((p, name, ext, stt))
-                total += len(seen)
-                batch = []
-                for i, (p, name, ext, stt) in enumerate(todo, 1):
-                    if cancelled and cancelled():
-                        break
-                    text = extract(p, ext, stt.st_size) if content else ""
+                        todo[p] = (name, ext, stt)
+                count["total"] += len(seen)
+                ann = self.annots() if todo else {}
+                batch, n = [], [0]
+
+                def add(p, text):
+                    name, ext, stt = todo[p]
                     title = os.path.splitext(name)[0]
-                    hay = (title + "\n" + os.path.relpath(p, f["path"]) + "\n" + text).lower().encode("utf-8", "ignore")
-                    body = zlib.compress(text.encode("utf-8", "ignore"), 3)
+                    tags, memo = ann.get(p, ([], ""))   # 내가 붙인 태그·메모도 검색 대상에 넣는다
+                    hay = self.make_hay(title, os.path.relpath(p, f["path"]), text, tags, memo)
                     batch.append((p, fid, ext, stt.st_size, stt.st_mtime_ns, stt.st_mtime, getattr(stt, "st_birthtime", stt.st_ctime),
-                                  title, hay, body, 1 if content else 0))
-                    done += 1
+                                  title, hay, zlib.compress(text.encode("utf-8", "ignore"), 3), 1 if content else 0))
+                    count["done"] += 1
+                    n[0] += 1
                     if len(batch) >= 40:
                         conn.executemany("INSERT OR REPLACE INTO docs VALUES (?,?,?,?,?,?,?,?,?,?,?)", batch)
                         conn.commit()
-                        batch = []
-                    if progress and (i % 5 == 0 or i == len(todo)):
-                        progress(i, len(todo), f"{f.get('name') or f['path']} 읽는 중…")
+                        batch.clear()
+                    if progress:
+                        progress(n[0], len(todo), f"읽는 중 — {name}  ")
+                light = [p for p, (name, ext, stt) in todo.items() if not (content and ext in HEAVY_EXT)]
+                heavy = [(p, todo[p][1], todo[p][2].st_size) for p in todo if content and todo[p][1] in HEAVY_EXT]
+                for p in light:
+                    if cancelled and cancelled():
+                        break
+                    add(p, extract(p, todo[p][1], todo[p][2].st_size) if content else "")
+                if heavy and not (cancelled and cancelled()):
+                    for p, text in heavy_results(heavy, cancelled, name_of=lambda q: todo[q][0],
+                                                 progress=(lambda name: progress(n[0], len(todo), f"읽는 중 — {name}  ")) if progress else None):
+                        add(p, text)
                 if batch:
                     conn.executemany("INSERT OR REPLACE INTO docs VALUES (?,?,?,?,?,?,?,?,?,?,?)", batch)
                 gone = [(p,) for p in cached if p not in seen]
                 if gone and not (cancelled and cancelled()):
                     conn.executemany("DELETE FROM docs WHERE path=?", gone)
-                    removed += len(gone)
+                    count["removed"] += len(gone)
                 conn.commit()
         finally:
             conn.close()
-        return done, removed, total
+        return count["done"], count["removed"], count["total"]
 
     # ---- 목록·검색
     def list_docs(self, fid=None):
@@ -287,14 +456,16 @@ class DocIndex:
         try:
             q = "SELECT path, folder, ext, size, mtime, ctime, title FROM docs" + (" WHERE folder=?" if fid else "")
             rows = conn.execute(q, (fid,) if fid else ()).fetchall()
+            ann = {p: (json.loads(t or "[]"), m or "") for p, t, m in conn.execute("SELECT path, tags, memo FROM annot")}
         finally:
             conn.close()
         out = []
         for p, folder, ext, size, mt, ct, title in rows:
             if folder not in names:
                 continue
+            tags, memo = ann.get(p, ([], ""))
             out.append(Doc(nb="@doc:" + folder, key=p, path=p, title=title + "." + ext, size=size, mtime=mt, ctime=ct, file_mtime=mt,
-                           tags=set(), ext=ext, root=names[folder]["path"], _index=self))
+                           tags=set(tags), memo=memo, ext=ext, root=names[folder]["path"], _index=self))
         return out
 
     def counts(self):
