@@ -248,6 +248,7 @@ class DocIndex:
 
     def __init__(self):
         self.db_path = os.path.join(os.path.dirname(st.config_path()), "docs-index.db")
+        self.content_search = bool(st.read_config().get("docContentSearch", False))   # 검색창의 '문서 안 글 포함' 체크
 
     # ---- 설정 (config.json 의 "imports")
     def cfg(self):
@@ -297,8 +298,19 @@ class DocIndex:
             conn.execute("DROP TABLE IF EXISTS docs")
             conn.execute("INSERT OR REPLACE INTO meta VALUES ('version', ?)", (str(DOC_VERSION),))
         conn.execute("CREATE TABLE IF NOT EXISTS docs (path TEXT PRIMARY KEY, folder TEXT, ext TEXT, size INTEGER, mtime_ns INTEGER, "
-                     "mtime REAL, ctime REAL, title TEXT, hay BLOB, body BLOB, content INTEGER)")
+                     "mtime REAL, ctime REAL, title TEXT, hay BLOB, body BLOB, content INTEGER, nhay BLOB)")
         conn.execute("CREATE INDEX IF NOT EXISTS docs_folder ON docs(folder)")
+        if "nhay" not in [r[1] for r in conn.execute("PRAGMA table_info(docs)")]:
+            # 이름·경로·태그·메모만의 검색용 사본('문서 안 글' 검색을 끈 채 찾을 때 쓴다). 이미 읽어 둔 색인은 파일을 다시 읽지 않고 DB 안의 값으로 채운다
+            conn.execute("ALTER TABLE docs ADD COLUMN nhay BLOB")
+            roots = {self.fid(f["path"]): f["path"] for f in self.cfg()["folders"]}
+            ann = {p: (json.loads(t or "[]"), m or "") for p, t, m in conn.execute("SELECT path, tags, memo FROM annot")}
+            rows = []
+            for p, folder, title in conn.execute("SELECT path, folder, title FROM docs").fetchall():
+                tags, memo = ann.get(p, ([], ""))
+                rel = os.path.relpath(p, roots[folder]) if folder in roots else os.path.basename(p)
+                rows.append((self.make_hay(title, rel, "", tags, memo), p))
+            conn.executemany("UPDATE docs SET nhay=? WHERE path=?", rows)
         # 내가 붙인 태그·메모. 원본 파일은 건드리지 않고 여기에만 적으며, docs 표를 다시 만들어도(색인 판이 바뀌어도) 남는다
         conn.execute("CREATE TABLE IF NOT EXISTS annot (path TEXT PRIMARY KEY, tags TEXT, memo TEXT)")
         conn.commit()
@@ -337,8 +349,9 @@ class DocIndex:
             else:
                 conn.execute("DELETE FROM annot WHERE path=?", (path,))
             text = zlib.decompress(row[2]).decode("utf-8", "ignore") if row[2] else ""
-            hay = self.make_hay(row[1], os.path.relpath(path, roots[row[0]]), text, tags, memo)
-            conn.execute("UPDATE docs SET hay=? WHERE path=?", (hay, path))
+            rel = os.path.relpath(path, roots[row[0]])
+            conn.execute("UPDATE docs SET hay=?, nhay=? WHERE path=?",
+                         (self.make_hay(row[1], rel, text, tags, memo), self.make_hay(row[1], rel, "", tags, memo), path))
             conn.commit()
             return True
         finally:
@@ -416,13 +429,14 @@ class DocIndex:
                     name, ext, stt = todo[p]
                     title = os.path.splitext(name)[0]
                     tags, memo = ann.get(p, ([], ""))   # 내가 붙인 태그·메모도 검색 대상에 넣는다
-                    hay = self.make_hay(title, os.path.relpath(p, f["path"]), text, tags, memo)
+                    rel = os.path.relpath(p, f["path"])
                     batch.append((p, fid, ext, stt.st_size, stt.st_mtime_ns, stt.st_mtime, getattr(stt, "st_birthtime", stt.st_ctime),
-                                  title, hay, zlib.compress(text.encode("utf-8", "ignore"), 3), 1 if content else 0))
+                                  title, self.make_hay(title, rel, text, tags, memo), zlib.compress(text.encode("utf-8", "ignore"), 3),
+                                  1 if content else 0, self.make_hay(title, rel, "", tags, memo)))
                     count["done"] += 1
                     n[0] += 1
                     if len(batch) >= 40:
-                        conn.executemany("INSERT OR REPLACE INTO docs VALUES (?,?,?,?,?,?,?,?,?,?,?)", batch)
+                        conn.executemany("INSERT OR REPLACE INTO docs VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", batch)
                         conn.commit()
                         batch.clear()
                     if progress:
@@ -438,7 +452,7 @@ class DocIndex:
                                                  progress=(lambda name: progress(n[0], len(todo), f"읽는 중 — {name}  ")) if progress else None):
                         add(p, text)
                 if batch:
-                    conn.executemany("INSERT OR REPLACE INTO docs VALUES (?,?,?,?,?,?,?,?,?,?,?)", batch)
+                    conn.executemany("INSERT OR REPLACE INTO docs VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", batch)
                 gone = [(p,) for p in cached if p not in seen]
                 if gone and not (cancelled and cancelled()):
                     conn.executemany("DELETE FROM docs WHERE path=?", gone)
@@ -487,13 +501,15 @@ class DocIndex:
         """검색식에 맞는 문서 → {경로: 점수} (노트 색인(store.Store.query_hits)과 같은 모양이라 search.run 에 그대로 쓴다)"""
         params = []
         cond = sql_cond(node, params)
+        col = "hay" if self.content_search else "nhay"   # 문서 안 글까지 찾을지, 이름·경로·태그·메모만 찾을지
+        cond = cond.replace("instr(hay,", f"instr({col},")
         conn = self._db()
         try:
             if not scoring:
                 return {k: 0.0 for (k,) in conn.execute(f"SELECT path FROM docs WHERE {cond}", params)}
             ws = [w for w in words if w]
             hits = {}
-            for k, hay in conn.execute(f"SELECT path, hay FROM docs WHERE {cond}", params):
+            for k, hay in conn.execute(f"SELECT path, {col} FROM docs WHERE {cond}", params):
                 text = bytes(hay).decode("utf-8", "ignore")
                 hits[k] = 1000 * sum(text.count(w) for w in ws) / max(1, len(text))
             return hits

@@ -33,10 +33,12 @@ import cleanup  # noqa: E402
 import clipserver  # noqa: E402
 import docs as docidx  # noqa: E402   (노트 폴더 밖의 pdf·txt·mp3 … 가져오기)
 import editor as ed # noqa: E402   (위키나루: 서식 도구·그림 불러오기)
+import ime  # noqa: E402   (한글 입력기가 조합 중인 글자를 자동완성에서 보려고)
 import preview  # noqa: E402
 import search  # noqa: E402
 import snapshots as sn  # noqa: E402
 import store as st  # noqa: E402
+import tray  # noqa: E402   (닫기 버튼을 누르면 앱을 끄지 않고 알림 영역 아이콘으로)
 import updater  # noqa: E402
 import wikiconv  # noqa: E402
 import winpreview  # noqa: E402   (윈도 미리보기 처리기를 노트 화면 안에: pdf·mp3 …)
@@ -468,7 +470,9 @@ class App:
         self.build_menu()
         self.build()
         self.start_clipper()
-        self.root.protocol("WM_DELETE_WINDOW", self.quit)
+        self.tray = tray.Tray(os.path.join(HERE, "assets", "icon.ico"), APP)   # 닫기(X)를 누르면 들어가는 트레이 아이콘
+        self.tray_hidden = self.tray_was_zoomed = False
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.bind_keys()
         self.set_mode(self.mode)
         self.relayout()
@@ -518,7 +522,7 @@ class App:
     def style_ttk(self):
         s = ttk.Style()
         s.theme_use("clam")
-        s.configure("Flat.Treeview", background=C["panel"], fieldbackground=C["panel"], foreground=C["text"],
+        s.configure("Flat.Treeview", background=C["bg"], fieldbackground=C["bg"], foreground=C["text"],
                     rowheight=30, borderwidth=0, relief="flat", font=(self.ui, 10), indent=16)
         s.layout("Flat.Treeview", [("Treeview.treearea", {"sticky": "nswe"})])
         s.map("Flat.Treeview", background=[("selected", C["soft"])], foreground=[("selected", C["accent"])])
@@ -1433,9 +1437,12 @@ class App:
         except tk.TclError:
             pass
 
-    def place_nb_sash(self):
+    def place_nb_sash(self, tries=0):
+        """노트북·태그 사이 경계를 저장해 둔 높이에 놓는다. 창이 아직 화면에 그려지기 전(칸 높이가 작을 때)에 놓으면 값이 엉뚱하게 잘리므로, 그려질 때까지 기다린다"""
         try:
             if len(self.left_pane.panes()) == 2 and self.nb_h:
+                if self.left_pane.winfo_height() < 250 and tries < 20:
+                    return self.root.after(100, lambda: self.place_nb_sash(tries + 1))
                 self.root.update_idletasks()
                 self.left_pane.sash_place(0, 0, min(self.nb_h, max(90, self.left_pane.winfo_height() - 90)))
         except tk.TclError:
@@ -1443,11 +1450,11 @@ class App:
 
     # -- 1단: 노트북 + 태그
     def section_head(self, parent, title, action=None):
-        h = tk.Frame(parent, bg=C["panel"])
+        h = tk.Frame(parent, bg=C["bg"])
         h.pack(fill="x", padx=14, pady=(14, 4))
-        tk.Label(h, text=title, bg=C["panel"], fg=C["muted"], font=(self.ui, 9, "bold")).pack(side="left")
+        tk.Label(h, text=title, bg=C["bg"], fg=C["muted"], font=(self.ui, 9, "bold")).pack(side="left")
         if action:
-            Btn(h, "＋", action, kind="ghost", bg=C["panel"], padx=6, pady=0).pack(side="right")
+            Btn(h, "＋", action, kind="ghost", bg=C["bg"], padx=6, pady=0).pack(side="right")
 
     def fit_count(self, tree, texts):
         """숫자 칸의 폭을 가장 긴 숫자에 맞춘다(고정 폭이면 13,902 같은 큰 수가 잘린다)"""
@@ -1456,7 +1463,7 @@ class App:
         tree.column("n", width=w, minwidth=w, stretch=False)
 
     def make_tree(self, parent):
-        wrap = tk.Frame(parent, bg=C["panel"])
+        wrap = tk.Frame(parent, bg=C["bg"])
         wrap.pack(fill="both", expand=True, padx=6, pady=(0, 6))
         tree = ttk.Treeview(wrap, style="Flat.Treeview", columns=("n",), show="tree", selectmode="browse")
         tree.column("#0", stretch=True, width=140)
@@ -1467,23 +1474,23 @@ class App:
         return tree
 
     def build_left(self):
-        f = self.leftf = tk.Frame(self.pane, bg=C["panel"])
+        f = self.leftf = tk.Frame(self.pane, bg=C["bg"])
         self.left_pane = tk.PanedWindow(f, orient="vertical", sashwidth=4, sashrelief="flat", bg=C["line"], bd=0)
         self.left_pane.pack(fill="both", expand=True)
-        self.nb_sec = tk.Frame(self.left_pane, bg=C["panel"])
+        self.nb_sec = tk.Frame(self.left_pane, bg=C["bg"])
         self.section_head(self.nb_sec, "노트북", self.add_notebook)
         self.nbtree = self.make_tree(self.nb_sec)
         self.nbtree.bind("<<TreeviewSelect>>", self.on_nb_select)
         self.nbtree.bind("<Delete>", lambda e: self.delete_notebook())
         self.nbtree.bind("<Button-3>", self.on_nb_menu)
         self.nbmenu = tk.Menu(self.root, tearoff=0)
-        self.tag_sec = tk.Frame(self.left_pane, bg=C["panel"])
+        self.tag_sec = tk.Frame(self.left_pane, bg=C["bg"])
         self.section_head(self.tag_sec, "태그")
         self.tagtree = self.make_tree(self.tag_sec)
         self.tagtree.config(selectmode="extended")   # Ctrl/Shift+클릭으로 태그 여러 개를 골라 한꺼번에 이름 변경·삭제
         self.tagtree.bind("<ButtonRelease-1>", self.on_tag_click)
         self.tagtree.bind("<Button-3>", self.on_tag_menu)
-        self.root_label = tk.Label(f, text="", bg=C["panel"], fg=C["muted"], font=(self.ui, 8), anchor="w", padx=14, pady=6)
+        self.root_label = tk.Label(f, text="", bg=C["bg"], fg=C["muted"], font=(self.ui, 8), anchor="w", padx=14, pady=6)
         self.root_label.pack(side="bottom", fill="x", before=self.left_pane)
 
     # -- 2단: 검색 + 목록
@@ -1508,6 +1515,7 @@ class App:
         self.ph.bind("<Button-1>", lambda e: self.search_entry.focus_set())
         self.search_entry.bind("<FocusIn>", lambda e: self.update_placeholder())    # 안내 문구가 커서를 가리지 않게
         self.search_entry.bind("<FocusOut>", lambda e: self.update_placeholder())
+        self.ac_init()
         bar = tk.Frame(f, bg=C["bg"])
         bar.pack(fill="x", padx=10, pady=(0, 2))
         self.sort_names = {"relevance": "관련도순", "time": "수정순", "ctime": "생성순", "title": "제목순"}
@@ -1515,6 +1523,14 @@ class App:
         self.b_date = Btn(bar, "기간", self.toggle_date, padx=6, pady=3)
         for b in (*self.sort_btns.values(), self.b_date):
             b.pack(side="left", padx=1)
+        # 가져온 파일의 '문서 안 글'까지 찾을지(끄면 이름·경로·태그·메모만 찾아서 빠르고 결과가 짧다). 가져온 폴더가 있을 때만 보인다
+        self.v_content = tk.BooleanVar(value=self.docs.content_search)
+        self.opt_row = tk.Frame(f, bg=C["bg"])      # 정렬 줄이 이미 꽉 차서 체크박스는 아래 줄에 둔다
+        self.cb_content = tk.Checkbutton(self.opt_row, text="문서 안 글 포함", variable=self.v_content, command=self.on_content_toggle, relief="flat",
+                                         bd=0, takefocus=False, bg=C["bg"], fg=C["sub"], activebackground=C["soft"], selectcolor=C["bg"],
+                                         cursor="hand2", font=(self.ui, 9))
+        self.cb_content.pack(side="left")
+        self.tip(self.cb_content, "켜면 가져온 pdf·txt 등의 본문까지 찾고, 끄면 파일 이름·경로·태그·메모만 찾습니다")
         b_save = Btn(bar, "검색 저장", self.save_search, padx=6, pady=3)   # 지금의 검색식·기간·태그·정렬을 '저장된 검색'으로
         b_save.pack(side="right", padx=1)
         self.tip(b_save, "지금의 검색을 왼쪽 '저장된 검색'에 이름을 붙여 저장합니다(스마트 폴더)")
@@ -1534,6 +1550,7 @@ class App:
         tk.Label(self.date_row, text="예) 2021.01.01", bg=C["bg"], fg=C["muted"], font=(self.ui, 8)).pack(side="left")
         self.count = tk.Label(f, text="", anchor="w", bg=C["bg"], fg=C["muted"], font=(self.ui, 9), padx=16)
         self.count.pack(fill="x", pady=(6, 4))
+        self.update_content_check()
         tk.Frame(f, height=1, bg=C["line"]).pack(fill="x")
         body = tk.Frame(f, bg=C["bg"])
         body.pack(fill="both", expand=True)
@@ -1573,6 +1590,225 @@ class App:
         self.listmenu = tk.Menu(self.root, tearoff=0)
         self.movemenu = tk.Menu(self.listmenu, tearoff=0)
         self.update_placeholder()
+
+    def update_content_check(self):
+        """'문서 안 글 포함' 체크박스는 가져온 폴더가 있을 때만 보인다"""
+        if self.docs.folders():
+            if not self.opt_row.winfo_ismapped():
+                self.opt_row.pack(fill="x", padx=14, before=self.count)
+        else:
+            self.opt_row.pack_forget()
+
+    def on_content_toggle(self):
+        self.docs.content_search = bool(self.v_content.get())
+        st.write_config(docContentSearch=self.docs.content_search)
+        self.refresh()
+
+    # ------------------------------------------------------------ 검색창 자동완성 (최근 검색 · 파일 제목 · 태그)
+    def ac_init(self):
+        old = getattr(self, "ac_top", None)
+        if old is not None:
+            try:
+                old.destroy()
+            except tk.TclError:
+                pass
+        self.ac_top = self.ac_list = None
+        self.ac_items, self.ac_job, self.ac_click, self.ac_sig = [], None, False, None
+        self.ac_titles = (None, [])      # (캐시 열쇠, [(제목, 소문자 제목)])
+        self.ac_tagc = (0.0, {})         # (만든 시각, {태그: 개수})
+        e = self.search_entry
+        e.bind("<Down>", self.ac_down)
+        e.bind("<Up>", self.ac_up)
+        e.bind("<Return>", self.ac_enter)
+        e.bind("<Escape>", self.ac_esc)
+        e.bind("<FocusOut>", self.ac_focus_out, add="+")
+        e.bind("<Button-1>", lambda ev: self.root.after(30, self.ac_show), add="+")   # 비어 있는 칸을 누르면 최근 검색
+        e.bind("<FocusIn>", lambda ev: None if self.ac_visible() else setattr(self, "ac_sig", self.ac_signature()), add="+")   # 칸에 들어간 것만으로는 후보를 띄우지 않는다
+        self.ac_ready = True
+        if not getattr(self, "ac_polling", False):
+            self.ac_polling = True
+            self.ac_poll()
+
+    def ac_signature(self):
+        """입력칸의 값 + 한글 입력기가 아직 확정하지 않은 조합 중인 글자. 이게 바뀌면 후보를 다시 띄운다"""
+        return (self.q.get(), ime.composing())
+
+    def ac_poll(self):
+        """치는 즉시 후보를 띄운다. 한글은 마지막 글자가 확정되기 전에는 입력칸의 값(StringVar)에 안 들어가서, 값이 바뀔 때를 기다리면 방향키를 눌러야 뜬다 → 조합 중인 글자까지 보며 0.12초마다 확인"""
+        self.root.after(120, self.ac_poll)
+        if not getattr(self, "ac_ready", False):
+            return
+        try:
+            if self.root.focus_get() is not self.search_entry:   # 후보 창이 뜨며 잠깐 포커스가 빠져도 기준값은 그대로 둔다(안 그러면 다음 변화를 한 번 놓친다)
+                return
+        except KeyError:
+            return
+        sig = self.ac_signature()
+        if self.ac_sig is None:
+            self.ac_sig = sig
+            return
+        if sig != self.ac_sig:
+            self.ac_sig = sig
+            self.ac_show()
+
+    def search_history(self):
+        return [h for h in st.read_config().get("searchHist", []) if isinstance(h, str)]
+
+    def remember_search(self, q):
+        q = (q or "").strip()
+        if not q:
+            return
+        hist = [h for h in self.search_history() if h != q and not q.lower().startswith(h.lower())]   # 치다 만 앞부분은 같이 쌓지 않는다
+        st.write_config(searchHist=([q] + hist)[:30])
+
+    def ac_tags(self):
+        """{태그: 개수} (노트 + 가져온 파일). 자주 만들지 않게 5초 동안 기억"""
+        t0, counts = self.ac_tagc
+        if time.time() - t0 > 5:
+            counts = {}
+            for n in self.all_notes:
+                for t in n["tags"]:
+                    counts[t] = counts.get(t, 0) + 1
+            for t, c in self.docs.tag_counts().items():
+                counts[t] = counts.get(t, 0) + c
+            self.ac_tagc = (time.time(), counts)
+        return counts
+
+    def ac_candidates(self):
+        """지금 커서 앞의 낱말에 맞는 후보 → [(종류, 보여 줄 글, 넣을 글, 바꿀 시작, 바꿀 끝)] (최대 8개)"""
+        text = self.q.get() + ime.composing()   # 조합 중인 마지막 글자까지 (아직 입력칸 값에 안 들어 있다)
+        pos = len(text)   # 커서 위치는 쓰지 않는다: 한글 입력기(IME)는 커서를 한 글자씩 늦게 옮겨서, 치는 낱말이 비어 보이거나 한 글자 전 글이 잡힌다
+        m = re.search(r"\S*$", text)
+        start, tok = m.start(), m.group(0)
+        lead = re.match(r'^[(!&|"]+', tok)      # 괄호·부정·따옴표는 낱말 앞에서 떼어 둔다
+        quoted = bool(lead and '"' in lead.group(0))
+        if lead:
+            start += lead.end()
+            tok = tok[lead.end():]
+        items = []
+        hist = self.search_history()
+        if not text.strip():        # 빈 칸: 최근 검색
+            return [("최근", h, h, 0, len(text)) for h in hist[:8]]
+        low = tok.lower()
+        if low.startswith("#"):                   # 태그만: '#' 만 쳤을 때는 띄우지 않고, '#신' 처럼 한 글자라도 더 쳐야 그 글자로 시작하는 태그를 보여 준다
+            key = low[1:]
+            if not key:
+                return []
+            tags = sorted(self.ac_tags().items(), key=lambda kv: (-kv[1], kv[0].lower()))
+            return [("태그", f"#{t}   ({c:,})", f"#{t}", start, pos) for t, c in tags if t.lower().startswith(key)][:8]
+        if not tok:
+            return []
+        key = (id(self.notes), len(self.notes))   # 그냥 글자를 치면 제목만(태그는 # 를 눌렀을 때만, 최근 검색은 빈 칸일 때만)
+        if self.ac_titles[0] != key:
+            self.ac_titles = (key, [(n["title"], n["title"].lower()) for n in self.notes])
+        seen, titles = set(), []
+        for title, tl in self.ac_titles[1]:
+            if low in tl and tl not in seen:
+                seen.add(tl)
+                titles.append((not tl.startswith(low), len(tl), title))
+        for _p, _l, title in sorted(titles)[:8]:
+            if len(items) >= 8:
+                break
+            plain = re.fullmatch(r"[^\s()\"&|!]+", title) is not None
+            ins = title if plain and not quoted else (title + '"' if quoted else f'"{title}"')
+            items.append(("제목", title, ins, start, pos))
+        return items[:8]
+
+    def ac_show(self):
+        self.ac_job = None
+        if self.root.focus_get() is not self.search_entry:
+            return
+        self.ac_items = self.ac_candidates()
+        if not self.ac_items:
+            return self.ac_hide()
+        if self.ac_list is None:
+            # 별도 창(Toplevel)이 아니라 목록 칸 위에 겹쳐 놓는 위젯이다: 별도 창은 뜰 때 입력칸의 키보드 포커스를 가져가서 계속 칠 수 없다
+            lb = self.ac_list = self.ac_top = tk.Listbox(self.listf, relief="flat", bd=0, activestyle="none", exportselection=False, takefocus=0,
+                                                         highlightthickness=1, highlightbackground=C["line"], highlightcolor=C["line"],
+                                                         bg=C["bg"], fg=C["text"], selectbackground=C["soft"], selectforeground=C["accent"], font=(self.ui, 10))
+            lb.bind("<ButtonPress-1>", lambda ev: (setattr(self, "ac_click", True), "break")[1])      # 눌러도 입력칸의 포커스가 옮겨 가지 않게
+            lb.bind("<ButtonRelease-1>", lambda ev: self.ac_pick(lb.nearest(ev.y)))
+            lb.bind("<Motion>", lambda ev: (lb.selection_clear(0, "end"), lb.selection_set(lb.nearest(ev.y))))
+        lb = self.ac_list
+        lb.delete(0, "end")
+        for kind, label, _ins, _a, _b in self.ac_items:   # 제목·태그는 # 로 구분되니 표시를 달지 않고, 최근 검색만 '최근' 을 붙인다
+            lb.insert("end", f"최근   {label}" if kind == "최근" else label)
+        lb.config(height=len(self.ac_items))
+        box = self.search_entry.master
+        lb.place(in_=self.listf, x=box.winfo_rootx() - self.listf.winfo_rootx(),
+                 y=box.winfo_rooty() - self.listf.winfo_rooty() + box.winfo_height() + 1, width=box.winfo_width())
+        lb.lift()
+
+    def ac_hide(self):
+        if self.ac_job:
+            self.root.after_cancel(self.ac_job)
+            self.ac_job = None
+        self.ac_click = False
+        if self.ac_list is not None:
+            self.ac_list.place_forget()
+        self.ac_items = []
+
+    def ac_visible(self):
+        return self.ac_list is not None and bool(self.ac_items) and self.ac_list.winfo_ismapped()
+
+    def ac_move(self, step):
+        lb = self.ac_list
+        cur = lb.curselection()
+        i = (cur[0] + step) if cur else (0 if step > 0 else len(self.ac_items) - 1)
+        i = max(0, min(len(self.ac_items) - 1, i))
+        lb.selection_clear(0, "end")
+        lb.selection_set(i)
+        lb.see(i)
+
+    def ac_down(self, ev=None):
+        if not self.ac_visible():
+            self.ac_show()
+            return "break"
+        self.ac_move(1)
+        return "break"
+
+    def ac_up(self, ev=None):
+        if self.ac_visible():
+            self.ac_move(-1)
+            return "break"
+
+    def ac_enter(self, ev=None):
+        if self.ac_visible() and self.ac_list.curselection():
+            self.ac_pick(self.ac_list.curselection()[0])
+            return "break"
+        self.ac_hide()
+        if self.search_job:
+            self.root.after_cancel(self.search_job)
+        self.refresh()
+        self.remember_search(self.q.get())
+        return "break"
+
+    def ac_esc(self, ev=None):
+        if self.ac_visible():
+            self.ac_hide()
+            return "break"
+
+    def ac_pick(self, i):
+        """고른 후보를 검색어에 넣고 바로 찾는다"""
+        if not (0 <= i < len(self.ac_items)):
+            return self.ac_hide()
+        _kind, _label, ins, a, b = self.ac_items[i]
+        text = self.q.get()
+        new = text[:a] + ins + text[b:]   # (조합 중이던 글자는 입력칸 값에 없으므로 자연히 빠진다)
+        self.ac_hide()
+        ime.cancel()                          # 조합 중이던 글자가 나중에 또 붙지 않게
+        self.q.set(new)
+        self.ac_sig = (new, "")               # 이 값 바꿈이 또 후보를 띄우지 않게
+        self.search_entry.focus_set()
+        self.search_entry.icursor(a + len(ins))
+        self.remember_search(new)
+
+    def ac_focus_out(self, ev=None):
+        if self.ac_click:                     # 후보를 누르는 중이면 ButtonRelease 가 처리한다
+            return
+        self.root.after(150, self.ac_hide)
+        if self.q.get().strip() and self.results:
+            self.remember_search(self.q.get())
 
     def clear_search(self):
         """검색어를 지우고 전체 목록으로 돌아간다(기간 필터와 태그 거르기는 그대로)"""
@@ -2128,6 +2364,7 @@ class App:
     # ------------------------------------------------------------ 가져온 폴더 (노트 폴더 밖의 pdf·txt·mp3 …)
     def after_docs_changed(self):
         """색인이 바뀐 뒤: 노트북 칸의 개수를 새로 쓰고, 가져온 폴더를 보고 있으면 목록도 새로"""
+        self.update_content_check()
         self.reload_notebooks()
         if self.nb.startswith("@doc") or self.scope_all():
             self.reload_notes(keep_scroll=True)
@@ -2293,7 +2530,10 @@ class App:
                 meta += "   " + self.nb_label(n["nb"])
             if self.words:   # 검색 중일 때만 일치한 부분을 보여 준다
                 L.insert("end", meta + "\n", "meta")
-                L.insert("end", search.snippet(n.read(), self.words) + "\n", "snip")
+                if isinstance(n, docidx.Doc) and not self.docs.content_search:   # 본문을 찾지 않았으니 글 대신 경로를 보여 준다
+                    L.insert("end", n["path"] + "\n", "snip")
+                else:
+                    L.insert("end", search.snippet(n.read(), self.words) + "\n", "snip")
                 lines = 3
             else:            # 평소에는 제목과 날짜만
                 L.insert("end", meta + "\n", ("meta", "pad"))
@@ -3922,6 +4162,14 @@ class App:
                 tk.Radiobutton(p, text=label, value=key, variable=self.v_mode, command=lambda k=key: self.set_mode(k),
                                bg=C["bg"], activebackground=C["bg"], font=(self.ui, 10), selectcolor=C["bg"]).pack(anchor="w")
             hr(p)
+            lab(p, "창의 닫기(X) 버튼", font=(self.ui, 10, "bold")).pack(anchor="w")
+            ca = tk.StringVar(value=self.close_action())
+            for key, label in (("tray", "작업표시줄 알림 영역(트레이)으로 보내기 — 앱은 계속 실행됩니다"), ("quit", "바로 종료")):
+                tk.Radiobutton(p, text=label, value=key, variable=ca, command=lambda: st.write_config(closeAction=ca.get()),
+                               bg=C["bg"], activebackground=C["bg"], font=(self.ui, 10), selectcolor=C["bg"]).pack(anchor="w")
+            lab(p, "트레이 아이콘을 누르면 창이 다시 열리고, 우클릭 → 종료로 끕니다. 파일 → 종료(와 트레이의 종료)는 언제나 바로 끕니다.",
+                fg=C["muted"], font=(self.ui, 9), wraplength=500).pack(anchor="w", pady=(2, 0))
+            hr(p)
             lab(p, "화면 구성", font=(self.ui, 10, "bold")).pack(anchor="w")
             for key, label in (("notebooks", "노트북 보기"), ("tags", "태그 보기"), ("list", "노트 목록 보기"), ("syntax", "문법 해설 보기")):
                 tk.Checkbutton(p, text=label, variable=self.v[key], command=self.on_view_toggle, bg=C["bg"],
@@ -4443,7 +4691,58 @@ class App:
         except (tk.TclError, OSError):
             pass
 
+    def close_action(self):
+        """창의 닫기(X) 버튼을 누르면: 'tray' = 트레이로 들어가 계속 실행(웹 클리퍼·가져온 폴더 색인도 계속), 'quit' = 바로 종료"""
+        v = st.read_config().get("closeAction", "tray")
+        return v if v in ("tray", "quit") else "tray"
+
+    def on_close(self):
+        if self.close_action() == "quit":
+            return self.quit()
+        self.hide_to_tray()
+
+    def hide_to_tray(self):
+        """창을 숨기고 트레이 아이콘만 남긴다(아이콘을 못 만들면 그냥 작업표시줄로 최소화)"""
+        self.flush()
+        self.save_window()
+        if self.pv_active:                       # 숨겨진 동안 mp3 가 계속 재생되지 않게 미리보기는 닫아 둔다(다시 열 때 되살림)
+            self.pv.unload()
+            self.pv_active = False
+            self.pv_was_active = True
+        if not self.tray.start():
+            return self.root.iconify()
+        self.tray_was_zoomed = self.root.state() == "zoomed"
+        self.root.withdraw()
+        self.tray_hidden = True
+        self.root.after(200, self.poll_tray)
+
+    def poll_tray(self):
+        if not self.tray_hidden:
+            return
+        try:
+            ev = self.tray.events.get_nowait()
+        except queue.Empty:
+            return self.root.after(200, self.poll_tray)
+        if ev == "quit":
+            return self.quit()
+        self.show_from_tray()
+
+    def show_from_tray(self):
+        self.tray_hidden = False
+        self.tray.stop()
+        self.root.deiconify()
+        if self.tray_was_zoomed:
+            self.root.state("zoomed")
+        self.root.lift()
+        self.root.focus_force()
+        if getattr(self, "pv_was_active", False):
+            self.pv_was_active = False
+            if self.doc_open and self.cur:
+                self.show_doc(self.cur, native=True)
+
     def quit(self):
+        self.tray_hidden = False
+        self.tray.stop()
         self.pv.unload()
         self.save_window()
         self.flush()
