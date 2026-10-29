@@ -36,6 +36,7 @@ import editor as ed # noqa: E402   (위키나루: 서식 도구·그림 불러�
 import ime  # noqa: E402   (한글 입력기가 조합 중인 글자를 자동완성에서 보려고)
 import preview  # noqa: E402
 import search  # noqa: E402
+import similar  # noqa: E402   (비슷한 노트 찾기)
 import snapshots as sn  # noqa: E402
 import single  # noqa: E402   (앱을 한 번에 하나만: 두 번째 실행은 실행 중인 앱의 창을 열어 달라고 알리고 끝난다)
 import store as st  # noqa: E402
@@ -602,6 +603,7 @@ class App:
         m.add_command(label="노트 속성…", command=self.show_properties)
         m.add_command(label="노트 버전…", command=self.show_versions)
         m.add_command(label="전체 변경 이력…", command=self.show_journal)
+        m.add_command(label="비슷한 노트 찾기…", command=self.show_similar)
         mb.add_cascade(label="편집", menu=m)
 
         m = tk.Menu(mb, tearoff=0)
@@ -1167,6 +1169,46 @@ class App:
         bar = tk.Frame(top, bg=C["bg"])
         bar.pack(side="bottom", fill="x", padx=16, pady=(0, 12))
         Btn(bar, "이 변경 되돌리기", undo, kind="primary", padx=14).pack(side="right")
+
+    def show_similar(self):
+        """편집 > 비슷한 노트 찾기: 열어 둔 노트와 쓰인 낱말이 비슷한 노트를 색인된 본문에서 찾아 보여 준다(See Also)"""
+        if not self.cur or self.doc_open:
+            return messagebox.showinfo(APP, "먼저 노트를 여세요." if not self.cur else "가져온 파일은 아직 지원하지 않습니다(노트만).", parent=self.root)
+        self.flush()
+        n = self.cur
+        key, body = self.store.key_of(n["path"]), n["body"]
+
+        def done(res):
+            top = self.tool_window("비슷한 노트 — " + n["title"], "700x520")
+            if not res:
+                tk.Label(top, text="비슷한 노트를 찾지 못했습니다(글이 너무 짧거나 흔한 낱말뿐일 수 있습니다).", bg=C["bg"], fg=C["muted"],
+                         font=(self.ui, 10), padx=16, pady=20).pack(fill="x")
+                return
+            tk.Label(top, text="열어 둔 노트에서 자주 나오면서 흔하지 않은 낱말을 다른 노트 본문에서 찾은 결과입니다. 더블클릭하면 그 노트를 엽니다.",
+                     bg=C["bg"], fg=C["muted"], font=(self.ui, 9), anchor="w", padx=16, pady=10).pack(fill="x")
+            wrap = tk.Frame(top, bg=C["bg"])
+            wrap.pack(fill="both", expand=True, padx=16, pady=(0, 12))
+            tv = ttk.Treeview(wrap, columns=("title", "nb", "hit"), show="headings", selectmode="browse")
+            for col, text, w, stretch in (("title", "노트", 380, True), ("nb", "노트북", 170, False), ("hit", "겹친 낱말", 90, False)):
+                tv.heading(col, text=text)
+                tv.column(col, width=w, stretch=stretch, anchor="e" if col == "hit" else "w")
+            sb = ttk.Scrollbar(wrap, orient="vertical", command=tv.yview)
+            tv.config(yscrollcommand=sb.set)
+            sb.pack(side="right", fill="y")
+            tv.pack(side="left", fill="both", expand=True)
+            by_key = {x["key"]: x for x in self.all_notes}
+            for k, hit, tot in res:
+                m = by_key.get(k)
+                if m:
+                    tv.insert("", "end", iid=k, values=(m["title"], self.nb_label(m["nb"]), f"{hit}/{tot}"))
+
+            def open_sel(e=None):
+                sel = tv.selection()
+                if sel and sel[0] in by_key:
+                    self.open_note(by_key[sel[0]])
+            tv.bind("<Double-1>", open_sel)
+            tv.bind("<Return>", open_sel)
+        self.run_task("비슷한 노트 찾기", lambda prog, cancel: similar.find(self.store, key, body, 40, prog, cancel), done, text="비슷한 노트를 찾는 중…")
 
     def show_unused_media(self):
         """도구 > 안 쓰는 미디어 파일 정리: 어떤 노트도 가리키지 않는 그림·첨부를 찾아 한꺼번에 휴지통으로"""
