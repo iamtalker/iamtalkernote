@@ -157,6 +157,8 @@ def plan(policy, root, role="pc", external_paths=None):
                     nearest = max(parents, key=len) if parents else rel
                     if nearest == rel:
                         ign.append("/" + (orel[len(rel) + 1:] if rel else orel))
+        if m["kind"] == "markdown":
+            ign.append("/.snapshots")   # 복원 지점은 PC 전용(크고 폰은 쓰지 않는다)
         ign.extend(COMMON_IGNORE)
         out.append({"id": folder_id(policy, mid), "label": m.get("label", mid), "path": path, "type": typ, "ignore": ign, "module": mid})
     return out
