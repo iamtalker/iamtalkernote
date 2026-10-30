@@ -293,7 +293,7 @@ try:
                 s["q"] = put_phone(s["ph"], s["Q"], s["pfx_q"])
             print("  준비: " + ", ".join(f"{m} PC {len(s['p'])}·폰 {len(s['q'])}" for m, s in S.items()), flush=True)
 
-            policy = sp.new_policy()
+            policy = sp.new_legacy_policy()   # 이 시험은 모듈마다 폴더·방향을 나눈 옛 방식을 확인한다
             for mid in ("imported", "history", "trash"):
                 sp.set_direction(policy, mid, sp.OFF)
             sp.set_direction(policy, "markdown", D); sp.set_direction(policy, "media", D)

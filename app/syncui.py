@@ -262,35 +262,101 @@ def tab(app, p, kit):
                 Btn(r, "허용", allow, kind="primary", padx=12, pady=2).pack(side="left", padx=8)
         hr(body)
 
-        # ---- 모듈별 방향
+        # ---- 무엇을 어느 방향으로
         lab(body, "무엇을 어느 방향으로 맞출까", font=(app.ui, 10, "bold")).pack(anchor="w")
         mods = tk.Frame(body, bg=C["bg"])
         mods.pack(fill="x", pady=(6, 0))
         names = [sp.LABELS[d] for d in sp.DIRECTIONS]
+        btns = tk.Frame(body, bg=C["bg"])
+        btns.pack(anchor="w", pady=(8, 0))
+
+        def changed():
+            state["dirty"] = True
+            note.config(text="바꾼 내용은 [적용]을 눌러야 반영됩니다.", fg=C["muted"])
+
+        def direction_row(parent, text, get, put, drop=None):
+            r = tk.Frame(parent, bg=C["bg"])
+            r.pack(fill="x", pady=2)
+            lab(r, text, width=34).pack(side="left")
+            cb = ttk.Combobox(r, values=names, state="readonly", width=14, font=(app.ui, 10))
+            cb.set(sp.LABELS.get(get(), names[0]))
+
+            def chosen(_e):
+                put(sp.DIRECTIONS[names.index(cb.get())])
+                changed()
+            cb.bind("<<ComboboxSelected>>", chosen)
+            cb.pack(side="left")
+            if drop:
+                Btn(r, "×", drop, kind="icon", padx=8, pady=0).pack(side="left", padx=4)
+
+        def migrate():
+            pol = state["policy"]
+            nbs = [m.get("path") for m in pol["modules"].values() if m["kind"] == "notebook"]
+            msg = ("노트 폴더 하나를 방향 하나로 맞추는 새 방식으로 바꿉니다.\n\n"
+                   "- 지금의 방향과 함께 보내던 것은 그대로 이어받습니다.\n"
+                   "- 미디어·가져온 문서 요약·이력·휴지통은 따로 폴더가 아니라 노트 폴더 안에서 함께 보내거나 뺍니다.\n"
+                   "- 이미 연결한 폰은 폴더 구성이 바뀌므로, 폰의 Syncthing-Fork 에서 이 앱이 만든 폴더(ID 가 inn- 로 시작)를 지우고 다시 받아야 합니다(폰의 파일은 그대로입니다).")
+            if nbs:
+                msg += "\n- ‘노트북 따로 설정’은 새 방식에서 없어집니다: " + ", ".join(nbs)
+            msg += "\n\n바꾸고 [적용]을 눌러야 반영됩니다. 계속할까요?"
+            if messagebox.askyesno("새 방식으로 바꾸기", msg, parent=top):
+                sp.to_simple(pol)
+                changed()
+                draw_mods()
+
+        def ext_rows():
+            for mid, m in list(state["policy"]["modules"].items()):
+                if m["kind"] != "external":
+                    continue
+
+                def drop(mid=mid):
+                    sp.remove(state["policy"], mid)
+                    changed()
+                    draw_mods()
+                direction_row(mods, m.get("label", mid), lambda mid=mid: state["policy"]["modules"][mid].get("direction"),
+                              lambda d, mid=mid: sp.set_direction(state["policy"], mid, d), drop)
 
         def draw_mods():
-            for w in mods.winfo_children():
+            for w in list(mods.winfo_children()) + list(btns.winfo_children()):
                 w.destroy()
-            for mid, m in state["policy"]["modules"].items():
-                r = tk.Frame(mods, bg=C["bg"])
-                r.pack(fill="x", pady=2)
-                lab(r, m.get("label", mid), width=34).pack(side="left")
-                cb = ttk.Combobox(r, values=names, state="readonly", width=14, font=(app.ui, 10))
-                cb.set(sp.LABELS.get(m.get("direction"), names[0]))
-
-                def chosen(_e, mid=mid, cb=cb):
-                    sp.set_direction(state["policy"], mid, sp.DIRECTIONS[names.index(cb.get())])
-                    state["dirty"] = True
-                    note.config(text="바꾼 내용은 [적용]을 눌러야 반영됩니다.")
-                cb.bind("<<ComboboxSelected>>", chosen)
-                cb.pack(side="left")
-                if m["kind"] in ("notebook", "external"):
+            pol = state["policy"]
+            if sp.is_simple(pol):
+                sm = pol["simple"]
+                direction_row(mods, "노트 폴더 전체 (노트 글)", lambda: sm["direction"], lambda d: sp.set_simple(pol, direction=d))
+                lab(mods, "함께 보낼 것", fg=C["muted"], font=(app.ui, 9)).pack(anchor="w", pady=(8, 0))
+                keep = []
+                for key, label, rel, _ in sp.SIMPLE_OPTIONS:
+                    if key in ("history", "trash"):
+                        continue
+                    var = tk.BooleanVar(value=bool(sm["include"].get(key)))
+                    keep.append(var)
+                    check(mods, label, var, lambda key=key, var=var: (sp.set_simple(pol, **{key: var.get()}), changed())).pack(anchor="w")
+                lab(mods, "고급 — 파일이 아주 많고 폰에서 쓸 일이 거의 없어 기본은 보내지 않습니다(켜도 문서가 다 맞춰진 뒤에 켜세요).", fg=C["muted"], font=(app.ui, 9), wraplength=440).pack(anchor="w", pady=(6, 0))
+                for key, label, rel, _ in sp.SIMPLE_OPTIONS:
+                    if key not in ("history", "trash"):
+                        continue
+                    var = tk.BooleanVar(value=bool(sm["include"].get(key)))
+                    keep.append(var)
+                    check(mods, label, var, lambda key=key, var=var: (sp.set_simple(pol, **{key: var.get()}), changed())).pack(anchor="w")
+                lab(mods, "복원 지점(.snapshots)은 컴퓨터 전용이라 보내지 않습니다.", fg=C["muted"], font=(app.ui, 9)).pack(anchor="w", pady=(4, 0))
+                mods._keep = keep
+                if any(m["kind"] == "external" for m in pol["modules"].values()):
+                    lab(mods, "외부 폴더(노트 폴더 밖)", fg=C["muted"], font=(app.ui, 9)).pack(anchor="w", pady=(10, 0))
+                ext_rows()
+                Btn(btns, "외부 폴더 추가…", lambda: add_menu("external"), padx=12, pady=3).pack(side="left")
+            else:
+                lab(mods, "지금은 옛 방식(모듈마다 폴더와 방향)입니다. 폴더 하나·방향 하나의 새 방식으로 바꾸면 폰에서 폴더마다 허용할 일이 없어집니다.",
+                    fg=C["accent"], font=(app.ui, 9), wraplength=440).pack(anchor="w")
+                Btn(mods, "새 방식으로 바꾸기…", migrate, padx=12, pady=3).pack(anchor="w", pady=(4, 8))
+                for mid, m in pol["modules"].items():
                     def drop(mid=mid):
                         sp.remove(state["policy"], mid)
-                        state["dirty"] = True
-                        note.config(text="바꾼 내용은 [적용]을 눌러야 반영됩니다.")
+                        changed()
                         draw_mods()
-                    Btn(r, "×", drop, kind="icon", padx=8, pady=0).pack(side="left", padx=4)
+                    direction_row(mods, m.get("label", mid), lambda mid=mid: state["policy"]["modules"][mid].get("direction"),
+                                  lambda d, mid=mid: sp.set_direction(state["policy"], mid, d), drop if m["kind"] in ("notebook", "external") else None)
+                Btn(btns, "노트북 따로 설정…", lambda: add_menu("notebook"), padx=12, pady=3).pack(side="left")
+                Btn(btns, "외부 폴더 추가…", lambda: add_menu("external"), padx=12, pady=3).pack(side="left", padx=6)
 
         def add_menu(kind):
             m = tk.Menu(top, tearoff=0)
@@ -305,12 +371,8 @@ def tab(app, p, kit):
             if not opts:
                 m.add_command(label="추가할 항목이 없습니다" + ("" if kind == "notebook" else " (옵션 > 가져오기에서 폴더를 먼저 추가하세요)"), state="disabled")
             for text, v in opts:
-                m.add_command(label=text, command=lambda v=v: (add(v), state.update(dirty=True), note.config(text="바꾼 내용은 [적용]을 눌러야 반영됩니다."), draw_mods()))
+                m.add_command(label=text, command=lambda v=v: (add(v), changed(), draw_mods()))
             m.tk_popup(app.root.winfo_pointerx(), app.root.winfo_pointery())
-        row = tk.Frame(body, bg=C["bg"])
-        row.pack(anchor="w", pady=(8, 0))
-        Btn(row, "노트북 따로 설정…", lambda: add_menu("notebook"), padx=12, pady=3).pack(side="left")
-        Btn(row, "외부 폴더 추가…", lambda: add_menu("external"), padx=12, pady=3).pack(side="left", padx=6)
         note = lab(body, "", fg=C["muted"], font=(app.ui, 9), wraplength=440)
 
         def apply_btn():
@@ -326,8 +388,9 @@ def tab(app, p, kit):
             bg(lambda: apply_now(app, state["policy"]), done)
         Btn(body, "적용", apply_btn, kind="primary", bold=True, padx=22, pady=5).pack(anchor="w", pady=(10, 0))
         note.pack(anchor="w", pady=(6, 0))
-        lab(body, "‘PC → 모바일’은 컴퓨터가 보내기만 하고, 폰에서 바꾼 내용은 컴퓨터에 반영되지 않습니다(폰의 Syncthing 에서 ‘되돌리기’를 누르면 컴퓨터 상태로 맞춰집니다). "
-                  "‘모바일 → PC’는 그 반대입니다. 정책은 노트 폴더의 .sync/policy.json 에 저장돼 폰 앱도 읽을 수 있습니다.", fg=C["muted"], font=(app.ui, 9), wraplength=440).pack(anchor="w", pady=(8, 0))
+        lab(body, "방향은 노트 폴더 하나에 한 가지만 고릅니다. 기본은 ‘양방향’(어느 쪽에서 고치든 상대에게 갑니다, 삭제도 갑니다). "
+                  "‘PC → 모바일’은 컴퓨터가 보내기만 하고 폰에서 바꾼 내용은 컴퓨터에 반영되지 않으며(폰의 Syncthing 에서 ‘되돌리기’를 누르면 컴퓨터 상태로 맞춰집니다), ‘모바일 → PC’는 그 반대입니다. "
+                  "정책은 노트 폴더의 .sync/policy.json 에 저장돼 폰 앱도 읽을 수 있습니다.", fg=C["muted"], font=(app.ui, 9), wraplength=440).pack(anchor="w", pady=(8, 0))
         hr(body)
         ver = lab(body, "", fg=C["muted"], font=(app.ui, 9), wraplength=440)
         ver.pack(anchor="w")

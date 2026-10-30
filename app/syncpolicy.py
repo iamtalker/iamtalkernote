@@ -35,7 +35,67 @@ COMMON_IGNORE = ("(?d)Thumbs.db", "(?d)desktop.ini", "(?d).DS_Store", "~*.tmp")
 ID_PREFIX = "inn-"   # 이 앱이 만든 Syncthing 폴더만 알아보고 고치게 하는 표시
 
 
+# 새 방식(폴더 하나): 노트 폴더 전체를 Syncthing 폴더 하나로 맞추고 방향도 하나다. 무엇을 함께 보낼지(키, 이름, 폴더, 기본)만 고른다.
+# 이력·휴지통은 파일이 아주 많고 폰에서 쓸 일이 거의 없어 기본은 보내지 않는 고급 옵션이다. 복원 지점(.snapshots)은 PC 전용이라 옵션이 없다.
+SIMPLE_OPTIONS = (
+    ("media", "미디어(그림·첨부)", MEDIA_DIR, True),
+    ("imported", "가져온 문서 요약(폰 앱이 읽는 파일)", IMPORTED_DIR, True),
+    ("history", "변경 이력(.history) — 고급", HISTORY_DIR, False),
+    ("trash", "휴지통(.trash) — 고급", TRASH_DIR, False),
+)
+
+
+def is_simple(policy):
+    return isinstance(policy.get("simple"), dict)
+
+
+def _modules_from_simple(policy):
+    """옛 폰 앱(1.3.x)이 정책의 modules 를 읽고 방향을 맞추므로, 새 방식에서도 modules 를 같은 뜻으로 채워 둔다"""
+    sm = policy["simple"]
+    mods = policy["modules"]
+    mods["markdown"] = {"kind": "markdown", "label": "Markdown 노트 전체", "direction": sm["direction"]}
+    for key, label, rel, _ in SIMPLE_OPTIONS:
+        on = bool(sm.get("include", {}).get(key))
+        mods[key] = {"kind": key, "label": label, "path": rel, "direction": sm["direction"] if on else OFF}
+
+
+def set_simple(policy, direction=None, **include):
+    """새 방식의 설정을 바꾼다(direction: 방향, include: media=True/False …)"""
+    sm = policy["simple"]
+    if direction in DIRECTIONS:
+        sm["direction"] = direction
+    for k, v in include.items():
+        if k in {o[0] for o in SIMPLE_OPTIONS}:
+            sm["include"][k] = bool(v)
+    _modules_from_simple(policy)
+
+
+def to_simple(policy, direction=None):
+    """옛 정책(모듈마다 방향)을 새 방식으로 바꾼다. 방향을 안 주면 지금 노트 전체의 방향을 그대로 쓴다(바꾸는 순간 달라지는 것이 없게).
+    돌려주는 값: 새 방식에서는 따로 둘 수 없어 없어진 노트북 이름들"""
+    mods = policy["modules"]
+    if direction not in DIRECTIONS:
+        direction = mods.get("markdown", {}).get("direction", BOTH)
+    include = {key: mods.get(key, {}).get("direction", OFF) != OFF for key, _, _, _ in SIMPLE_OPTIONS}
+    dropped = [m.get("path", mid) for mid, m in mods.items() if m.get("kind") == "notebook"]
+    for mid in [mid for mid, m in mods.items() if m.get("kind") == "notebook"]:
+        mods.pop(mid)
+    policy["simple"] = {"direction": direction, "include": include}
+    policy["version"] = 2
+    _modules_from_simple(policy)
+    return dropped
+
+
 def new_policy():
+    """새 정책은 새 방식(폴더 하나, 기본 양방향, 미디어·가져온 문서 요약만 함께)으로 만든다"""
+    p = {"version": 2, "vault": secrets.token_hex(4), "modules": {},
+         "simple": {"direction": BOTH, "include": {k: d for k, _, _, d in SIMPLE_OPTIONS}}}
+    _modules_from_simple(p)
+    return p
+
+
+def new_legacy_policy():
+    """옛 방식(모듈마다 폴더·방향). 시험과 호환용"""
     mods = {}
     for mid, label, rel, direction in BUILTIN:
         mods[mid] = {"kind": mid, "label": label, "direction": direction}
@@ -54,6 +114,13 @@ def load(root):
         with open(path_of(root), encoding="utf-8") as f:
             p = json.load(f)
         if isinstance(p, dict) and isinstance(p.get("modules"), dict) and p.get("vault"):
+            if is_simple(p):
+                p["simple"].setdefault("direction", BOTH)
+                p["simple"].setdefault("include", {})
+                for k, _, _, d in SIMPLE_OPTIONS:
+                    p["simple"]["include"].setdefault(k, d)
+                _modules_from_simple(p)
+                return p
             for mid, label, rel, direction in BUILTIN:   # 내장 모듈이 빠졌으면 채운다
                 if mid not in p["modules"]:
                     p["modules"][mid] = {"kind": mid, "label": label, "direction": OFF if mid != "markdown" else direction}
@@ -80,12 +147,14 @@ def exists(root):
 
 def set_direction(policy, mid, direction):
     if direction in DIRECTIONS and mid in policy["modules"]:
+        if is_simple(policy) and policy["modules"][mid]["kind"] != "external":
+            return   # 새 방식에서는 노트 폴더 방향 하나만 있다(set_simple)
         policy["modules"][mid]["direction"] = direction
 
 
 def add_notebook(policy, rel, direction=BOTH):
     rel = rel.replace("\\", "/").strip("/")
-    if not rel:
+    if not rel or is_simple(policy):   # 새 방식에서는 노트북을 따로 두지 않는다
         return None
     mid = "nb:" + rel
     policy["modules"][mid] = {"kind": "notebook", "label": "노트북 · " + rel, "path": rel, "direction": direction}
@@ -134,12 +203,24 @@ def plan(policy, root, role="pc", external_paths=None):
     - 외부 폴더는 이 기기의 로컬 경로(external_paths: ext id → 경로)가 있어야 한다."""
     external_paths = external_paths or {}
     root = os.path.abspath(root)
+    simple = is_simple(policy)
     inside = {}   # 모듈 id → 노트 폴더 안 상대 경로(노트 폴더 안에 있는 것들)
     for mid, m in policy["modules"].items():
-        if m["kind"] != "external":
+        if m["kind"] != "external" and not simple:
             inside[mid] = _rel(policy, mid)
     out = []
+    if simple:
+        # 새 방식: 노트 폴더 전체가 Syncthing 폴더 하나. 보내지 않기로 한 것(과 복원 지점)은 제외 목록으로 뺀다
+        sm = policy["simple"]
+        typ = folder_type(sm.get("direction", BOTH), role)
+        if typ:
+            ign = ["/" + rel for key, _, rel, _ in SIMPLE_OPTIONS if not sm.get("include", {}).get(key)]
+            ign.append("/.snapshots")
+            ign.extend(COMMON_IGNORE)
+            out.append({"id": folder_id(policy, "markdown"), "label": "iamtalkernote", "path": root, "type": typ, "ignore": ign, "module": "markdown"})
     for mid, m in policy["modules"].items():
+        if simple and m["kind"] != "external":
+            continue
         typ = folder_type(m.get("direction", OFF), role)
         if typ is None:
             continue
