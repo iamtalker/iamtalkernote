@@ -1,11 +1,16 @@
 """옵션의 '동기화' 탭과, 앱이 켜질 때 동기화를 이어 주는 코드. 정책 계산은 syncpolicy, Syncthing 제어는 syncengine 이 맡는다."""
 import threading
+import webbrowser
 import tkinter as tk
 from tkinter import messagebox, ttk
 
 import store as st
 import syncengine as se
 import syncpolicy as sp
+
+
+APK_URL = "https://github.com/iamtalker/iamtalkernote-android/releases/latest"
+MANUAL_URL = "https://github.com/iamtalker/iamtalkernote/blob/main/docs/manual.md"
 
 
 def current_plans(app, policy=None):
@@ -43,6 +48,15 @@ def tab(app, p, kit):
     eng = app.sync
     root = app.store.root
     title(p, "동기화", "폰과 컴퓨터의 노트를 서버 없이 직접 맞춥니다(Syncthing 사용).")
+    # 폰 앱과 설명서를 받는 곳(눌러서 열고, 복사도 할 수 있다)
+    for label, url in (("폰 앱(안드로이드 APK) 받는 곳", APK_URL), ("사용 설명서", MANUAL_URL)):
+        lab(p, label, fg=C["muted"], font=(app.ui, 9)).pack(anchor="w")
+        r_ = tk.Frame(p, bg=C["bg"])
+        r_.pack(anchor="w", fill="x", pady=(0, 4))
+        lk = tk.Label(r_, text=url.replace("https://", ""), bg=C["bg"], fg=C["accent"], cursor="hand2", font=(app.ui, 9, "underline"))
+        lk.pack(side="left")
+        lk.bind("<Button-1>", lambda e, u=url: webbrowser.open(u))
+        Btn(r_, "복사", lambda u=url: copy(u), padx=8, pady=0).pack(side="left", padx=6)
     # 내용이 창보다 길어서 이 탭만 스크롤되게 한다
     canvas = tk.Canvas(p, bg=C["bg"], highlightthickness=0, bd=0)
     sb = ttk.Scrollbar(p, orient="vertical", command=canvas.yview)

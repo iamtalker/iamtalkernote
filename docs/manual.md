@@ -21,7 +21,7 @@ iamtalkernote 는 **마크다운 파일로 저장하는 노트 앱**입니다. �
 | | 컴퓨터 앱 | 폰 앱 |
 |---|---|---|
 | 하는 일 | 노트 쓰기·정리·검색, 웹 클리퍼, pdf·mp3 가져와 검색, 동기화 관리 | 노트 보기·쓰기·검색, 가져온 파일 목록 보기, 동기화 연결 |
-| 받는 곳 | [Releases](https://github.com/iamtalker/iamtalkernote/releases/latest) 의 `iamtalkernote.exe` | 별도 저장소 `iamtalkernote-android` 의 APK(비공개 저장소) |
+| 받는 곳 | [Releases](https://github.com/iamtalker/iamtalkernote/releases/latest) 의 `iamtalkernote.exe` | [iamtalkernote-android Releases](https://github.com/iamtalker/iamtalkernote-android/releases/latest) 의 APK |
 | 노트 저장 | 노트 폴더 안의 `.md` 파일 | 같은 노트 폴더(동기화) |
 
 **원칙 세 가지**
@@ -104,7 +104,7 @@ iamtalkernote 는 **마크다운 파일로 저장하는 노트 앱**입니다. �
 폰 앱은 컴퓨터 앱과 **같은 노트 폴더**를 읽고 씁니다. 앱을 설치한 뒤 **노트 폴더를 한 번 고르면** 됩니다.
 
 ### 4.1 설치와 폴더 고르기
-1. APK 를 설치합니다(출처를 알 수 없는 앱 설치 허용 필요). 업데이트는 같은 방법으로 **덮어 설치**합니다.
+1. [iamtalkernote-android Releases](https://github.com/iamtalker/iamtalkernote-android/releases/latest) 에서 `iamtalkernote-android.apk` 를 받아 설치합니다(출처를 알 수 없는 앱 설치 허용 필요). 컴퓨터 앱의 옵션 → 동기화 맨 위에도 같은 주소가 있습니다. 업데이트는 같은 방법으로 **덮어 설치**합니다.
 2. 처음 실행하면 **노트 폴더를 골라 주세요** 화면이 뜹니다. 컴퓨터와 같은 폴더(동기화로 폰에 받은 폴더)를 고릅니다. SD 카드의 폴더도 됩니다. 폴더는 내장 메모리나 SD 카드의 일반 폴더여야 하고, `Android/data` 아래는 앱이 열 수 없습니다.
 3. 폴더를 열면 `.history` `.trash` `.resources` `.imported` `.sync` 폴더가 없을 때만 자동으로 만들어집니다(동기화 도구에서 경로를 고르기 쉽게).
 
@@ -112,7 +112,7 @@ iamtalkernote 는 **마크다운 파일로 저장하는 노트 앱**입니다. �
 ![폰 앱 노트 목록](images/phone-list.png)
 
 - **목록**: 위에 접히는 **고정됨**, 아래에 노트가 제목·한 줄 미리보기·날짜로 나옵니다. 아래 바는 **노트북(서랍 열기) · 검색 · ⋯**이고, 파란 **연필 버튼**이 새 노트입니다.
-- **⋯ 메뉴**: 새 노트북 · 노트 필터(기간) · 노트 정렬 · 노트 선택 · 설정.
+- **⋯ 메뉴**: 오른쪽 아래에 뜨며 새 노트북 · 노트 필터(기간) · 노트 정렬 · 노트 선택 · 설정이 있습니다. 바깥을 누르거나 뒤로 가기로 닫습니다.
 - **노트를 길게 누르면** 여러 개를 골라 이동·태그 추가·휴지통으로 보낼 수 있습니다.
 
 ![폰 앱 서랍](images/phone-drawer.png)
@@ -158,7 +158,7 @@ iamtalkernote 는 **마크다운 파일로 저장하는 노트 앱**입니다. �
 - **컴퓨터 앱이 켜져 있어야** 컴퓨터 쪽 동기화가 돌아갑니다(트레이에 있어도 됩니다). 폰과 컴퓨터가 **같은 와이파이**에 있을 때 서로를 자동으로 찾습니다.
 
 ### 5.2 준비물
-- 컴퓨터 앱(0.5.2 이상)과 폰 앱(1.3.2 이상)
+- 컴퓨터 앱(0.5.2 이상)과 폰 앱(1.3.3 이상)
 - 폰에 **Syncthing-Fork**(구글 플레이에서 설치). 처음 실행하면 나오는 권한 안내(모든 파일 접근, 배터리 최적화 제외)를 모두 허용하세요.
 - 같은 와이파이
 
