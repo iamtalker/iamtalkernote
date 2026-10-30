@@ -3,6 +3,7 @@ import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
 
+import store as st
 import syncengine as se
 import syncpolicy as sp
 
@@ -88,7 +89,7 @@ def tab(app, p, kit):
         lab(body, "동기화 엔진(Syncthing)이 아직 설치되지 않았습니다.", font=(app.ui, 10, "bold")).pack(anchor="w")
         lab(body, "Syncthing 은 서버 없이 기기끼리 파일을 직접 맞춰 주는 오픈소스 프로그램입니다. 공식 GitHub 릴리스에서 약 14MB 를 받아 이 앱 설정 폴더에 두고, "
                   "받은 파일이 공식 값(SHA-256)과 같은지 확인한 뒤에만 설치합니다. 새 버전은 Syncthing 이 공식 서명을 확인한 뒤 알아서 올립니다.\n\n처음 켤 때 윈도 방화벽이 네트워크 허용을 물어보면 '개인 네트워크'만 허용하세요(한 번만 묻습니다).",
-            fg=C["muted"], font=(app.ui, 9), wraplength=500).pack(anchor="w", pady=(4, 12))
+            fg=C["muted"], font=(app.ui, 9), wraplength=440).pack(anchor="w", pady=(4, 12))
         msg = lab(body, "", fg=C["muted"], font=(app.ui, 9))
         msg.pack(anchor="w", pady=(0, 8))
 
@@ -116,7 +117,7 @@ def tab(app, p, kit):
         clear()
         on = tk.BooleanVar(value=eng.enabled())
         status = lab(body, "", fg=C["muted"], font=(app.ui, 9))
-        err_lab = lab(body, "", fg=C["danger"], font=(app.ui, 9), wraplength=500)
+        err_lab = lab(body, "", fg=C["danger"], font=(app.ui, 9), wraplength=440)
 
         def toggle():
             eng.put(enabled=bool(on.get()))
@@ -134,6 +135,15 @@ def tab(app, p, kit):
         check(body, "동기화 사용 (앱을 켤 때 함께 시작하고, 끌 때 함께 멈춥니다)", on, toggle).pack(anchor="w")
         status.pack(anchor="w", pady=(2, 0))
         err_lab.pack(anchor="w")
+        # 동기화는 앱이 켜져 있어야 돌아가므로, 닫기(X) 버튼의 동작도 여기서 고를 수 있게 한다(옵션 → 일반과 같은 설정)
+        lab(body, "창의 닫기(X) 버튼", font=(app.ui, 10, "bold")).pack(anchor="w", pady=(12, 0))
+        ca = tk.StringVar(value=app.close_action())
+        for key, label in (("tray", "트레이로 보내기 — 앱이 켜져 있어 동기화가 계속됩니다"),
+                           ("quit", "바로 종료 — 동기화도 멈춥니다")):
+            tk.Radiobutton(body, text=label, value=key, variable=ca, command=lambda: st.write_config(closeAction=ca.get()), bg=C["bg"],
+                           activebackground=C["bg"], font=(app.ui, 10), selectcolor=C["bg"]).pack(anchor="w")
+        lab(body, "트레이 아이콘을 누르면 창이 다시 열리고, 우클릭 → 종료로 끕니다.",
+            fg=C["muted"], font=(app.ui, 9), wraplength=440).pack(anchor="w", pady=(2, 0))
         hr(body)
 
         # ---- 이 컴퓨터의 기기 ID
@@ -145,7 +155,7 @@ def tab(app, p, kit):
                  highlightthickness=1, highlightbackground=C["line"], font=(app.ui, 9)).pack(side="left", fill="x", expand=True, ipady=4)
         Btn(row, "복사", lambda: copy(idv.get()), padx=10, pady=3).pack(side="left", padx=6)
         lab(body, "폰의 Syncthing(안드로이드는 Syncthing-Fork)에서 '기기 추가'로 이 ID 를 넣고, 아래에 폰의 ID 를 추가하세요.",
-            fg=C["muted"], font=(app.ui, 9), wraplength=500).pack(anchor="w", pady=(4, 0))
+            fg=C["muted"], font=(app.ui, 9), wraplength=440).pack(anchor="w", pady=(4, 0))
 
         def refresh_id():
             def done(r, err):
@@ -287,7 +297,7 @@ def tab(app, p, kit):
         row.pack(anchor="w", pady=(8, 0))
         Btn(row, "노트북 따로 설정…", lambda: add_menu("notebook"), padx=12, pady=3).pack(side="left")
         Btn(row, "외부 폴더 추가…", lambda: add_menu("external"), padx=12, pady=3).pack(side="left", padx=6)
-        note = lab(body, "", fg=C["muted"], font=(app.ui, 9), wraplength=500)
+        note = lab(body, "", fg=C["muted"], font=(app.ui, 9), wraplength=440)
 
         def apply_btn():
             if not eng.running():
@@ -303,9 +313,9 @@ def tab(app, p, kit):
         Btn(body, "적용", apply_btn, kind="primary", bold=True, padx=22, pady=5).pack(anchor="w", pady=(10, 0))
         note.pack(anchor="w", pady=(6, 0))
         lab(body, "‘PC → 모바일’은 컴퓨터가 보내기만 하고, 폰에서 바꾼 내용은 컴퓨터에 반영되지 않습니다(폰의 Syncthing 에서 ‘되돌리기’를 누르면 컴퓨터 상태로 맞춰집니다). "
-                  "‘모바일 → PC’는 그 반대입니다. 정책은 노트 폴더의 .sync/policy.json 에 저장돼 폰 앱도 읽을 수 있습니다.", fg=C["muted"], font=(app.ui, 9), wraplength=500).pack(anchor="w", pady=(8, 0))
+                  "‘모바일 → PC’는 그 반대입니다. 정책은 노트 폴더의 .sync/policy.json 에 저장돼 폰 앱도 읽을 수 있습니다.", fg=C["muted"], font=(app.ui, 9), wraplength=440).pack(anchor="w", pady=(8, 0))
         hr(body)
-        ver = lab(body, "", fg=C["muted"], font=(app.ui, 9), wraplength=500)
+        ver = lab(body, "", fg=C["muted"], font=(app.ui, 9), wraplength=440)
         ver.pack(anchor="w")
 
         # ---- 주기적으로 상태 보기
