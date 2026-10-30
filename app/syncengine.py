@@ -246,7 +246,8 @@ class Engine:
             os.makedirs(p["path"], exist_ok=True)
             f = dict(have.get(p["id"]) or template)
             f.update({"id": p["id"], "label": p["label"], "path": p["path"], "type": p["type"], "devices": devices,
-                      "fsWatcherEnabled": True, "fsWatcherDelayS": 10, "rescanIntervalS": 3600, "ignorePerms": True, "paused": False})
+                      "fsWatcherEnabled": True, "fsWatcherDelayS": 10, "rescanIntervalS": 3600, "ignorePerms": True, "paused": False,
+                      "order": "smallestFirst"})   # 작은 파일(노트)부터 받아 목록이 빨리 채워지게
             self.api("/rest/config/folders/" + p["id"], "PUT", f)
             self.api("/rest/db/ignores?folder=" + urllib.parse.quote(p["id"]), "POST", {"ignore": p["ignore"]})
             want.add(p["id"])

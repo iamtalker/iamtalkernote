@@ -12,6 +12,8 @@ POLICY_DIR = ".sync"
 POLICY_FILE = "policy.json"
 MEDIA_DIR = ".resources"
 IMPORTED_DIR = ".imported"
+HISTORY_DIR = ".history"
+TRASH_DIR = ".trash"
 
 BOTH, PC2MOBILE, MOBILE2PC, OFF = "both", "pc2mobile", "mobile2pc", "off"
 DIRECTIONS = (BOTH, PC2MOBILE, MOBILE2PC, OFF)
@@ -22,6 +24,9 @@ BUILTIN = (
     ("markdown", "Markdown 노트 전체", None, BOTH),
     ("media", "미디어(그림·첨부)", MEDIA_DIR, BOTH),
     ("imported", "가져온 문서 요약(폰 앱이 읽는 파일)", IMPORTED_DIR, PC2MOBILE),
+    # 이력·휴지통은 파일이 아주 많아 문서보다 먼저 전송되면 문서가 늦어진다 → 따로 두고 기본은 끈다(문서가 다 맞춰진 뒤에 켠다)
+    ("history", "변경 이력(.history) — 문서를 다 맞춘 뒤에 켜기", HISTORY_DIR, OFF),
+    ("trash", "휴지통(.trash) — 문서를 다 맞춘 뒤에 켜기", TRASH_DIR, OFF),
 )
 
 # 어느 폴더에서나 동기화하지 않는 파일
