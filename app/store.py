@@ -4,6 +4,7 @@ import calendar
 import hashlib
 import json
 import os
+import threading
 import re
 import secrets
 import sqlite3
@@ -31,18 +32,39 @@ def config_path():
 
 
 def read_config():
-    try:
-        with open(config_path(), encoding="utf-8") as f:
-            return json.load(f)
-    except (OSError, ValueError):
-        return {}
+    """파일이 없으면 빈 설정. 다른 쓰레드가 바꿔치기하는 찰나에 잠겨 있으면 잠깐 기다렸다 다시 읽는다(빈 설정으로 잘못 읽고 그 위에 덮어쓰지 않게)"""
+    for i in range(8):
+        try:
+            with open(config_path(), encoding="utf-8") as f:
+                return json.load(f)
+        except FileNotFoundError:
+            return {}
+        except (OSError, ValueError):
+            if i < 7:
+                time.sleep(0.02)
+    return {}
+
+
+_cfg_lock = threading.RLock()   # 화면·동기화 시작 같은 여러 쓰레드가 동시에 설정을 쓰면 파일이 깨졌다
 
 
 def write_config(**patch):
-    c = read_config()
-    c.update(patch)
-    with open(config_path(), "w", encoding="utf-8") as f:
-        json.dump(c, f, ensure_ascii=False)
+    """읽고 고쳐 쓰는 동안 잠그고, 임시 파일에 쓴 뒤 바꿔치기해서 읽는 쪽이 반쯤 쓴 파일을 보지 않게 한다"""
+    with _cfg_lock:
+        c = read_config()
+        c.update(patch)
+        path = config_path()
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(c, f, ensure_ascii=False)
+        for i in range(10):   # 다른 곳이 읽는 중이면 윈도가 바꿔치기를 잠깐 거절한다
+            try:
+                os.replace(tmp, path)
+                return
+            except PermissionError:
+                if i == 9:
+                    raise
+                time.sleep(0.03)
 
 
 def version_settings():

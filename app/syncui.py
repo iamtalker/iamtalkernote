@@ -206,8 +206,36 @@ def tab(app, p, kit):
         row.pack(anchor="w", pady=(6, 0))
         Btn(row, "기기 추가…", add_peer, padx=12, pady=3).pack(side="left")
         Btn(row, "기기 빼기", del_peer, padx=12, pady=3).pack(side="left", padx=6)
-        pend = lab(body, "", fg=C["accent"], font=(app.ui, 9))
-        pend.pack(anchor="w", pady=(4, 0))
+        pend = tk.Frame(body, bg=C["bg"])   # 연결을 요청한 기기 목록([허용] 버튼)
+        pend.pack(fill="x", pady=(4, 0))
+        pend_key = {"v": None}
+
+        def show_pending(pending):
+            key = tuple(i for i, _ in pending)
+            if key == pend_key["v"]:
+                return
+            pend_key["v"] = key
+            for w in pend.winfo_children():
+                w.destroy()
+            for i, n in pending:
+                r = tk.Frame(pend, bg=C["bg"])
+                r.pack(fill="x", pady=2)
+                lab(r, f"연결을 요청한 기기: {n or '이름 없음'} ({i[:7]}…)", fg=C["accent"], font=(app.ui, 9)).pack(side="left")
+
+                def allow(i=i, n=n):
+                    def work():
+                        eng.add_peer(i, n or "내 폰")
+                        return apply_now(app, state["policy"])
+
+                    def done_(r_, err):
+                        pend_key["v"] = None
+                        if err:
+                            note.config(text=f"허용하지 못했습니다: {err}", fg=C["danger"])
+                        else:
+                            note.config(text="허용했습니다. 폰에서 폴더를 받아 오는 중입니다(폰의 설정 → 동기화에서 진행을 볼 수 있습니다).", fg="#15803d")
+                            fill_peers()
+                    bg(work, done_)
+                Btn(r, "허용", allow, kind="primary", padx=12, pady=2).pack(side="left", padx=8)
         hr(body)
 
         # ---- 모듈별 방향
@@ -296,13 +324,13 @@ def tab(app, p, kit):
                     return
                 if r is None:
                     status.config(text="꺼져 있음" if not eng.enabled() else "시작하지 못했거나 아직 시작 중입니다", fg=C["muted"])
-                    pend.config(text="")
+                    show_pending([])
                 else:
                     ov, pending, up = r
                     states = [s for s, _ in ov["folders"].values()]
                     busy = sum(1 for s in states if s not in ("idle", "?"))
                     status.config(text=f"실행 중 · 연결된 기기 {ov['connected']}/{ov['peers']}" + (f" · 맞추는 중 {busy}개" if busy else " · 모두 최신"), fg="#15803d")
-                    pend.config(text="연결을 요청한 기기: " + ", ".join((n or i[:7]) for i, n in pending) + " — '기기 추가'에서 ID 를 넣어 받아 주세요." if pending else "")
+                    show_pending(pending)
                     msg = f"Syncthing {up['running']}" if up["running"] else ""
                     if up["newer"] and up["major"]:
                         msg += f" — 새 메이저 버전 {up['latest']} 이 나왔습니다(설정이 바뀔 수 있어 자동으로 올리지 않습니다)"
