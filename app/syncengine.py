@@ -252,9 +252,26 @@ class Engine:
             self.api("/rest/db/ignores?folder=" + urllib.parse.quote(p["id"]), "POST", {"ignore": p["ignore"]})
             want.add(p["id"])
         gone = [i for i in have if i not in want]
+        keep = {os.path.normcase(os.path.abspath(p["path"])) for p in plans}
         for i in gone:
             self.api("/rest/config/folders/" + i, "DELETE")
+            self._drop_stignore(have[i].get("path", ""), keep)
         return len(want), len(gone)
+
+    @staticmethod
+    def _drop_stignore(path, keep):
+        """지운 폴더에 이 앱이 적어 둔 .stignore 가 남아 있으면 지운다(새 방식에서는 그 폴더가 노트 폴더 안의 하위 폴더라 파일이 같이 전송되는 군더더기가 된다).
+        다른 폴더가 아직 쓰는 경로이거나, 이 앱이 쓴 줄(`/…` 와 공통 제외)이 아닌 줄이 있으면(사용자가 직접 쓴 것) 건드리지 않는다"""
+        if not path or os.path.normcase(os.path.abspath(path)) in keep:
+            return
+        f = os.path.join(path, ".stignore")
+        try:
+            with open(f, encoding="utf-8") as fh:
+                lines = [x.strip() for x in fh.read().splitlines() if x.strip()]
+            if all(x.startswith("/") or x in sp.COMMON_IGNORE for x in lines):
+                os.remove(f)
+        except OSError:
+            pass
 
     # ---- 상태
     def overview(self, folder_ids):
