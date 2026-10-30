@@ -31,6 +31,8 @@ if HERE not in sys.path:
 import bulk  # noqa: E402
 import cleanup  # noqa: E402
 import clipserver  # noqa: E402
+import syncengine  # noqa: E402   (동기화 엔진: Syncthing 을 받아 숨겨 실행하고 제어)
+import syncui  # noqa: E402   (옵션의 '동기화' 탭, 앱을 켤 때 동기화 이어 주기)
 import docs as docidx  # noqa: E402   (노트 폴더 밖의 pdf·txt·mp3 … 가져오기)
 import editor as ed # noqa: E402   (위키나루: 서식 도구·그림 불러오기)
 import ime  # noqa: E402   (한글 입력기가 조합 중인 글자를 자동완성에서 보려고)
@@ -472,6 +474,9 @@ class App:
         self.build_menu()
         self.build()
         self.start_clipper()
+        self.sync = syncengine.Engine()
+        self.sync_error = ""
+        syncui.resume(self)
         self.tray = tray.Tray(os.path.join(HERE, "assets", "icon.ico"), f"{APP} {VERSION}")   # 닫기(X)를 누르면 들어가는 트레이 아이콘(마우스를 올리면 버전이 보인다: 트레이에 구버전이 남아 있는지 알아보려고)
         self.tray_hidden = self.tray_was_zoomed = False
         for cls in ("Entry", "Text"):    # 어느 칸에서 한글을 쳐도 조합 중인 글자가 그 칸 글꼴로 보이게
@@ -636,6 +641,7 @@ class App:
         m.add_command(label="글꼴·크기…", command=lambda: self.show_options("fonts"))
         m.add_command(label="테마·색상…", command=lambda: self.show_options("theme"))
         m.add_command(label="노트 버전 설정…", command=lambda: self.show_options("versions"))
+        m.add_command(label="동기화 설정…", command=lambda: self.show_options("sync"))
         m.add_command(label="웹 클리퍼 설정…", command=lambda: self.show_options("clipper"))
         mb.add_cascade(label="설정", menu=m)
 
@@ -4762,7 +4768,10 @@ class App:
                 kind="primary", bold=True, padx=22, pady=5).pack(side="left")
             Btn(row, "기본값으로", lambda: self.root.after(20, lambda: self.set_fonts(10, False, 11, False)), padx=14, pady=5).pack(side="left", padx=8)
 
-        pages = (("general", "일반", general), ("folders", "폴더", folders_tab), ("imports", "가져오기", imports_tab), ("fonts", "글꼴", fonts_tab), ("theme", "테마·색상", theme_tab), ("versions", "노트 버전", versions_tab), ("clipper", "웹 클리퍼", clipper))
+        def sync_tab(p):
+            syncui.tab(self, p, dict(lab=lab, title=title, hr=hr, copy=copy, Btn=Btn, C=C, top=top, ui=self.ui))
+
+        pages = (("general", "일반", general), ("folders", "폴더", folders_tab), ("imports", "가져오기", imports_tab), ("fonts", "글꼴", fonts_tab), ("theme", "테마·색상", theme_tab), ("versions", "노트 버전", versions_tab), ("sync", "동기화", sync_tab), ("clipper", "웹 클리퍼", clipper))
 
         def select(key):
             for k, b in tabs.items():
@@ -4960,6 +4969,7 @@ class App:
         self.save_window()
         self.flush()
         self.stop_clipper()
+        self.sync.stop()
         self.root.destroy()
 
     def run(self):
