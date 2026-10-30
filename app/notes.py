@@ -646,6 +646,7 @@ class App:
         mb.add_cascade(label="설정", menu=m)
 
         m = tk.Menu(mb, tearoff=0)
+        m.add_command(label="사용 설명서 (GitHub)…", accelerator="F1", command=self.open_manual)
         m.add_command(label="검색 문법", command=self.help_search)
         m.add_separator()
         m.add_command(label="업데이트 확인…", command=self.check_update)
@@ -1515,6 +1516,12 @@ class App:
         except OSError as ex:
             return messagebox.showerror(APP, f"업데이트를 시작하지 못했습니다.\n{ex}", parent=self.root)
         self.quit()   # 앱이 끝나야 실행 파일이 풀려서 바뀐다. 바뀐 뒤 새 버전이 자동으로 다시 시작된다.
+
+    MANUAL_URL = "https://github.com/iamtalker/iamtalkernote/blob/main/docs/manual.md"
+
+    def open_manual(self):
+        """도움말 → 사용 설명서(F1): GitHub 의 설명서 문서를 기본 브라우저로 연다"""
+        webbrowser.open(self.MANUAL_URL)
 
     def help_search(self):
         messagebox.showinfo("검색 문법", "공백 = AND\n회의록 AND (예산 OR 일정) NOT 취소\n\"정확한 구절\"\n"
@@ -4804,6 +4811,7 @@ class App:
         r.bind_all("<F3>", lambda e: self.find_step(1) if self.findbar.winfo_ismapped() else None)
         r.bind_all("<Shift-F3>", lambda e: self.find_step(-1) if self.findbar.winfo_ismapped() else None)
         r.bind_all("<Control-comma>", lambda e: self.show_options("general"))
+        r.bind_all("<F1>", lambda e: self.open_manual())
         r.bind_all("<Control-minus>", lambda e: self.go(-1))
         r.bind_all("<Control-plus>", lambda e: self.go(1))
         r.bind_all("<Control-equal>", lambda e: self.go(1))
