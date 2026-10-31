@@ -130,6 +130,56 @@ app.toggle_favorite(tgt)
 check("해제하면 목록에서 빠짐", app.notes == [] and not hasattr(app, "star_lbl"))
 app.nb = notes.ALL
 
+# --- 아웃라이너 바로 편집
+put("아웃.md", "- a\n- b\n", now)
+app.reload_notes()
+for _ in range(40):
+    app.root.update()
+    time.sleep(0.02)
+app.nb = notes.ALL
+app.reload_notes()
+for _ in range(40):
+    app.root.update()
+    time.sleep(0.02)
+app.open_note(next(x for x in app.all_notes if x["title"] == "아웃"))
+app.outline_var.set(True)
+app.set_mode("view")
+app.render()
+for _ in range(10):
+    app.root.update()
+
+
+def body():
+    return app.text.get("1.0", "end-1c")
+
+
+def ed():
+    return app.view_edit
+
+
+check("아웃라이너 보기가 그려짐", app.outline_drawn)
+check("점 뒤 글을 열 수 있음", app.outline_edit_at(2) and ed() is not None)
+ed().keys["enter"](ed())
+for _ in range(5):
+    app.root.update()
+check("Enter: 아래에 새 항목을 만들고 이어서 고침", body() == "- a\n- \n- b\n" and ed() is not None)
+ed().txt.insert("end", "x")
+ed().keys["tab"](ed())
+for _ in range(5):
+    app.root.update()
+check("Tab: 들여쓰기하고 계속 고침", body() == "- a\n    - x\n- b\n" and ed() is not None and ed().value() == "x")
+ed().keys["btab"](ed())
+for _ in range(5):
+    app.root.update()
+check("Shift+Tab: 내어쓰기", body() == "- a\n- x\n- b\n" and ed() is not None)
+ed().txt.delete("1.0", "end")
+ed().keys["back"](ed())
+for _ in range(5):
+    app.root.update()
+check("빈 항목 Backspace: 항목을 지우고 앞 항목 끝으로", body() == "- a\n- b\n" and ed() is not None and ed().value() == "a")
+ed().finish(False)
+app.nb = notes.ALL
+
 app.root.destroy()
 print("실패 %d" % fails if fails else "전부 통과")
 sys.exit(1 if fails else 0)

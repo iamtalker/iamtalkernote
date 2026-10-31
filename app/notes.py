@@ -2162,10 +2162,6 @@ class App:
         self.tip(ob, "목록(-, 1.)을 아웃라이너로 보기: 점(●)을 누르면 그 항목으로 줌인(렌더링 화면)")
         self.doc_toggle = Btn(head, "", self.toggle_doc_view, kind="tab", padx=9, pady=3)   # 가져온 문서: 원본 미리보기 ↔ 뽑은 글(찾기). 평소엔 숨김
         self.memo_btn = Btn(head, "메모", self.edit_memo, kind="tab", padx=9, pady=3)       # 가져온 문서: 메모 붙이기. 평소엔 숨김
-        self.link_lbl = tk.Label(head, text="연결", bg=C["bg"], fg=C["muted"], font=(self.ui, 9), cursor="hand2", padx=4)   # 이 노트와 [[ ]] 로 이어진 노트
-        self.link_lbl.pack(side="left")
-        self.link_lbl.bind("<Button-1>", lambda e: self.show_links())
-        self.tip(self.link_lbl, "연결된 노트: 이 노트를 가리키는 노트(백링크)와 이 노트가 가리키는 노트")
         self.title_entry =tk.Entry(head, textvariable=self.title_var, relief="flat", bd=0, font=self.fonts["title"],
                                     bg=C["bg"], fg=C["text"], insertbackground=C["accent"], width=8)
         self.title_entry.pack(side="left", fill="x", expand=True, ipady=3)
@@ -3069,6 +3065,7 @@ class App:
             mm.add_command(label=label, command=lambda k=key: self.move_note(n, k), state="disabled" if key == n["nb"] else "normal")
         lm.add_cascade(label="노트북으로 이동", menu=mm)
         lm.add_command(label="즐겨찾기 해제" if self.is_fav(n) else "즐겨찾기 추가", accelerator="Ctrl+D", command=lambda: self.toggle_favorite(n))
+        lm.add_command(label="연결된 노트 보기…", command=lambda: self.show_links(n))
         lm.add_command(label="태그 추가…", command=lambda: self.tag_new([n]))
         lm.add_command(label="노트 링크 복사", command=lambda: (self.root.clipboard_clear(), self.root.clipboard_append(f"[[{n['title']}]]")))
         lm.add_command(label="노트 속성…", command=self.show_properties)
@@ -3876,7 +3873,72 @@ class App:
             return None
         return f"1.0+{w0}c", f"1.0+{w1}c", off + hit[0], off + hit[1], True
 
-    def start_view_edit(self, idx):
+    def outline_edit_at(self, pos, cursor=None):
+        """원문 위치 pos 에서 시작하는 아웃라이너 항목의 글을 고치는 입력칸을 연다(Enter·Tab 뒤에 이어서 고칠 때)"""
+        self.view.update_idletasks()
+        ctx = getattr(self, "outline_ctx", None)
+        if not ctx:
+            return False
+        node = next((n for n in ctx[1] if n.tstart == pos), None)
+        if node is None:
+            return False
+        r = self.view.tag_ranges("it%d" % node.id)
+        if not r:                                   # 빈 항목은 글이 없어 칠해진 곳이 없다 → 그 줄의 점 뒤
+            return False
+        return self.start_view_edit(str(r[0]), cursor)
+
+    def outline_keys(self, a):
+        """아웃라이너 항목 입력칸의 키: Enter 새 항목(커서 뒤 글은 새 항목으로) · Tab/Shift+Tab 들여쓰기·내어쓰기 · 빈 칸 Backspace 항목 지우기 · ↑↓ 이웃 항목.
+        a: 이 항목 글의 원문 시작(글 칸 전체 기준)"""
+        def run(ed, op):
+            text, cur = ed.detach()
+            self.view_edit = None
+            old = self.text.get("1.0", "end-1c")
+            body, off = self.view_source()
+            if old[off:] != body or not getattr(self, "outline_ctx", None):
+                return
+            node0 = next((n for n in self.outline_ctx[1] if n.tstart + off == a), None)
+            if node0 is None:
+                return
+            b0, e0 = node0.tstart, node0.tend
+            before, after = (text[:cur], text[cur:]) if op == "enter" else (text, "")
+            body2 = body[:b0] + before + body[e0:]           # 먼저 고친 글을 반영한 원문
+            nodes = outline.parse(body2)[1]
+            node = next((n for n in nodes if n.tstart == b0), None)
+            if node is None:
+                return
+            res, pos, keep = body2, b0, cur                  # 할 수 없는 동작이면 글만 저장하고 같은 항목을 계속 고친다
+            if op == "enter":
+                res, pos = outline.split_item(body2, node, after)
+                keep = 0
+            elif op in ("tab", "btab"):
+                r = (outline.indent_item if op == "tab" else outline.outdent_item)(body2, node)
+                if r:
+                    res, pos = r
+            elif op == "back":
+                r = outline.delete_item(body2, node)
+                if r:
+                    res, pos = r
+                    keep = -1                                # 앞 항목 글의 끝
+            elif op in ("up", "down"):
+                j = node.id + (-1 if op == "up" else 1)
+                if 0 <= j < len(nodes):
+                    pos, keep = nodes[j].tstart, (-1 if op == "up" else 0)
+            if old[:off] + res != old:
+                self.apply_text_change(old, old[:off] + res)
+            self.render()
+            ctx = getattr(self, "outline_ctx", None)
+            if keep == -1 and ctx:                           # 앞 항목(또는 위 항목)의 글 끝에서 이어 고친다
+                tgt = next((n for n in ctx[1] if n.tstart == pos or n.tend == pos), None)
+                if tgt:
+                    pos, keep = tgt.tstart, len(tgt.text)
+                else:
+                    keep = None
+            if not self.outline_edit_at(pos, keep):
+                self.status.config(text="고쳤습니다 (Ctrl+Z 로 되돌립니다)")
+        return {k: (lambda ed, k=k: run(ed, k)) for k in ("enter", "tab", "btab", "back", "up", "down")}
+
+    def start_view_edit(self, idx, cursor=None):
         """idx 자리의 글을 고치는 입력칸을 연다. 열었으면 True"""
         if self.view_edit_blocked():
             return False
@@ -3886,6 +3948,7 @@ class App:
         vs, ve, a, z, multi = tgt
         text = self.text.get("1.0", "end-1c")
         raw = text[a:z]
+        is_item = self.outline_drawn and not multi and any(re.fullmatch(r"it\d+", t) for t in self.view.tag_names(idx))
 
         def commit(new):
             self.view_edit = None
@@ -3898,14 +3961,15 @@ class App:
             self.render()
             self.status.config(text="고쳤습니다 (Ctrl+Z 로 되돌립니다)")
         try:
-            self.view_edit = inlineedit.InlineEdit(self.view, vs, ve, raw, multi, (self.ui, 11), C, commit, lambda: setattr(self, "view_edit", None))
+            self.view_edit = inlineedit.InlineEdit(self.view, vs, ve, raw, multi, (self.ui, 11), C, commit, lambda: setattr(self, "view_edit", None),
+                                                   keys=self.outline_keys(a) if is_item else None, cursor=cursor)
         except (ValueError, tk.TclError):
             return False
         self.pair_clear()
         return True
 
     def view_edit_blocked(self):
-        return (not self.cur) or self.doc_open or self.mode == "edit" or bool(getattr(self, "view_edit", None))
+        return (not self.cur) or self.doc_open or self.mode == "edit" or not self.outline_drawn or bool(getattr(self, "view_edit", None))   # 눌러서 고치기는 아웃라이너 보기에서만
 
     def view_press(self, e):
         self._press = (e.x, e.y)
@@ -3969,9 +4033,9 @@ class App:
                 segs.append((n.mark + " ", lt + ("muted",), None))
             if n.done is not None:
                 segs.append(("☑ " if n.done else "☐ ", lt, None))
-            segs.extend(self.inline_segs(n.text, lt + ("it%d" % n.id,) + (("done",) if n.done else ())))
+            segs.extend(self.inline_segs(n.text, lt + ("it%d" % n.id,) + (("done",) if n.done else ())) or [(" ", lt + ("it%d" % n.id,), None)])   # 빈 항목도 눌러서 고칠 수 있게
             segs.append(("\n", lt, None))
-            for note in n.notes:             # 항목 바로 아래에 이어지는 글은 그 항목의 메모
+            for note in n.notes:           # 항목 바로 아래에 이어지는 글은 그 항목의 메모
                 segs.append(("      ", lt + ("olnote",), None))
                 segs.extend(self.inline_segs(note, lt + ("olnote",)))
                 segs.append(("\n", lt + ("olnote",), None))
@@ -4535,9 +4599,9 @@ class App:
         return "break"
 
     # ---- 연결된 노트
-    def show_links(self):
-        n = self.cur
-        if not n or self.doc_open:
+    def show_links(self, n=None):
+        n = n or self.cur
+        if not n or isinstance(n, docidx.Doc):
             return
         self.flush()
         top = tk.Toplevel(self.root)
@@ -4578,7 +4642,15 @@ class App:
             mine = self.store.key_of(n["path"])
             back = [k for k in wikilinks.backlinks(link_map, n["title"]) if k != mine and k in by_key]
             out = []
-            for title, _, _ in wikilinks.links_in(self.text.get("1.0", "end-1c")):
+            if self.cur and n["path"] == self.cur["path"]:
+                body = self.text.get("1.0", "end-1c")
+            else:
+                try:
+                    with open(n["path"], "rb") as fh:
+                        body = st.decode(fh.read())
+                except OSError:
+                    body = ""
+            for title, _, _ in wikilinks.links_in(body):
                 tgt = idx.get(wikilinks.norm(title))
                 if tgt and tgt["path"] != n["path"] and tgt["path"] not in out:
                     out.append(tgt["path"])

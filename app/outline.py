@@ -112,3 +112,105 @@ def walk(roots):
             yield n, d
             yield from rec(n.children, d + 1)
     yield from rec(roots, 0)
+
+
+# ---------------------------------------------------------------- 항목 편집(WorkFlowy 처럼): 원문 줄을 고쳐 (새 원문, 편집할 항목 글의 시작 위치) 를 돌려준다
+def _subtree_end_line(src, node):
+    """항목과 그 하위 항목·메모가 차지하는 마지막 줄 번호"""
+    n = node
+    while n.children:
+        n = n.children[-1]
+    return src.count("\n", 0, n.tstart) + len(n.notes)
+
+
+def _prefix(src, node):
+    """줄 맨 앞부터 항목 글 앞까지(들여쓰기+마커+체크박스)"""
+    return src[src.rfind("\n", 0, node.tstart) + 1:node.tstart]
+
+
+def _fresh(prefix):
+    """새 항목 앞머리: 체크박스는 비우고 번호는 하나 올린다"""
+    prefix = re.sub(r"\[[xX]\]", "[ ]", prefix)
+    return re.sub(r"(\d+)([.)])", lambda m: str(int(m.group(1)) + 1) + m.group(2), prefix, count=1)
+
+
+def _indent_of(prefix):
+    return re.match(r"[ \t]*", prefix).group(0)
+
+
+def _text_pos(lines, li):
+    """lines[li] 가 목록 줄이면 그 항목 글이 시작하는 원문 위치"""
+    m = LIST.match(lines[li])
+    task = _TASK.match(m.group("text"))
+    return sum(len(x) + 1 for x in lines[:li]) + m.start("text") + (task.end() if task else 0)
+
+
+def _siblings(src, node):
+    if node.parent:
+        return node.parent.children
+    for kind, data, _a, _z in parse(src)[0]:
+        if kind == "list" and any(n.tstart == node.tstart for n in data):
+            return data
+    return []
+
+
+def split_item(src, node, rest=""):
+    """Enter: 항목 아래에 새 항목을 만든다(하위 항목이 있으면 그 맨 앞 자식으로). rest 는 새 항목에 넣을 글"""
+    lines = src.split("\n")
+    if node.children:
+        pre = _fresh(_prefix(src, node.children[0]))
+        pre = re.sub(r"\d+([.)])", r"1\1", pre, count=1)
+    else:
+        pre = _fresh(_prefix(src, node))
+    at = src.count("\n", 0, node.tstart) + len(node.notes) + 1
+    lines.insert(at, pre + rest)
+    return "\n".join(lines), _text_pos(lines, at)
+
+
+def indent_item(src, node):
+    """Tab: 바로 앞 형제의 하위로 넣는다. 앞 형제가 없으면 None"""
+    sibs = _siblings(src, node)
+    if not sibs or sibs[0].tstart == node.tstart:
+        return None
+    unit = "\t" if "\t" in _indent_of(_prefix(src, node)) else "    "
+    lines = src.split("\n")
+    a = src.count("\n", 0, node.tstart)
+    for i in range(a, _subtree_end_line(src, node) + 1):
+        if lines[i].strip():
+            lines[i] = unit + lines[i]
+    return "\n".join(lines), _text_pos(lines, a)
+
+
+def outdent_item(src, node):
+    """Shift+Tab: 부모 바로 다음 형제로 올린다(뒤따르던 형제는 그대로 부모 아래에 남는다). 최상위면 None"""
+    p = node.parent
+    if p is None:
+        return None
+
+    def width(ws):
+        return len(ws.replace("\t", "    "))
+    delta = width(_indent_of(_prefix(src, node))) - width(_indent_of(_prefix(src, p)))
+    lines = src.split("\n")
+    a, z = src.count("\n", 0, node.tstart), _subtree_end_line(src, node)
+
+    def dedent(line):
+        n = used = 0
+        while n < len(line) and used < delta and line[n] in " \t":
+            used += 4 if line[n] == "\t" else 1
+            n += 1
+        return line[n:]
+    chunk = [dedent(x) for x in lines[a:z + 1]]
+    rest = lines[:a] + lines[z + 1:]
+    at = _subtree_end_line(src, p) + 1 - len(chunk)   # 부모 쪽 줄은 모두 앞에 있으므로 빼낸 만큼만 당긴다
+    rest[at:at] = chunk
+    return "\n".join(rest), _text_pos(rest, at)
+
+
+def delete_item(src, node):
+    """빈 항목에서 Backspace: 하위 항목이 없으면 줄을 지운다 → 앞 줄 끝에서 이어 고치게 (새 원문, 위치). 하위가 있으면 None"""
+    if node.children:
+        return None
+    lines = src.split("\n")
+    a = src.count("\n", 0, node.tstart)
+    del lines[a:a + len(node.notes) + 1]
+    return "\n".join(lines), max(0, sum(len(x) + 1 for x in lines[:a]) - 1)
