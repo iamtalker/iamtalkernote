@@ -67,7 +67,7 @@ class PlannerView(tk.Frame):
         wrap = tk.Frame(bottom, bg=C["bg"])
         wrap.pack(fill="both", expand=True, padx=18, pady=(6, 14))
         self.tree = ttk.Treeview(wrap, style="Flat.Treeview", columns=("start", "end", "text"), displaycolumns=("start", "end", "text"), show="headings",
-                                 selectmode="browse", height=6)
+                                 selectmode="extended", height=6)   # Ctrl·Shift 로 여러 개 고르기
         self.tree.heading("start", text="추가한 날", anchor="w")
         self.tree.heading("end", text="완료한 날", anchor="w")
         self.tree.heading("text", text="할일  (☐ 를 누르면 오늘 날짜로 완료 · 오른쪽 클릭: 변경·삭제)", anchor="w")
@@ -81,6 +81,7 @@ class PlannerView(tk.Frame):
         self.tree.tag_configure("done", foreground=C["muted"])
         self.tree.bind("<ButtonRelease-1>", self.on_tree_click)
         self.tree.bind("<Button-3>", self.on_tree_menu)
+        self.tree.bind("<Delete>", self.delete_selected)
         # 열 경계를 끌어 늘리거나 옆으로 끌어서 목록이 창 밖으로 밀려 나가지 않게 막는다
         self.tree.bind("<Button-1>", lambda e: "break" if self.tree.identify_region(e.x, e.y) == "separator" else None, add="+")
         self.tree.bind("<B1-Motion>", lambda e: "break")
@@ -217,6 +218,17 @@ class PlannerView(tk.Frame):
         row, col = self.tree.identify_row(e.y), self.tree.identify_column(e.x)
         t = self.pl.find(row) if row else None
         m = tk.Menu(self, tearoff=0)
+        picked = [x for x in (self.pl.find(i) for i in self.tree.selection()) if x]
+        if t and len(picked) > 1 and row in self.tree.selection():      # 여러 개를 고른 채 그 안에서 오른쪽 클릭: 한꺼번에
+            n = len(picked)
+            m.add_command(label=f"선택한 {n}개 오늘 날짜로 완료", command=lambda: self.bulk(picked, "done"))
+            m.add_command(label=f"선택한 {n}개 완료 취소", command=lambda: self.bulk(picked, "undone"))
+            m.add_command(label=f"선택한 {n}개 날짜 지정…", command=lambda: self.bulk(picked, "date"))
+            m.add_command(label=f"선택한 {n}개 날짜 없애기", command=lambda: self.bulk(picked, "nodate"))
+            m.add_separator()
+            m.add_command(label=f"선택한 {n}개 삭제", command=lambda: self.bulk(picked, "delete"))
+            m.tk_popup(e.x_root, e.y_root)
+            return
         if t:
             self.tree.selection_set(row)
             if col == "#3":
@@ -233,6 +245,39 @@ class PlannerView(tk.Frame):
             m.add_separator()
         m.add_command(label="할일 만들기…", command=self.new_todo)
         m.tk_popup(e.x_root, e.y_root)
+
+    def bulk(self, todos, op):
+        """고른 할일 여러 개를 한꺼번에: 완료·완료 취소·날짜 지정·날짜 없애기·삭제"""
+        today = M.iso(datetime.date.today())
+        if op == "delete":
+            if not messagebox.askyesno("할일 삭제", f"고른 {len(todos)}개를 지울까요?", parent=self):
+                return
+            for t in todos:
+                self.pl.remove(t["id"])
+        elif op == "date":
+            s = simpledialog.askstring("날짜 지정", f"고른 {len(todos)}개의 추가한 날  (예: 2026-09-14, 20260914)", initialvalue=today, parent=self)
+            d = M.parse_loose(s) if s else None
+            if s and not d:
+                return messagebox.showinfo("날짜 지정", "날짜를 읽을 수 없습니다. 예: 2026-09-14 또는 20260914", parent=self)
+            if not d:
+                return
+            for t in todos:
+                self.pl.update(t["id"], date=d)
+        else:
+            for t in todos:
+                if op == "done" and not t["done"]:
+                    self.pl.update(t["id"], done=True)
+                elif op == "undone" and t["done"]:
+                    self.pl.update(t["id"], done=False)
+                elif op == "nodate":
+                    self.pl.update(t["id"], date=None)
+        self.changed()
+
+    def delete_selected(self, e=None):
+        picked = [x for x in (self.pl.find(i) for i in self.tree.selection()) if x]
+        if picked:
+            self.bulk(picked, "delete")
+        return "break"
 
     def new_todo(self):
         """날짜 없이 할일을 만든다(날짜는 목록에서 날짜 칸을 오른쪽 클릭해 지정). 날짜를 정해 만들려면 달력의 날을 오른쪽 클릭"""
@@ -266,7 +311,7 @@ class PlannerView(tk.Frame):
     def on_tree_click(self, e):
         row = self.tree.identify_row(e.y)
         bb = self.tree.bbox(row, "text") if row else None
-        if row and self.tree.identify_column(e.x) == "#3" and bb and e.x - bb[0] < 32:     # 글 앞의 체크 칸(☐)을 누르면 완료 토글
+        if row and not e.state & 0x5 and self.tree.identify_column(e.x) == "#3" and bb and e.x - bb[0] < 32:     # 글 앞의 체크 칸(☐)을 누르면 완료 토글(Ctrl·Shift 는 고르기)
             t = self.pl.find(row)
             if t:
                 self.pl.update(row, done=not t["done"])
