@@ -48,6 +48,8 @@ import wikiconv  # noqa: E402
 import viewdelete  # noqa: E402
 import tagac  # noqa: E402
 import favorites  # noqa: E402
+import outline  # noqa: E402
+import inlineedit  # noqa: E402
 import syncsettings  # noqa: E402
 import winpreview  # noqa: E402   (윈도 미리보기 처리기를 노트 화면 안에: pdf·mp3 …)
 from version import VERSION  # noqa: E402
@@ -2146,6 +2148,16 @@ class App:
             self.tip(b, hint)
             self.mode_btns[m] = b
         self.mode_seg = seg
+        self.outline_var = tk.BooleanVar(value=bool(st.read_config().get("outliner", False)))
+        self.outline_zoom = None       # 줌인한 항목 번호(없으면 노트 전체)
+        self.outline_drawn = False     # 지금 렌더링 화면이 아웃라이너 모양인가(그러면 블록 맞춤·짝 강조는 쓰지 않는다)
+        ob = tk.Checkbutton(head, text="아웃라이너", variable=self.outline_var, command=self.on_outline_toggle, relief="flat", bd=0,
+                            takefocus=False, bg=C["bg"], fg=C["text"], activebackground=C["soft"], selectcolor=C["bg"],
+                            cursor="hand2", font=(self.ui, 10))
+        ob.pack(side="right", padx=(8, 0))
+        ob.bind("<Enter>", lambda e: ob.config(bg=C["soft"]), add="+")
+        ob.bind("<Leave>", lambda e: ob.config(bg=C["bg"]), add="+")
+        self.tip(ob, "목록(-, 1.)을 아웃라이너로 보기: 점(●)을 누르면 그 항목으로 줌인(렌더링 화면)")
         self.doc_toggle = Btn(head, "", self.toggle_doc_view, kind="tab", padx=9, pady=3)   # 가져온 문서: 원본 미리보기 ↔ 뽑은 글(찾기). 평소엔 숨김
         self.memo_btn = Btn(head, "메모", self.edit_memo, kind="tab", padx=9, pady=3)       # 가져온 문서: 메모 붙이기. 평소엔 숨김
         self.star_lbl = tk.Label(head, text="☆", bg=C["bg"], fg=C["muted"], font=(self.ui, 15), cursor="hand2", padx=2)   # 누르면 즐겨찾기 켜고 끔
@@ -2234,6 +2246,11 @@ class App:
         self.text.bind("<KeyRelease>", lambda e: self.pair_later("edit"), add="+")
         self.text.bind("<ButtonRelease-1>", lambda e: self.pair_later("edit"), add="+")
         self.view.bind("<ButtonRelease-1>", lambda e: self.pair_later("view"), add="+")
+        self.view_edit = None
+        self.view.bind("<ButtonPress-1>", self.view_press, add="+")
+        self.view.bind("<ButtonRelease-1>", self.view_release, add="+")
+        self.view.bind("<Double-Button-1>", lambda e: self.cancel_view_edit_job(), add="+")
+        self.view.bind("<MouseWheel>", lambda e: self.close_view_edit(True), add="+")
         self.view.bind("<Control-z>", lambda e: (self.text_do("edit_undo"), self.render(), "break")[2])   # 렌더링만 볼 때도 되돌리기(우클릭 → 삭제를 되돌림)
         self.text.bind("<Button-3>", self.on_text_menu)
         self.show_empty(True)
@@ -2270,10 +2287,21 @@ class App:
         for n in range(1, preview.MAX_LEVEL + 1):
             v.tag_configure(f"M{n}", lmargin1=20 * n, lmargin2=20 * n)
             v.tag_configure(f"B{n}", lmargin1=20 * (n - 1) + 6, lmargin2=20 * n)
+        v.tag_configure("memo", background=C["panel"], lmargin1=12, lmargin2=12, rmargin=12)        # 아웃라이너 보기에서 목록이 아닌 글(메모 블록)
+        v.tag_configure("bullet", foreground=C["muted"], font=f["small"])                           # 하위 항목이 없는 점
+        v.tag_configure("bullet_p", foreground=C["accent"], font=f["small"])                        # 하위 항목이 있는 점(누르면 줌인)
+        v.tag_configure("olnote", foreground=C["muted"], font=f["small"])                           # 항목에 붙은 메모
+        v.tag_configure("crumb", underline=False, foreground=C["accent"])                           # 줌인 경로
+        v.tag_configure("done", foreground=C["muted"], overstrike=True)
+        for n in range(0, 7):          # 아웃라이너 들여쓰기: 한 단계 16px, 6단계까지만(더 깊은 항목은 같은 자리에 두고 줌인으로 본다)
+            v.tag_configure(f"ol{n}", lmargin1=12 + 16 * n, lmargin2=28 + 16 * n, spacing1=2, spacing3=2)
         v.tag_raise("link")
         v.tag_raise("code")
         v.tag_bind("link", "<Enter>", lambda e: v.config(cursor="hand2"))
         v.tag_bind("link", "<Leave>", lambda e: v.config(cursor="arrow"))
+        for t_ in ("bullet", "bullet_p"):
+            v.tag_bind(t_, "<Enter>", lambda e: v.config(cursor="hand2"))
+            v.tag_bind(t_, "<Leave>", lambda e: v.config(cursor="arrow"))
 
     # -- 4단: 문법 해설 (위키나루)
     def build_sidebar(self):
@@ -3098,6 +3126,7 @@ class App:
             self.hpos = len(self.hist) - 1
         self.show_empty(False)
         self.title_var.set(n["title"])
+        self.outline_zoom = None
         self.update_star()
         self.title_entry.config(state="readonly")
         for b in self.mode_btns.values():   # 가져온 문서에는 원문·분할 보기가 없다
@@ -3772,11 +3801,194 @@ class App:
         try:
             # 클리퍼가 맨 위에 적는 '원본: <주소>' 줄은 렌더링 화면에서만 숨긴다(문서 정보의 URL 은 이 줄에서 읽는다)
             src = SOURCE_LINE.sub("", self.text.get("1.0", "end-1c"), count=1)
-            doc = wikiconv.parse(src, bulk.SYNTAX[FMT], title)
-            segs = preview.layout(doc)
+            self.outline_drawn = bool(self.outline_var.get()) and outline.has_list(src)
+            if self.outline_drawn:
+                segs = self.outline_segs(src)
+            else:
+                doc = wikiconv.parse(src, bulk.SYNTAX[FMT], title)
+                segs = preview.layout(doc)
         except Exception as ex:  # noqa: BLE001  (읽기 도구가 못 읽은 글도 편집은 계속할 수 있게)
+            self.outline_drawn = False
             return self.status.config(text="렌더링 오류: " + str(ex))
         self.draw_view(segs)
+        if self.outline_drawn:      # 아웃라이너 모양은 원문 블록과 위치가 안 맞으니 블록 맞춤(강조·블록 삭제)은 끈다
+            self.view_ok = False
+
+    # ---- 아웃라이너 보기(렌더링 화면): 목록은 점(●) 계층으로, 그 밖의 글은 '메모' 카드로 따로 보이고, 점을 누르면 줌인
+    # ---- 렌더링 화면에서 글을 눌러 그 부분의 원문만 고친다(항목 한 줄 / 블록 하나)
+    def close_view_edit(self, commit=True):
+        ed = getattr(self, "view_edit", None)
+        if ed:
+            ed.finish(commit)
+
+    def view_edit_target(self, idx):
+        """누른 자리 idx → (화면 시작, 화면 끝, 원문 시작, 원문 끝, 여러 줄인가) 또는 None. 원문 위치는 글 칸 전체 글 기준"""
+        v = self.view
+        src, off = self.view_source()
+        names = v.tag_names(idx)
+        if self.outline_drawn and getattr(self, "outline_ctx", None):
+            blocks, nodes = self.outline_ctx
+            for t in names:
+                m = re.fullmatch(r"it(\d+)", t)
+                if m and int(m.group(1)) < len(nodes):          # 항목: 그 항목의 글(마커·체크박스 뒤)만
+                    r = v.tag_ranges(t)
+                    nd = nodes[int(m.group(1))]
+                    if r:
+                        return str(r[0]), str(r[-1]), off + nd.tstart, off + nd.tend, False
+                m = re.fullmatch(r"mb(\d+)", t)
+                if m and int(m.group(1)) < len(blocks):          # 메모 블록: 블록 전체
+                    r = v.tag_ranges(t)
+                    b = blocks[int(m.group(1))]
+                    if r:
+                        return str(r[0]), str(r[-1]), off + b[2], off + b[3], True
+            return None
+        bm = self.block_map()
+        if not bm:
+            return None
+        sv = self.w2s(self.wcount(v, idx))
+        hit = next((b for b in bm if sv is not None and b[2] <= sv <= b[3] and b[3] > b[2]), None)
+        if not hit:
+            return None
+        w0, w1 = self.s2w(hit[2]), self.s2w(hit[3], end=True)
+        if w0 is None or w1 is None or w1 <= w0:
+            return None
+        return f"1.0+{w0}c", f"1.0+{w1}c", off + hit[0], off + hit[1], True
+
+    def start_view_edit(self, idx):
+        """idx 자리의 글을 고치는 입력칸을 연다. 열었으면 True"""
+        if self.view_edit_blocked():
+            return False
+        tgt = self.view_edit_target(idx)
+        if not tgt:
+            return False
+        vs, ve, a, z, multi = tgt
+        text = self.text.get("1.0", "end-1c")
+        raw = text[a:z]
+
+        def commit(new):
+            self.view_edit = None
+            if new == raw:
+                return
+            old = self.text.get("1.0", "end-1c")
+            if old[a:z] != raw:          # 그 사이 원문이 바뀌었으면 건드리지 않는다
+                return self.status.config(text="그 사이 글이 바뀌어 저장하지 않았습니다")
+            self.apply_text_change(old, old[:a] + new + old[z:])
+            self.render()
+            self.status.config(text="고쳤습니다 (Ctrl+Z 로 되돌립니다)")
+        try:
+            self.view_edit = inlineedit.InlineEdit(self.view, vs, ve, raw, multi, (self.ui, 11), C, commit, lambda: setattr(self, "view_edit", None))
+        except (ValueError, tk.TclError):
+            return False
+        self.pair_clear()
+        return True
+
+    def view_edit_blocked(self):
+        return (not self.cur) or self.doc_open or self.mode == "edit" or bool(getattr(self, "view_edit", None))
+
+    def view_press(self, e):
+        self._press = (e.x, e.y)
+        self.cancel_view_edit_job()
+
+    def cancel_view_edit_job(self):
+        job = getattr(self, "_edit_job", None)
+        if job:
+            self.root.after_cancel(job)
+            self._edit_job = None
+
+    def view_release(self, e):
+        """글을 한 번 누르면(끌지도 않고, 링크·점·그림도 아니면) 조금 뒤 그 부분을 고치는 입력칸이 열린다. 더블클릭(낱말 고르기)이면 열지 않는다"""
+        v = self.view
+        px, py = getattr(self, "_press", (e.x, e.y))
+        if abs(e.x - px) > 4 or abs(e.y - py) > 4 or v.tag_ranges("sel") or self.view_edit_blocked():
+            return
+        idx = v.index(f"@{e.x},{e.y}")
+        names = v.tag_names(idx)
+        if any(t in self.links or t in ("bullet", "bullet_p", "crumb", "link") for t in names) or self.image_at(e) is not None:
+            return
+        self.cancel_view_edit_job()
+        self._edit_job = self.root.after(280, lambda: self._open_edit_after(idx))
+
+    def _open_edit_after(self, idx):
+        self._edit_job = None
+        if self.view.tag_ranges("sel"):
+            return
+        self.start_view_edit(idx)
+
+    def on_outline_toggle(self):
+        st.write_config(outliner=bool(self.outline_var.get()))
+        self.outline_zoom = None
+        if self.outline_var.get() and self.mode == "edit" and self.cur and not self.doc_open:
+            self.set_mode("split")           # 켜면 렌더링 화면이 보여야 바뀐 것을 안다
+        self.render()
+        self.pair_clear()
+
+    def outline_zoom_to(self, target):
+        self.outline_zoom = None if target in ("root", None) else int(target)
+        self.render()
+
+    def inline_segs(self, text, tags=()):
+        """한 줄 글을 마크다운으로 그려 본 조각들(끝의 줄바꿈은 뗀다). 굵게·링크·그림 등이 그대로 된다"""
+        segs = preview.layout(wikiconv.parse(text, bulk.SYNTAX[FMT], self.title_var.get()))
+        out = [(t, tuple(tg) + tuple(tags), ex) for t, tg, ex in segs]
+        while out and not out[-1][0].strip("\n") and not out[-1][2]:
+            out.pop()
+        if out:
+            t, tg, ex = out[-1]
+            out[-1] = (t.rstrip("\n"), tg, ex)
+        return out
+
+    def outline_items(self, nodes, segs):
+        for n, d in outline.walk(nodes):
+            lt = ("ol%d" % min(d, 6),)
+            leaf = not n.children
+            segs.append(("●", lt + (("bullet",) if leaf else ("bullet_p",)), ("link", "outline", str(n.id))))
+            segs.append(("  ", lt, None))
+            if n.mark[0].isdigit():
+                segs.append((n.mark + " ", lt + ("muted",), None))
+            if n.done is not None:
+                segs.append(("☑ " if n.done else "☐ ", lt, None))
+            segs.extend(self.inline_segs(n.text, lt + ("it%d" % n.id,) + (("done",) if n.done else ())))
+            segs.append(("\n", lt, None))
+            for note in n.notes:             # 항목 바로 아래에 이어지는 글은 그 항목의 메모
+                segs.append(("      ", lt + ("olnote",), None))
+                segs.extend(self.inline_segs(note, lt + ("olnote",)))
+                segs.append(("\n", lt + ("olnote",), None))
+
+    def outline_segs(self, src):
+        blocks, nodes = outline.parse(src)
+        self.outline_ctx = (blocks, nodes)       # 눌러서 고칠 때 어느 원문 구간인지 찾는 데 쓴다
+        z = self.outline_zoom if isinstance(self.outline_zoom, int) and 0 <= self.outline_zoom < len(nodes) else None
+        self.outline_zoom = z
+        segs = []
+        if z is not None:                    # 줌인: 경로(누르면 그 단계로) + 그 항목이 제목 + 하위 항목만
+            node = nodes[z]
+            segs.append((self.title_var.get() or "노트", ("link", "crumb"), ("link", "outline", "root")))
+            for a in outline.ancestors(node):
+                segs.append(("  ›  ", ("muted",), None))
+                segs.append((a.text[:40] + ("…" if len(a.text) > 40 else ""), ("link", "crumb"), ("link", "outline", str(a.id))))
+            segs.append(("\n\n", (), None))
+            segs.extend(self.inline_segs(node.text, ("h2", "it%d" % node.id)))
+            segs.append(("\n", ("h2",), None))
+            for note in node.notes:
+                segs.extend(self.inline_segs(note, ("muted",)))
+                segs.append(("\n", ("muted",), None))
+            segs.append(("\n", (), None))
+            if node.children:
+                self.outline_items(node.children, segs)
+            else:
+                segs.append(("(하위 항목이 없습니다)\n", ("muted",), None))
+            return segs
+        for bi, (kind, data, _a, _z) in enumerate(blocks):
+            if kind == "memo":               # 목록이 아닌 글: 카드처럼 따로 보인다
+                if not data.strip():
+                    continue
+                for t, tg, ex in preview.layout(wikiconv.parse(data, bulk.SYNTAX[FMT], self.title_var.get())):
+                    segs.append((t, tuple(tg) + ("memo", "mb%d" % bi), ex))
+                segs.append(("\n", (), None))
+            else:
+                self.outline_items(data, segs)
+                segs.append(("\n", (), None))
+        return segs
 
     def on_view_resize(self, e=None):
         """렌더링 칸 너비가 바뀌면(창 크기·칸 켜기 끄기) 그림이 든 글만 잠시 뒤에 다시 그려 그림 크기를 맞춘다"""
@@ -3791,6 +4003,7 @@ class App:
 
     def draw_view(self, segs):
         v = self.view
+        self.close_view_edit(True)         # 열려 있던 입력칸은 저장하고 닫는다(글이 다시 그려지면 자리가 바뀐다)
         self.img_w_used = self.img_avail()
         self.has_imgs = any(extra and extra[0] == "img" for _, _, extra in segs)
         top = v.yview()[0]
@@ -3981,6 +4194,8 @@ class App:
     def block_map(self):
         """[(원문 블록 시작, 끝, 렌더링 글 시작, 끝)] — 블록마다 따로 그려 본 길이로 원문과 렌더링 글을 맞춘다. 맞출 수 없으면 None.
         같은 원문이면 다시 계산하지 않는다(커서를 옮길 때마다 부르므로)"""
+        if getattr(self, "outline_drawn", False):
+            return None
         src, _off = self.view_source()
         key = (self.cur.get("path") if self.cur else None, len(src), hash(src), self.title_var.get())
         if getattr(self, "_bm_key", None) == key:
@@ -4106,10 +4321,15 @@ class App:
         T = self.text
         up, ue = idx_to_u16(old, p), idx_to_u16(old, len(old) - s_)
         T.edit_separator()
-        T.delete(f"1.0+{up}c", f"1.0+{ue}c")
-        mid = new[p:len(new) - s_]
-        if mid:
-            T.insert(f"1.0+{up}c", mid)
+        auto = T.cget("autoseparators")
+        T.configure(autoseparators=False)      # 지우고 넣는 사이에 구분점이 자동으로 끼면 되돌리기가 두 번 걸린다
+        try:
+            T.delete(f"1.0+{up}c", f"1.0+{ue}c")
+            mid = new[p:len(new) - s_]
+            if mid:
+                T.insert(f"1.0+{up}c", mid)
+        finally:
+            T.configure(autoseparators=auto)
         T.edit_separator()
 
     def delete_view_selection(self):
@@ -4207,6 +4427,8 @@ class App:
         webbrowser.open(url)
 
     def follow(self, kind, target):
+        if kind == "outline":
+            return self.outline_zoom_to(target)
         if kind == "url":
             if re.match(r"(?i)^(https?|ftp|mailto):", target):
                 self.open_url(target)
