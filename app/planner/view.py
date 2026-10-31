@@ -3,6 +3,7 @@ import datetime
 import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
 
+from . import datepick
 from . import model as M
 
 WEEK = "일월화수목금토"
@@ -254,8 +255,8 @@ class PlannerView(tk.Frame):
         elif op in ("date", "done_on"):
             first = todos[0]
             cur = (first.get("date") if op == "date" else first.get("done_on")) or today
-            s = simpledialog.askstring("날짜", ("추가한 날" if op == "date" else "완료한 날") + (f" ({len(todos)}개)" if len(todos) > 1 else "") + "  (예: 2026-09-14, 20260914)",
-                                       initialvalue=cur, parent=self)
+            s = datepick.ask(self, self.C, self.ui, "날짜", ("추가한 날" if op == "date" else "완료한 날") + (f" ({len(todos)}개)" if len(todos) > 1 else "")
+                             + "  — 직접 쓰거나(예: 20260914) 아래 달력에서 고르세요", cur)
             d = M.parse_loose(s) if s else None
             if s and not d:
                 return messagebox.showinfo("날짜", "날짜를 읽을 수 없습니다. 예: 2026-09-14 또는 20260914", parent=self)
