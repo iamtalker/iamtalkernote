@@ -14,6 +14,7 @@ import os
 import queue
 import re
 import secrets
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -5565,6 +5566,36 @@ class App:
         def sync_tab(p):
             syncui.tab(self, p, dict(lab=lab, title=title, hr=hr, copy=copy, Btn=Btn, C=C, top=top, ui=self.ui))
 
+        def index_tab(p):
+            title(p, "색인", "노트와 가져온 폴더를 빨리 찾으려고 만들어 둔 목록의 상태입니다. 노트 파일이 원본이고, 색인은 언제든 다시 만듭니다.")
+            rows = {}
+            for key, label in (("notes", "노트"), ("state", "상태"), ("docs", "가져온 폴더"), ("kept", "보관 중인 색인")):
+                lab(p, label, font=(self.ui, 10, "bold")).pack(anchor="w", pady=(10, 0))
+                rows[key] = lab(p, "…", fg=C["text"], wraplength=620)
+                rows[key].pack(anchor="w", pady=(2, 0))
+            lab(p, "가져온 폴더를 목록에서 빼도 이미 만든 색인은 지우지 않고 보관합니다. 같은 폴더를 다시 넣으면 그 색인을 되살리고 바뀐 파일만 읽습니다.",
+                fg=C["muted"], font=(self.ui, 9), wraplength=620).pack(anchor="w", pady=(14, 0))
+            Btn(p, "노트 다시 훑기", lambda: self.reload_notes(), padx=12, pady=4).pack(anchor="w", pady=(10, 0))
+            alive = {"on": True}
+            p.bind("<Destroy>", lambda e: alive.update(on=False) if e.widget is p else None)
+
+            def tick():
+                if not alive["on"]:
+                    return
+                try:
+                    files, indexed = len(self.all_notes), self.store.index_count()
+                    d, t = self.load_prog
+                    rows["notes"].config(text=f"파일 {files:,}개 · 색인 {indexed:,}개" + (f" ({indexed / files:.0%})" if files else ""))
+                    rows["state"].config(text=(f"처음 색인을 만드는 중… {d:,} / {t:,} ({d / t:.0%})" if t and d < t else "최신 상태입니다(바뀐 파일은 자동으로 다시 읽습니다)"))
+                    counts, folders = self.docs.counts(), self.docs.folders()
+                    rows["docs"].config(text="\n".join(f"{f.get('name') or f['path']}  —  색인 {counts.get(f['id'], 0):,}개" for f in folders) or "(없음)")
+                    kept = self.docs.kept_counts()
+                    rows["kept"].config(text=f"목록에서 뺀 폴더의 색인 {sum(kept.values()):,}개" if kept else "(없음)")
+                except (tk.TclError, sqlite3.Error):
+                    return
+                p.after(1000, tick)
+            tick()
+
         def planner_tab(p):
             title(p, "달력·할일", "달력과 할일, 그리고 일용직·건설직의 공수달력을 정합니다.")
             on = tk.BooleanVar(value=self.feat["cal"])
@@ -5603,7 +5634,7 @@ class App:
             lab(p, "공수 합계 × 단가 = 일당, 출근한 날 수 × 일비 = 일비. 공휴일은 내장 표(2024~2030년)로 표시합니다.", fg=C["muted"], font=(self.ui, 9),
                 wraplength=620).pack(anchor="w", pady=(10, 0))
 
-        pages = (("general", "일반", general), ("planner", "달력·할일", planner_tab), ("folders", "폴더", folders_tab), ("imports", "가져오기", imports_tab), ("fonts", "글꼴", fonts_tab), ("theme", "테마·색상", theme_tab), ("versions", "노트 버전", versions_tab), ("sync", "동기화", sync_tab), ("clipper", "웹 클리퍼", clipper))
+        pages = (("general", "일반", general), ("planner", "달력·할일", planner_tab), ("index", "색인", index_tab), ("folders", "폴더", folders_tab), ("imports", "가져오기", imports_tab), ("fonts", "글꼴", fonts_tab), ("theme", "테마·색상", theme_tab), ("versions", "노트 버전", versions_tab), ("sync", "동기화", sync_tab), ("clipper", "웹 클리퍼", clipper))
 
         def select(key):
             for k, b in tabs.items():

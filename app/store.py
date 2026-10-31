@@ -850,6 +850,16 @@ class Store:
             for key in sorted(gone):
                 self.journal("external", key, detail="앱 밖에서 사라짐(지우기·이름 바꿈·이동)")
 
+    def index_count(self):
+        """색인 DB 에 든 노트 수"""
+        conn = self._db()
+        try:
+            return conn.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
+        except sqlite3.Error:
+            return 0
+        finally:
+            conn.close()
+
     def titles(self):
         """색인에 있는 모든 노트의 [(제목, 경로키)] (위키: 같은 제목 막기)"""
         conn = self._db()

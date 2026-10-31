@@ -278,6 +278,14 @@ class DocIndex:
             return False
         c["folders"].append({"path": path, "name": os.path.basename(path.rstrip("\\/")) or path})
         self.save_cfg(c)
+        conn = self._db()
+        try:   # 예전에 뺐다가 다시 넣는 폴더면, 그때 만든 색인을 그대로 되살린다(다시 읽을 필요 없이 바뀐 파일만 읽는다)
+            if conn.execute("SELECT 1 FROM docs_old WHERE folder=? LIMIT 1", (self.fid(path),)).fetchone():
+                conn.execute("INSERT OR REPLACE INTO docs SELECT * FROM docs_old WHERE folder=?", (self.fid(path),))
+                conn.execute("DELETE FROM docs_old WHERE folder=?", (self.fid(path),))
+                conn.commit()
+        finally:
+            conn.close()
         return True
 
     def remove_folder(self, fid):
@@ -285,7 +293,8 @@ class DocIndex:
         c["folders"] = [f for f in c["folders"] if self.fid(f["path"]) != fid]
         self.save_cfg(c)
         conn = self._db()
-        try:
+        try:   # 목록에서만 빼고 색인은 보관해 둔다(같은 폴더를 다시 넣으면 되살림)
+            conn.execute("INSERT OR REPLACE INTO docs_old SELECT * FROM docs WHERE folder=?", (fid,))
             conn.execute("DELETE FROM docs WHERE folder=?", (fid,))
             conn.commit()
         finally:
@@ -300,10 +309,13 @@ class DocIndex:
         ver = conn.execute("SELECT v FROM meta WHERE k='version'").fetchone()
         if not ver or ver[0] != str(DOC_VERSION):
             conn.execute("DROP TABLE IF EXISTS docs")
+            conn.execute("DROP TABLE IF EXISTS docs_old")
             conn.execute("INSERT OR REPLACE INTO meta VALUES ('version', ?)", (str(DOC_VERSION),))
         conn.execute("CREATE TABLE IF NOT EXISTS docs (path TEXT PRIMARY KEY, folder TEXT, ext TEXT, size INTEGER, mtime_ns INTEGER, "
                      "mtime REAL, ctime REAL, title TEXT, hay BLOB, body BLOB, content INTEGER, nhay BLOB)")
         conn.execute("CREATE INDEX IF NOT EXISTS docs_folder ON docs(folder)")
+        conn.execute("CREATE TABLE IF NOT EXISTS docs_old (path TEXT PRIMARY KEY, folder TEXT, ext TEXT, size INTEGER, mtime_ns INTEGER, "
+                     "mtime REAL, ctime REAL, title TEXT, hay BLOB, body BLOB, content INTEGER, nhay BLOB)")   # 목록에서 뺀 폴더의 색인 보관
         if "nhay" not in [r[1] for r in conn.execute("PRAGMA table_info(docs)")]:
             # 이름·경로·태그·메모만의 검색용 사본('문서 안 글' 검색을 끈 채 찾을 때 쓴다). 이미 읽어 둔 색인은 파일을 다시 읽지 않고 DB 안의 값으로 채운다
             conn.execute("ALTER TABLE docs ADD COLUMN nhay BLOB")
@@ -553,6 +565,14 @@ class DocIndex:
             out.append(Doc(nb="@doc:" + folder, key=p, path=p, title=title + "." + ext, size=size, mtime=mt, ctime=ct, file_mtime=mt,
                            tags=set(tags), memo=memo, ext=ext, root=names[folder]["path"], _index=self))
         return out
+
+    def kept_counts(self):
+        """목록에서 뺐지만 색인을 보관 중인 폴더별 개수"""
+        conn = self._db()
+        try:
+            return dict(conn.execute("SELECT folder, COUNT(*) FROM docs_old GROUP BY folder"))
+        finally:
+            conn.close()
 
     def counts(self):
         conn = self._db()
