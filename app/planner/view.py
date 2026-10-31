@@ -212,26 +212,36 @@ class PlannerView(tk.Frame):
                              tags=("done",) if t["done"] else ())
 
     def on_tree_menu(self, e):
-        """할일 목록에서 오른쪽 클릭: '추가한 날'이나 '완료한 날' 칸이면 그 날짜를 바꾼다(실제로 날짜를 잘못 적거나 늦게 끝낸 일이 있으므로)"""
+        """할일 목록에서 오른쪽 클릭: 어느 칸이든 '할일 만들기'(날짜 없이 만들고 나중에 날짜 지정), 할일 위면 칸에 따라
+        글 칸 = 내용 바꾸기·삭제, 추가한 날 칸 = 날짜 지정·변경·없애기, 완료한 날 칸 = 완료한 날 변경·완료 취소"""
         row, col = self.tree.identify_row(e.y), self.tree.identify_column(e.x)
         t = self.pl.find(row) if row else None
-        if not t or col not in ("#1", "#2", "#3"):
-            return
-        self.tree.selection_set(row)
         m = tk.Menu(self, tearoff=0)
-        if col == "#3":
-            m.add_command(label="내용 바꾸기…", command=lambda: self.rename_todo(t))
-            m.add_command(label="삭제", command=lambda: self.delete_todo(t))
-        elif col == "#1":
-            m.add_command(label="추가한 날 바꾸기…", command=lambda: self.ask_date(t, "date"))
-        else:
-            m.add_command(label="완료한 날 바꾸기…" if t["done"] else "완료한 날을 정해 완료로…", command=lambda: self.ask_date(t, "done_on"))
-            if t["done"]:
-                m.add_command(label="완료 취소", command=lambda: (self.pl.update(t["id"], done=False), self.changed()))
+        if t:
+            self.tree.selection_set(row)
+            if col == "#3":
+                m.add_command(label="내용 바꾸기…", command=lambda: self.rename_todo(t))
+                m.add_command(label="삭제", command=lambda: self.delete_todo(t))
+            elif col == "#1":
+                m.add_command(label="추가한 날 바꾸기…" if t.get("date") else "날짜 지정…", command=lambda: self.ask_date(t, "date"))
+                if t.get("date"):
+                    m.add_command(label="날짜 없애기", command=lambda: (self.pl.update(t["id"], date=None), self.changed()))
+            elif col == "#2":
+                m.add_command(label="완료한 날 바꾸기…" if t["done"] else "완료한 날을 정해 완료로…", command=lambda: self.ask_date(t, "done_on"))
+                if t["done"]:
+                    m.add_command(label="완료 취소", command=lambda: (self.pl.update(t["id"], done=False), self.changed()))
+            m.add_separator()
+        m.add_command(label="할일 만들기…", command=self.new_todo)
         m.tk_popup(e.x_root, e.y_root)
 
+    def new_todo(self):
+        """날짜 없이 할일을 만든다(날짜는 목록에서 날짜 칸을 오른쪽 클릭해 지정). 날짜를 정해 만들려면 달력의 날을 오른쪽 클릭"""
+        s = simpledialog.askstring("할일 만들기", "할일 내용", parent=self)
+        if s and self.pl.add(s):
+            self.changed()
+
     def ask_date(self, t, field):
-        cur = t.get("date") if field == "date" else (t.get("done_on") or M.iso(datetime.date.today()))
+        cur = (t.get("date") or M.iso(datetime.date.today())) if field == "date" else (t.get("done_on") or M.iso(datetime.date.today()))
         s = simpledialog.askstring("날짜 바꾸기", ("추가한 날" if field == "date" else "완료한 날") + "  (예: 2026-09-14, 20260914)", initialvalue=cur or "", parent=self)
         if not s:
             return
