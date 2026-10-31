@@ -1926,9 +1926,10 @@ class App:
             self.ac_poll()
 
     def ime_keep_font(self, ev):
-        """조합이 새로 시작될 때마다(조합 중인 글자가 없다가 생길 때) 입력기 글꼴을 그 칸 글꼴에 맞춘다"""
+        """입력기 조합 글꼴을 그 칸 글꼴에 맞춰 둔다. 조합이 시작되기 전(글쇠를 누를 때, 조합 글자가 없을 때)에 미리 맞춰야 첫 글자부터 제 크기로
+        보인다(조합이 시작된 뒤에 맞추면 그 글자가 작게 보였다가 확정되며 커졌다). 조합 중에 새로 시작된 경우도 한 번 더 맞춘다"""
         comp = bool(ime.composing())
-        if comp and not getattr(self, "_ime_on", False):
+        if (not comp and str(ev.type) in ("2", "KeyPress")) or (comp and not getattr(self, "_ime_on", False)):
             self.match_ime_font(ev)
         self._ime_on = comp
 
