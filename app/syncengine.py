@@ -206,6 +206,22 @@ class Engine:
         me = self.my_id()
         return [(d["deviceID"], d.get("name", "")) for d in self.api("/rest/config")["devices"] if d["deviceID"] != me]
 
+    def peer_states(self):
+        """등록된 기기별 연결 상태: [(id, 이름, 연결됨, 어떻게)]. 어떻게: 같은 와이파이 / 인터넷 / 중계"""
+        me = self.my_id()
+        conns = (self.api("/rest/system/connections") or {}).get("connections", {})
+        out = []
+        for d in self.api("/rest/config")["devices"]:
+            i = d["deviceID"]
+            if i == me:
+                continue
+            c = conns.get(i, {})
+            how = ""
+            if c.get("connected"):
+                how = "같은 와이파이" if c.get("isLocal") else ("중계" if str(c.get("type", "")).startswith("relay") else "인터넷")
+            out.append((i, d.get("name", ""), bool(c.get("connected")), how))
+        return out
+
     def add_peer(self, dev_id, name):
         dev_id = clean_device_id(dev_id)
         if not valid_device_id(dev_id):

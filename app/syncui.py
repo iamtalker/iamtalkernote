@@ -251,13 +251,19 @@ def tab(app, p, kit):
         peer_ids = []
 
         def fill_peers():
+            """기기 목록과 연결 상태(● 연결됨 / ○ 연결 안 됨). 4초마다 다시 그리되 고른 줄은 유지한다"""
             def done(r, err):
+                if r is None:
+                    return
+                sel = [peer_ids[j] for j in lb.curselection() if j < len(peer_ids)]
                 lb.delete(0, "end")
                 peer_ids.clear()
-                for i, n in (r or []):
+                for i, n, ok, how in r:
                     peer_ids.append(i)
-                    lb.insert("end", f"{n or '이름 없음'}    {i[:7]}…")
-            bg(eng.peers, done) if eng.running() else None
+                    lb.insert("end", f"{'● 연결됨' if ok else '○ 연결 안 됨'}    {n or '이름 없음'}    {i[:7]}…" + (f"    ({how})" if how else ""))
+                    if i in sel:
+                        lb.selection_set("end")
+            bg(eng.peer_states, done) if eng.running() else None
 
         def add_peer():
             if not eng.running():
@@ -556,7 +562,7 @@ def tab(app, p, kit):
                         prog.config(text=stage + "폰 받기: " + syncprogress.line(pp[0], pp[1], pp[2], pp[3], etas["e"].update(pp[3]), all_n))
                     states = [s for s, _ in ov["folders"].values()]
                     busy = sum(1 for s in states if s not in ("idle", "?"))
-                    status.config(text=f"실행 중 · 연결된 기기 {ov['connected']}/{ov['peers']}" + (f" · 맞추는 중 {busy}개" if busy else " · 모두 최신"), fg="#15803d")
+                    status.config(text=("실행 중 · " + (f"기기 {ov['connected']}대 연결됨" if ov["connected"] else "연결된 기기 없음") + f" (등록 {ov['peers']}대)") + (f" · 맞추는 중 {busy}개" if busy else " · 모두 최신"), fg="#15803d")
                     show_pending(pending)
                     msg = f"Syncthing {up['running']}" if up["running"] else ""
                     if up["newer"] and up["major"]:
@@ -566,8 +572,7 @@ def tab(app, p, kit):
                     elif up["running"]:
                         msg += " (최신)"
                     ver.config(text=msg)
-                    if not peer_ids and ov["peers"]:
-                        fill_peers()
+                    fill_peers()
                 try:
                     app.root.after(4000, poll)
                 except Exception:  # noqa: BLE001
