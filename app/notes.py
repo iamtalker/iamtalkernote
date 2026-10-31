@@ -272,6 +272,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         m.add_command(label=tr("사용 설명서 (GitHub)…"), accelerator="F1", command=self.open_manual)
         m.add_command(label=tr("검색 문법"), command=self.help_search)
         m.add_command(label=tr("안드로이드 앱 내려받기 (APK)…"), command=lambda: webbrowser.open(self.ANDROID_URL))
+        m.add_command(label=tr("오픈소스 라이선스…"), command=self.show_licenses)
         m.add_separator()
         m.add_command(label=tr("업데이트 확인…"), command=self.check_update)
         m.add_command(label=tr("{app} 정보 (버전 {v})").format(app=APP, v=VERSION), command=lambda: messagebox.showinfo(

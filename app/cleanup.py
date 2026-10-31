@@ -1,5 +1,6 @@
 """노트 정리 도구: 중복 노트 찾기, 스크랩한 글의 군더더기(사이트 메뉴·"맨위로" 같은 줄) 찾기.
 화면 코드가 없는 순수 로직이라 notes.py 가 대화상자를 만들어 쓴다."""
+from i18n import tr
 import hashlib
 import re
 from collections import Counter
@@ -417,7 +418,7 @@ def site_boilerplate(notes, progress=None, cancelled=lambda: False, site_map=Non
         if cancelled():
             return {}
         if progress and i % 200 == 0:
-            progress(i, len(notes), "1/2단계 — 사이트 공통 줄 찾는 중…")
+            progress(i, len(notes), tr("1/2단계 — 사이트 공통 줄 찾는 중…"))
         body = unwrap_single_column(n.read())[0]
         if site_map is not None:
             site_map[n["path"]] = site_of(body)
@@ -441,7 +442,7 @@ def scan_junk(notes, progress=None, cancelled=lambda: False, opts=None):
         if cancelled():
             break
         if progress and i % 200 == 0:
-            progress(i, total, "2/2단계 — 노트마다 지울 줄 찾는 중…")
+            progress(i, total, tr("2/2단계 — 노트마다 지울 줄 찾는 중…"))
         body, tables = unwrap_single_column(n.read())
         new, removed = settle_body(body, sites.get(site_map.get(n["path"], ""), frozenset()))
         if tables:

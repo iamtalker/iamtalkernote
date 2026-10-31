@@ -1,6 +1,7 @@
 """업데이트 확인·내려받기: GitHub 릴리스(iamtalker/iamtalkernote)의 최신 iamtalkernote.exe 로 바꾼다.
 사용자가 도움말 → 업데이트 확인을 눌렀을 때만 인터넷에 접속한다. 내려받은 파일은 릴리스 노트에 적힌 SHA-256 과 맞을 때만 쓴다
 (전송 중 깨짐 방지용이며, 저장소 자체가 뚫린 경우까지 막아 주지는 않는다)."""
+from i18n import tr
 import hashlib
 import json
 import os
@@ -57,7 +58,7 @@ def whats_new(body, limit=700):
 def download(rel, progress=None, cancelled=lambda: False, timeout=30):
     """새 exe 를 임시 폴더에 내려받아 SHA-256 을 확인하고 경로를 돌려준다. 안 맞으면 지우고 예외"""
     if not rel.get("asset_url") or not rel.get("sha"):
-        raise OSError("릴리스에 exe 나 SHA-256 이 없어서 자동으로 바꿀 수 없습니다")
+        raise OSError(tr("릴리스에 exe 나 SHA-256 이 없어서 자동으로 바꿀 수 없습니다"))
     folder = os.path.join(tempfile.gettempdir(), "iamtalkernote-update")
     os.makedirs(folder, exist_ok=True)
     dest = os.path.join(folder, ASSET)
@@ -66,7 +67,7 @@ def download(rel, progress=None, cancelled=lambda: False, timeout=30):
     req = urllib.request.Request(rel["asset_url"], headers={"User-Agent": UA})
     with urllib.request.urlopen(req, timeout=timeout) as r, open(part, "wb") as f:
         if not host_ok(r.geturl()):
-            raise OSError("내려받는 주소가 GitHub 가 아니어서 중단했습니다")
+            raise OSError(tr("내려받는 주소가 GitHub 가 아니어서 중단했습니다"))
         total = int(r.headers.get("Content-Length") or rel.get("size") or 0)
         got = 0
         while True:
@@ -85,7 +86,7 @@ def download(rel, progress=None, cancelled=lambda: False, timeout=30):
         return None
     if h.hexdigest() != rel["sha"]:
         _rm(part)
-        raise OSError("내려받은 파일의 SHA-256 이 릴리스에 적힌 값과 달라서 중단했습니다")
+        raise OSError(tr("내려받은 파일의 SHA-256 이 릴리스에 적힌 값과 달라서 중단했습니다"))
     _rm(dest)
     os.replace(part, dest)
     return dest

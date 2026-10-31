@@ -4,6 +4,23 @@ from notes_shared import *  # noqa: F401,F403
 
 
 class DialogsMixin:
+    def show_licenses(self):
+        """도움말 → 오픈소스 라이선스: 포함된 제3자 소프트웨어의 저작권·라이선스 전문(assets/THIRD_PARTY_NOTICES.md)"""
+        top = self.tool_window(tr("오픈소스 라이선스"), "900x640", native=True)
+        wrap = tk.Frame(top, bg=C["bg"])
+        wrap.pack(fill="both", expand=True, padx=12, pady=12)
+        txt = tk.Text(wrap, wrap="word", bg=C["bg"], fg=C["text"], font=(self.ui, 10), relief="flat", padx=12, pady=8, borderwidth=0)
+        sb = ttk.Scrollbar(wrap, orient="vertical", command=txt.yview)
+        txt.config(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        txt.pack(side="left", fill="both", expand=True)
+        try:
+            body = open(os.path.join(HERE, "assets", "THIRD_PARTY_NOTICES.md"), encoding="utf-8").read()
+        except OSError:
+            body = tr("라이선스 파일을 찾을 수 없습니다.") + "\nhttps://github.com/iamtalker/iamtalkernote/blob/main/app/assets/THIRD_PARTY_NOTICES.md"
+        txt.insert("1.0", body)
+        txt.config(state="disabled")
+
     def show_snapshots(self):
         """파일 > 복원 지점: 어느 시점의 모든 노트를 기억해 두었다가 그 상태로 되돌린다"""
         top = self.tool_window(tr("복원 지점"), "800x520")
@@ -239,7 +256,7 @@ class DialogsMixin:
         quiet = {"on": False}   # 코드로 줄을 고를 때는 노트를 열지 않는다
 
         def is_same(why):
-            return set(why) == {tr("본문이 같음")}
+            return set(why) == {"본문이 같음"}
 
         def fill():
             tv.delete(*tv.get_children())
@@ -489,7 +506,7 @@ class DialogsMixin:
             shown_lines.clear()
             for no, line, why in removed[:300]:
                 shown_lines[int(pv.index("end-1c").split(".")[0])] = line
-                pv.insert("end", f"{no:>5}  [{why}] {line}\n", "rm")
+                pv.insert("end", f"{no:>5}  [{tr(why)}] {line}\n", "rm")
             pv.config(state="disabled")
         fill()
         lb.bind("<<ListboxSelect>>", show)

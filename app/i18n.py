@@ -63,6 +63,7 @@ EN = {
     "들여쓰기": "Indent", "내어쓰기": "Outdent", "링크": "Link", "노트 링크": "Note link", "자동 링크": "Auto link", "그림": "Image", "유튜브 영상": "YouTube video",
     "언어 지정 코드": "Code with language", "수식 (줄 안)": "Math (inline)", "수식 (블록)": "Math (block)", "접기": "Collapsible", "목차": "Table of contents",
     "각주": "Footnote", "날짜·시간": "Date · time",
+    "오픈소스 라이선스…": "Open-source licenses…", "오픈소스 라이선스": "Open-source licenses", "라이선스 파일을 찾을 수 없습니다.": "The license file could not be found.",
     "라이트 보라": "Light purple", "라이트 파랑": "Light blue", "라이트 초록": "Light green", "다크 검정": "Dark black", "다크 회색": "Dark gray", "내 테마": "My theme",
 }
 
@@ -135,3 +136,6 @@ EN.update(EN_DIALOGS_F)
 
 from lang_en3 import EN_MAIN  # noqa: E402   (메인 화면·메시지·달력·태그 번역)
 EN.update(EN_MAIN)
+
+from lang_en4 import EN_MSG  # noqa: E402   (저장소·업데이트·군더더기 이유 메시지)
+EN.update(EN_MSG)

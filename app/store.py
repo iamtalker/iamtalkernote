@@ -1,4 +1,5 @@
 """노트 저장소: 노트북 = 폴더, 노트 = .md 파일(제목 = 파일 이름). 위키나루의 md_name / md_title 규칙을 그대로 쓴다."""
+from i18n import tr
 import base64
 import calendar
 import hashlib
@@ -107,7 +108,7 @@ def default_root():
 def recycle(path):
     """윈도 휴지통으로 보낸다(안 되면 삭제하지 않고 예외)."""
     if sys.platform != "win32":
-        raise OSError("휴지통을 지원하지 않는 운영체제입니다")
+        raise OSError(tr("휴지통을 지원하지 않는 운영체제입니다"))
     import ctypes
     from ctypes import wintypes
 
@@ -118,7 +119,7 @@ def recycle(path):
     # FO_DELETE, FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI
     op = OP(None, 3, os.path.abspath(path) + "\0", None, 0x40 | 0x10 | 0x4 | 0x400, False, None, None)
     if ctypes.windll.shell32.SHFileOperationW(ctypes.byref(op)) != 0 or os.path.exists(path):
-        raise OSError("휴지통으로 보내지 못했습니다")
+        raise OSError(tr("휴지통으로 보내지 못했습니다"))
 
 
 def decode(data):
@@ -376,7 +377,7 @@ class Store:
     def nb_dir(self, nb):
         p = os.path.abspath(os.path.join(self.root, nb))
         if p != self.root and not p.startswith(self.root + os.sep):
-            raise ValueError("잘못된 경로")
+            raise ValueError(tr("잘못된 경로"))
         return p
 
     # ---- 노트북 (하위 노트북 = 하위 폴더. 경로는 항상 "a/b" 모양)
@@ -467,39 +468,39 @@ class Store:
         full = os.path.join(self.root, rel.replace("/", os.sep))
         if ev == "edit":
             if not os.path.isfile(full):
-                raise OSError("이 노트는 지금 없습니다(삭제되었거나 이름이 바뀌었습니다).")
+                raise OSError(tr("이 노트는 지금 없습니다(삭제되었거나 이름이 바뀌었습니다)."))
             near = [v for v in self.versions(full) if abs(v[0] - rec["t"]) <= 10]
             if not near:
-                raise OSError("이 저장 직전의 버전이 없습니다(같은 노트의 잦은 저장은 버전을 간격을 두고 남기거나, 버전 기록이 꺼져 있었을 수 있습니다).")
+                raise OSError(tr("이 저장 직전의 버전이 없습니다(같은 노트의 잦은 저장은 버전을 간격을 두고 남기거나, 버전 기록이 꺼져 있었을 수 있습니다)."))
             ts, _, fp = min(near, key=lambda v: abs(v[0] - rec["t"]))
             body = self.read_version(fp)
             self.snapshot(full, body, max(1, version_settings()["keep"]), 0)   # 지금 내용은 새 버전으로 남겨 다시 돌아올 수 있게
             self.save(full, body, versioned=False, ev="restore")
-            return "%s 저장 직전의 내용으로 되돌렸습니다." % time.strftime("%H:%M:%S", time.localtime(ts))
+            return tr("%s 저장 직전의 내용으로 되돌렸습니다.") % time.strftime("%H:%M:%S", time.localtime(ts))
         if ev == "create":
             if not os.path.isfile(full):
-                raise OSError("이 노트는 지금 없습니다.")
+                raise OSError(tr("이 노트는 지금 없습니다."))
             self.to_trash(full)
-            return "새로 만든 노트를 휴지통으로 보냈습니다."
+            return tr("새로 만든 노트를 휴지통으로 보냈습니다.")
         if ev == "delete":
             if rel == ".":
-                raise OSError("여러 파일을 한꺼번에 지운 항목은 파일 → 휴지통에서 복원하세요.")
+                raise OSError(tr("여러 파일을 한꺼번에 지운 항목은 파일 → 휴지통에서 복원하세요."))
             cands = [x for x in self.trash_items() if x["rel"] == rel and abs(x["deleted"] - rec["t"]) <= 10]
             if not cands:
-                raise OSError("휴지통에 없습니다(이미 복원했거나 비웠습니다).")
-            return "휴지통에서 복원했습니다: " + os.path.relpath(self.restore_trash(cands[0]["id"]), self.root)
+                raise OSError(tr("휴지통에 없습니다(이미 복원했거나 비웠습니다)."))
+            return tr("휴지통에서 복원했습니다: ") + os.path.relpath(self.restore_trash(cands[0]["id"]), self.root)
         if ev in ("rename", "move") and rec.get("to"):
             cur = os.path.join(self.root, rec["to"].replace("/", os.sep))
             if not os.path.isfile(cur):
-                raise OSError("바뀐 뒤의 노트가 지금 없습니다.")
+                raise OSError(tr("바뀐 뒤의 노트가 지금 없습니다."))
             if ev == "rename":
                 if os.path.exists(full):
-                    raise OSError("원래 이름의 노트가 이미 있습니다.")
+                    raise OSError(tr("원래 이름의 노트가 이미 있습니다."))
                 _, new = self.rename(cur, md_title(os.path.basename(full)))
             else:
                 new = self.move(cur, os.path.dirname(rel))
-            return "원래대로 되돌렸습니다: " + os.path.relpath(new, self.root)
-        raise OSError("이 종류의 변경은 이력에서 되돌릴 수 없습니다.")
+            return tr("원래대로 되돌렸습니다: ") + os.path.relpath(new, self.root)
+        raise OSError(tr("이 종류의 변경은 이력에서 되돌릴 수 없습니다."))
 
     # ---- 휴지통: <볼트>/.trash/<번호>/{item, meta.json}. 지운 지 TRASH_DAYS 일이 지나면 시작할 때 완전히 지운다.
     @property
@@ -518,7 +519,7 @@ class Store:
         path = os.path.abspath(path)
         rel = os.path.relpath(path, self.root).replace("\\", "/")
         if rel.startswith("..") or rel == ".":
-            raise OSError("볼트 밖의 항목은 휴지통으로 보낼 수 없습니다")
+            raise OSError(tr("볼트 밖의 항목은 휴지통으로 보낼 수 없습니다"))
         tid = "%d-%s" % (int(time.time() * 1000), secrets.token_hex(3))
         d = os.path.join(self.trash_dir, tid)
         os.makedirs(d)
@@ -592,7 +593,7 @@ class Store:
                 names = []
                 for dp, _d, fn in os.walk(it["path"]):
                     names += [os.path.relpath(os.path.join(dp, f), it["path"]) for f in fn]
-                n["body"] = f"원래 위치: {it['rel']}\n파일 {len(names):,}개\n\n" + "\n".join(names[:300])
+                n["body"] = tr('원래 위치: {0}\n파일 {1:,}개\n\n').format(it['rel'], len(names)) + "\n".join(names[:300])
             out.append(n)
         return out
 
@@ -600,7 +601,7 @@ class Store:
         """원래 자리로 되돌린다(같은 이름이 있으면 ' (복원)' 을 붙인다) → 복원된 경로"""
         it = next((x for x in self.trash_items() if x["id"] == tid), None)
         if not it:
-            raise OSError("휴지통에 없는 항목입니다")
+            raise OSError(tr("휴지통에 없는 항목입니다"))
         if it["into"]:   # 파일 묶음: 원래 폴더 구조대로 되돌린다(같은 이름이 이미 있으면 그대로 둔다)
             for dp, _, fn in os.walk(it["path"]):
                 for f in fn:
@@ -618,7 +619,7 @@ class Store:
                 i = 0
                 while os.path.exists(dst):
                     i += 1
-                    dst = f"{base} (복원{'' if i == 1 else i}){ext}"
+                    dst = tr('{0} (복원{1}){2}').format(base, '' if i == 1 else i, ext)
                 shutil.move(os.path.join(it["path"], x), dst)
             shutil.rmtree(os.path.join(self.trash_dir, tid), ignore_errors=True)
             return self.root
@@ -628,7 +629,7 @@ class Store:
         i = 0
         while os.path.exists(target):
             i += 1
-            target = f"{base} (복원{'' if i == 1 else i}){ext}"
+            target = tr('{0} (복원{1}){2}').format(base, '' if i == 1 else i, ext)
         shutil.move(it["path"], target)
         shutil.rmtree(os.path.join(self.trash_dir, tid), ignore_errors=True)
         self.journal("restore", target, detail="휴지통에서")
@@ -661,8 +662,8 @@ class Store:
         home = os.path.expanduser("~")
         protected = {os.path.normcase(x) for x in (home, *(os.path.join(home, d) for d in ("Documents", "Desktop", "Downloads")))}
         if os.path.dirname(p) == p or os.path.normcase(p) in protected:
-            raise ValueError("드라이브 루트나 사용자·문서·바탕화면·다운로드 폴더 자체는 통째로 삭제할 수 없습니다.\n"
-                             "먼저 설정 > 폴더 설정에서 노트 전용 폴더로 바꾸세요.")
+            raise ValueError(tr("드라이브 루트나 사용자·문서·바탕화면·다운로드 폴더 자체는 통째로 삭제할 수 없습니다.\n"
+                             "먼저 설정 > 폴더 설정에서 노트 전용 폴더로 바꾸세요."))
         # 폴더 자신은 그대로 두고 안의 내용(휴지통 폴더만 빼고)을 휴지통 항목 하나로 옮긴다
         names = [x for x in os.listdir(p) if x != TRASH_DIR]
         if not names:
@@ -944,7 +945,7 @@ class Store:
         if created is not None:
             new, ok = fm_set(new, "created", created)
             if not ok:
-                raise ValueError("이 노트에는 생성 시각을 적어 둘 머리말(created)이 없어서 바꿀 수 없습니다.")
+                raise ValueError(tr("이 노트에는 생성 시각을 적어 둘 머리말(created)이 없어서 바꿀 수 없습니다."))
         if new != body:
             self.before_change(path)
             with open(path, "w", encoding="utf-8", newline="\n") as fh:
@@ -1097,7 +1098,7 @@ class Store:
         notes = self.list_notes("*")
         for i, n in enumerate(notes):
             if progress and i % 50 == 0:
-                progress(i, len(notes), "2/2단계 — 노트의 그림 링크 고치는 중…")
+                progress(i, len(notes), tr("2/2단계 — 노트의 그림 링크 고치는 중…"))
             d = os.path.dirname(n["path"])
 
             def fix(m):
@@ -1138,13 +1139,13 @@ class Store:
         """옮길 폴더로 쓸 수 있는지 검사한다 → 이유(문자열) 또는 None"""
         o, r, m = (os.path.normcase(os.path.abspath(x)) for x in (old, self.root, os.path.join(self.root, MEDIA_DIR)))
         if not os.path.isdir(old):
-            return "폴더가 없습니다."
+            return tr("폴더가 없습니다.")
         if o == m:
-            return "이미 .resources 폴더입니다."
+            return tr("이미 .resources 폴더입니다.")
         if o == r or r.startswith(o + os.sep):
-            return "노트 폴더 전체이거나 그것을 품은 폴더는 고를 수 없습니다."
+            return tr("노트 폴더 전체이거나 그것을 품은 폴더는 고를 수 없습니다.")
         if o.startswith(m + os.sep) or m.startswith(o + os.sep):
-            return ".resources 와 서로 안에 들어 있는 폴더는 고를 수 없습니다."
+            return tr(".resources 와 서로 안에 들어 있는 폴더는 고를 수 없습니다.")
         return None
 
     def preview_media_folder(self, old, progress=None):
@@ -1165,7 +1166,7 @@ class Store:
         rename, moved = {}, 0
         for i, entry in enumerate(entries):
             if progress and i % 50 == 0:
-                progress(i, len(entries), "1/2단계 — 파일 옮기는 중…")
+                progress(i, len(entries), tr("1/2단계 — 파일 옮기는 중…"))
             dst, stem, ext, k = os.path.join(new, entry), *os.path.splitext(entry), 1
             while os.path.exists(dst):
                 dst = os.path.join(new, f"{stem}-{k}{ext}")
@@ -1188,7 +1189,7 @@ class Store:
         new = self.media_dir_for(mode, path)
         on, nn = os.path.normcase(os.path.abspath(old)), os.path.normcase(os.path.abspath(new))
         if migrate and on != nn and (nn.startswith(on + os.sep) or on.startswith(nn + os.sep)):
-            raise ValueError("새 폴더와 기존 리소스 폴더가 서로 안에 들어 있어 옮길 수 없습니다.")
+            raise ValueError(tr("새 폴더와 기존 리소스 폴더가 서로 안에 들어 있어 옮길 수 없습니다."))
         write_config(media={"mode": mode, "path": path or ""})
         moved = relinked = 0
         if migrate and on != nn and os.path.isdir(old):
@@ -1198,7 +1199,7 @@ class Store:
             entries = os.listdir(old)
             for i, entry in enumerate(entries):
                 if progress and i % 50 == 0:
-                    progress(i, len(entries), "1/2단계 — 리소스 파일 옮기는 중…")
+                    progress(i, len(entries), tr("1/2단계 — 리소스 파일 옮기는 중…"))
                 dst = os.path.join(new, entry)
                 if not os.path.exists(dst):
                     shutil.move(os.path.join(old, entry), dst)
