@@ -23,13 +23,21 @@ class InlineEdit:
         bottom = eb[1] + eb[3]
         width = max(120, view.winfo_width() - x - 16)
         self.lh = max(14, tkfont.Font(font=font).metrics("linespace"))
-        self.txt = tk.Text(view, wrap="word", font=font, relief="flat", bd=0, highlightthickness=1, highlightbackground=colors["accent"],
+        self.seamless = bool(keys)                   # 아웃라이너 항목: 테두리·여백 없이 렌더링된 글 바로 그 자리에서 고치는 것처럼 보이게
+        self.txt = tk.Text(view, wrap="word", font=font, relief="flat", bd=0,
+                           highlightthickness=0 if self.seamless else 1, highlightbackground=colors["accent"],
                            highlightcolor=colors["accent"], bg=colors["bg"], fg=colors["text"], insertbackground=colors["accent"],
-                           padx=6, pady=3, undo=True, height=1)
+                           selectbackground=colors.get("sel", colors["accent"]), selectforeground=colors["text"],
+                           padx=0 if self.seamless else 6, pady=0 if self.seamless else 3, undo=True, height=1,
+                           spacing2=3 if self.seamless else 0)
         self.txt.insert("1.0", text)
         self.txt.edit_reset()
-        self._x, self._y, self._w = max(0, x - 8), max(0, y - 4), width + 8
-        self.txt.place(x=self._x, y=self._y, width=self._w, height=max(self.lh + 8, bottom - y + 8))
+        if self.seamless:
+            self._x, self._y, self._w = x, y, max(60, view.winfo_width() - x - 24)
+            self.txt.place(x=self._x, y=self._y, width=self._w, height=max(self.lh, bottom - y))
+        else:
+            self._x, self._y, self._w = max(0, x - 8), max(0, y - 4), width + 8
+            self.txt.place(x=self._x, y=self._y, width=self._w, height=max(self.lh + 8, bottom - y + 8))
         self.txt.focus_set()
         self.txt.mark_set("insert", "end-1c" if cursor is None else f"1.0+{max(0, min(cursor, len(text)))}c")
         self.keys = keys or {}
@@ -85,7 +93,7 @@ class InlineEdit:
         try:
             n = self.txt.count("1.0", "end-1c", "displaylines")
             n = (n[0] if n else 1) or 1
-            self.txt.place_configure(height=n * self.lh + 10)
+            self.txt.place_configure(height=n * (self.lh + 3) if self.seamless else n * self.lh + 10)
         except tk.TclError:
             pass
 

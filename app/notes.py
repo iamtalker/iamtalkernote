@@ -3961,7 +3961,7 @@ class App:
             self.render()
             self.status.config(text="고쳤습니다 (Ctrl+Z 로 되돌립니다)")
         try:
-            self.view_edit = inlineedit.InlineEdit(self.view, vs, ve, raw, multi, (self.ui, 11), C, commit, lambda: setattr(self, "view_edit", None),
+            self.view_edit = inlineedit.InlineEdit(self.view, vs, ve, raw, multi, self.fonts["base"] if is_item else (self.ui, 11), C, commit, lambda: setattr(self, "view_edit", None),
                                                    keys=self.outline_keys(a) if is_item else None, cursor=cursor)
         except (ValueError, tk.TclError):
             return False
