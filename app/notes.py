@@ -183,9 +183,7 @@ class App(DialogsMixin):
         m.add_command(label="새 하위 노트북", command=self.add_subnotebook)
         m.add_separator()
         m.add_command(label="폴더 가져오기…", command=lambda: self.show_options("imports"))
-        m.add_command(label="지금의 검색 저장…", command=self.save_search)
         m.add_separator()
-        m.add_command(label="복원 지점…", command=self.show_snapshots)
         m.add_command(label="휴지통", command=lambda: self.go_nb(TRASH))
         m.add_separator()
         m.add_command(label="종료", accelerator="Alt+F4", command=self.quit)
@@ -224,7 +222,6 @@ class App(DialogsMixin):
         m.add_separator()
         m.add_command(label="노트 속성…", command=self.show_properties)
         m.add_command(label="노트 버전…", command=self.show_versions)
-        m.add_command(label="전체 변경 이력…", command=self.show_journal)
         m.add_command(label="비슷한 노트 찾기…", command=self.show_similar)
         mb.add_cascade(label="편집", menu=m)
 
@@ -245,22 +242,15 @@ class App(DialogsMixin):
         mb.add_cascade(label="이동", menu=m)
 
         m = tk.Menu(mb, tearoff=0)
+        m.add_command(label="옵션…", accelerator="Ctrl+,", command=lambda: self.show_options("general"))
+        m.add_separator()
+        m.add_command(label="복원 지점…", command=self.show_snapshots)
+        m.add_command(label="전체 변경 이력…", command=self.show_journal)
+        m.add_separator()
         m.add_command(label="중복 노트 찾기…", command=self.show_duplicates)
         m.add_command(label="스크랩 군더더기 정리…", command=self.show_cleanup)
         m.add_command(label="안 쓰는 미디어 파일 정리…", command=self.show_unused_media)
         mb.add_cascade(label="도구", menu=m)
-
-        m = tk.Menu(mb, tearoff=0)
-        m.add_command(label="옵션…", accelerator="Ctrl+,", command=lambda: self.show_options("general"))
-        m.add_separator()
-        m.add_command(label="폴더 설정… (노트·리소스 폴더)", command=lambda: self.show_options("folders"))
-        m.add_separator()
-        m.add_command(label="글꼴·크기…", command=lambda: self.show_options("fonts"))
-        m.add_command(label="테마·색상…", command=lambda: self.show_options("theme"))
-        m.add_command(label="노트 버전 설정…", command=lambda: self.show_options("versions"))
-        m.add_command(label="동기화 설정…", command=lambda: self.show_options("sync"))
-        m.add_command(label="웹 클리퍼 설정…", command=lambda: self.show_options("clipper"))
-        mb.add_cascade(label="설정", menu=m)
 
         m = tk.Menu(mb, tearoff=0)
         m.add_command(label="사용 설명서 (GitHub)…", accelerator="F1", command=self.open_manual)
@@ -826,7 +816,7 @@ class App(DialogsMixin):
         self.clear_btn.bind("<Enter>", lambda e: self.clear_btn.config(fg=C["text"]))
         self.clear_btn.bind("<Leave>", lambda e: self.clear_btn.config(fg=C["muted"]))
         self.search_entry.bind("<Return>", self.search_now)
-        self.ph =tk.Label(box, text="검색  (예: 만화&아이유 date:20240101-20241231)", bg=C["panel"], fg=C["muted"], font=(self.ui, 10))
+        self.ph =tk.Label(box, text="검색", bg=C["panel"], fg=C["muted"], font=(self.ui, 10))
         self.ph.bind("<Button-1>", lambda e: self.search_entry.focus_set())
         self.search_entry.bind("<FocusIn>", lambda e: self.update_placeholder())    # 안내 문구가 커서를 가리지 않게
         self.search_entry.bind("<FocusOut>", lambda e: self.update_placeholder())
@@ -846,7 +836,7 @@ class App(DialogsMixin):
                                          cursor="hand2", font=(self.ui, 9))
         self.cb_content.pack(side="left")
         self.tip(self.cb_content, "켜면 가져온 pdf·txt 등의 본문까지 찾고, 끄면 파일 이름·경로·태그·메모만 찾습니다")
-        b_save = Btn(bar, "검색 저장", self.save_search, padx=6, pady=3)   # 지금의 검색식·기간·태그·정렬을 '저장된 검색'으로
+        b_save = Btn(bar, "저장", self.save_search, padx=6, pady=3)   # 지금의 검색식·기간·태그·정렬을 '저장된 검색'으로
         b_save.pack(side="right", padx=1)
         self.tip(b_save, "지금의 검색을 왼쪽 '저장된 검색'에 이름을 붙여 저장합니다(스마트 폴더)")
         self.tip(self.sort_btns["time"], "마지막으로 고친 시각 순 (조플린 내보내기 노트는 머리말의 updated)")
