@@ -41,10 +41,15 @@ try:
     note("b/nodate.md", "no front matter")                                                                  # 날짜 없음 → 1단계
     note(".history/h.md", "x", updated=1)                                                                   # 이력은 제외
     res("shared.png"); res("aaa.jpg"); res("with space.png"); res("old.gif"); res("orphan.bin", days_ago=400)
-    plan = stages.build(tmp, now)
+    OLD = [("최근 1개월", 30), ("최근 6개월", 183), ("최근 1년", 365), ("최근 3년", 3 * 365), ("그 이전", None)]
+    plan = stages.build(tmp, now, OLD)
+    weekly = stages.build(tmp, now)
+    wn = [x["name"] for x in weekly["tiers"]]
+    check("기본 단계는 주 단위로 시작하고 빈 단계는 뺀다", wn[0] == "1주 이내" and all(x["files"] for x in weekly["tiers"][1:]) and len(wn) <= 15)
+    check("주 단위에서도 모든 파일이 한 번씩", sorted(f for x in weekly["tiers"] for f in x["files"]) == sorted(f for x in plan["tiers"] for f in x["files"]))
     t = {x["name"]: x["files"] for x in plan["tiers"]}
     names = [x["name"] for x in plan["tiers"]]
-    check("단계 이름 5개", len(names) == 5)
+    check("단계 이름(빈 단계는 빠짐)", names[0] == "최근 1개월" and 1 <= len(names) <= 5)
     check("최근에 고친 노트·최근에 만든 노트·날짜 없는 노트는 1단계", {"a/new.md", "a/born.md", "b/nodate.md"} <= set(t["최근 1개월"]))
     check("그림은 쓰는 노트 중 가장 최근 단계(shared.png 는 1단계)", ".resources/shared.png" in t["최근 1개월"] and ".resources/aaa.jpg" in t["최근 1개월"])
     check("6개월 노트와 띄어쓰기 든 그림", "b/mid.md" in t["최근 6개월"] and ".resources/with space.png" in t["최근 6개월"])

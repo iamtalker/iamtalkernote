@@ -13,8 +13,10 @@ import store as st
 
 VERSION = 1
 DAY = 86400
-# (이름, 지금부터 며칠 전까지) — 마지막은 나머지 전부
-WINDOWS = [("최근 1개월", 30), ("최근 6개월", 183), ("최근 1년", 365), ("최근 3년", 3 * 365), ("그 이전", None)]
+# (이름, 지금부터 며칠 전까지) — 마지막은 나머지 전부.
+# 경계는 피보나치 수(1·2·3·5·8·13… 주): 최근은 촘촘하게, 오래될수록 넓게. 비어 있는 단계는 build 에서 뺀다
+FIB_WEEKS = [1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233, 377, 610]
+WINDOWS = [("%d주 이내" % w, 7 * w) for w in FIB_WEEKS] + [("그 이전", None)]
 SKIP_DIRS = {".resources", ".history", ".snapshots", ".trash", ".imported", ".sync", ".syncthing"}
 TOKEN = re.compile(r"[^\s()\[\]<>\"'`|]+")
 
@@ -104,8 +106,9 @@ def build(vault, now=None, windows=WINDOWS, media=True):
                 except OSError:
                     t = None
                 tiers[tier_of(t, now, windows) if t is not None else len(windows) - 1].append(r)
+    keep = [i for i in range(len(windows)) if tiers[i] or i == 0]      # 비어 있는 단계는 열 필요가 없다(첫 단계는 항상 둔다)
     return {"version": VERSION, "made": int(now),
-            "tiers": [{"name": windows[i][0], "files": sorted(tiers[i])} for i in range(len(windows))]}
+            "tiers": [{"name": windows[i][0], "files": sorted(tiers[i])} for i in keep]}
 
 
 def sizes(vault, plan):
@@ -140,5 +143,5 @@ def ignore_lines(plan, released):
     out = []
     for t in plan["tiers"][released:]:
         for r in t["files"]:
-            out.append("/" + re.sub(r"[\\*?\[\]{}]", "?", r))
+            out.append("/" + re.sub(r"[\\*?\[\]{}�]", "?", r))
     return out
