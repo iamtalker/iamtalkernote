@@ -13,6 +13,23 @@ APK_URL = "https://github.com/iamtalker/iamtalkernote-android/releases/latest"
 MANUAL_URL = "https://github.com/iamtalker/iamtalkernote/blob/main/docs/manual.md"
 
 
+def draw_qr(canvas, text, size):
+    """캔버스에 큐알을 그린다. 큐알 모듈(qrmini)이 없으면 안내 문구만 보인다."""
+    try:
+        import qrmini
+        rows = qrmini.matrix(text)
+    except Exception:  # noqa: BLE001
+        canvas.create_text(size // 2, size // 2, text="큐알을 만들 수 없습니다\n아래 기기 ID 를 직접 넣어 주세요", justify="center")
+        return
+    n = len(rows) + 8                       # 둘레 여백(4칸)
+    cell = max(1, size // n)
+    off = (size - cell * n) // 2 + cell * 4
+    for y, r in enumerate(rows):
+        for x, v in enumerate(r):
+            if v:
+                canvas.create_rectangle(off + x * cell, off + y * cell, off + (x + 1) * cell, off + (y + 1) * cell, fill="black", outline="black")
+
+
 def current_plans(app, policy=None):
     """이 컴퓨터에서 만들 Syncthing 폴더 목록. 외부 폴더의 경로는 '가져오기' 에 등록된 폴더에서 가져온다"""
     policy = policy or sp.load(app.store.root)
@@ -226,8 +243,68 @@ def tab(app, p, kit):
             if sel and messagebox.askyesno("기기 빼기", "이 기기와의 동기화를 끊을까요?(기기에 있는 파일은 그대로입니다)", parent=top):
                 eng.remove_peer(peer_ids[sel[0]])
                 fill_peers()
+        def pair_phone():
+            """폰 연결하기: 이 컴퓨터의 기기 ID 를 큐알로 보여 주고, 창이 열려 있는 동안 연결을 요청하는 기기를 바로 허용한다."""
+            if not eng.running():
+                return messagebox.showinfo("동기화", "먼저 '동기화 사용'을 켜세요.", parent=top)
+            dlg = tk.Toplevel(top)
+            dlg.title("폰 연결하기")
+            dlg.transient(top)
+            dlg.configure(bg=C["bg"], padx=22, pady=16)
+            lab(dlg, "폰에서 큐알을 찍으세요", font=(app.ui, 11, "bold")).pack(anchor="w")
+            lab(dlg, "이 창이 열려 있는 동안 연결을 요청하는 기기는 바로 허용됩니다. 연결되면 창을 닫으세요.",
+                fg=C["muted"], font=(app.ui, 9), wraplength=360).pack(anchor="w", pady=(2, 8))
+            try:
+                dev_id = eng.my_id()
+            except Exception as ex:  # noqa: BLE001
+                dlg.destroy()
+                return messagebox.showwarning("폰 연결하기", f"기기 ID 를 읽지 못했습니다: {ex}", parent=top)
+            canvas = tk.Canvas(dlg, width=250, height=250, bg="white", highlightthickness=1, highlightbackground=C["line"])
+            canvas.pack(pady=(0, 6))
+            draw_qr(canvas, dev_id, 250)
+            lab(dlg, dev_id, fg=C["muted"], font=(app.ui, 8), wraplength=360).pack(anchor="w")
+            msg = lab(dlg, "연결을 기다리는 중…", fg=C["muted"], font=(app.ui, 9))
+            msg.pack(anchor="w", pady=(8, 0))
+            open_ = {"on": True}
+            known = {i for i, _ in eng.peers()}
+
+            def watch():
+                if not open_["on"]:
+                    return
+
+                def work():
+                    got = [(i, n) for i, n in eng.pending_devices() if i not in known]
+                    for i, n in got:
+                        eng.add_peer(i, n or "내 폰")
+                    if got:
+                        apply_now(app, state["policy"])
+                    return got
+
+                def done(r, err):
+                    if not open_["on"]:
+                        return
+                    if err:
+                        msg.config(text=f"허용하지 못했습니다: {err}", fg=C["danger"])
+                    elif r:
+                        known.update(i for i, _ in r)
+                        msg.config(text="연결했습니다: " + ", ".join(n or i[:7] for i, n in r) + " — 폰에서 폴더를 받아 오는 중입니다.", fg="#15803d")
+                        fill_peers()
+                    try:
+                        dlg.after(2000, watch)
+                    except Exception:  # noqa: BLE001
+                        pass
+                bg(work, done)
+
+            def close():
+                open_["on"] = False
+                dlg.destroy()
+            dlg.protocol("WM_DELETE_WINDOW", close)
+            Btn(dlg, "닫기", close, padx=16, pady=4).pack(anchor="e", pady=(10, 0))
+            watch()
+
         row = tk.Frame(body, bg=C["bg"])
         row.pack(anchor="w", pady=(6, 0))
+        Btn(row, "폰 연결하기…", pair_phone, kind="primary", padx=12, pady=3).pack(side="left", padx=(0, 6))
         Btn(row, "기기 추가…", add_peer, padx=12, pady=3).pack(side="left")
         Btn(row, "기기 빼기", del_peer, padx=12, pady=3).pack(side="left", padx=6)
         pend = tk.Frame(body, bg=C["bg"])   # 연결을 요청한 기기 목록([허용] 버튼)
