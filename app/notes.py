@@ -2940,9 +2940,13 @@ class App:
         pool = [n for n in self.notes if self.tag in n["tags"]] if self.tag else self.notes
         if self.fav_only:
             pool = [n for n in pool if self.is_fav(n)]
-        self.results, self.words = search.run(pool, self.q.get(), self.sort, self.asc, self.d_from.get(), self.d_to.get(),
-                                           index=self.docs if self.nb.startswith("@doc") else
-                                           docidx.Combined(self.store, self.docs) if self.scope_all() else self.store)
+        self.bad_dates = search.bad_dates(self.q.get(), self.d_from.get(), self.d_to.get())
+        if self.bad_dates:   # 날짜를 읽을 수 없으면 기간 없이 찾지 말고 비워서 알린다
+            self.results, self.words = [], []
+        else:
+            self.results, self.words = search.run(pool, self.q.get(), self.sort, self.asc, self.d_from.get(), self.d_to.get(),
+                                                  index=self.docs if self.nb.startswith("@doc") else
+                                                  docidx.Combined(self.store, self.docs) if self.scope_all() else self.store)
         self.draw_list(keep_scroll=keep_page)
 
     def update_folder_rows(self):
@@ -2980,6 +2984,8 @@ class App:
         searching = self.q.get().strip() or self.d_from.get().strip() or self.d_to.get().strip() or self.tag or self.fav_only
         unit = "파일" if self.scope_all() or self.nb.startswith("@doc") else "노트"
         text = f"{len(self.notes):,}개 중 {total:,}개 찾음" if searching else f"{total:,}개의 {unit}"
+        if getattr(self, "bad_dates", None):
+            text = "날짜를 읽을 수 없습니다: " + ", ".join(self.bad_dates) + "  (예: date:20200202-20221231)"
         if self.tag:
             text += f"  ·  # {self.tag}"
         if self.fav_only:

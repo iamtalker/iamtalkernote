@@ -165,6 +165,24 @@ def parse_date(s, end=False):
         return None
 
 
+def bad_dates(query, date_from="", date_to=""):
+    """읽을 수 없는 날짜(없는 달·날, 모양이 틀린 것)가 든 조각들. 조용히 무시하면 기간이 안 걸려 엉뚱한 결과가 나오므로 알려 준다"""
+    bad = []
+    for m in DATE_TOKEN.finditer(query):
+        tok = m.group(1)
+        if re.fullmatch(r"\d{8}(-\d{8})?|\d{8}-|-\d{8}", tok):
+            parts = [x for x in tok.split("-") if x] if tok.count("-") <= 1 else [tok]
+        else:
+            parts = [tok]
+        if not parts or any(parse_date(x) is None for x in parts):
+            bad.append("date:" + tok)
+    for label, v in (("기간 시작", date_from), ("기간 끝", date_to)):
+        v = (v or "").strip()
+        if re.fullmatch(r"\d{8}|\d{4}[.\-/]\d{1,2}[.\-/]\d{1,2}", v) and parse_date(v) is None:   # 다 쓴 날짜만 검사(치는 중인 글은 건드리지 않는다)
+            bad.append(f"{label} {v}")
+    return bad
+
+
 def split_date(query):
     """검색식 속의 'date:20101011-20240104' (또는 date:20240101 · date:20240101- · date:-20240104, 날짜:·기간: 도 같음)를 떼어 낸다
     → (남은 검색식, 시작 epoch 또는 None, 끝 epoch 또는 None). 날짜 형식은 parse_date 와 같다"""
