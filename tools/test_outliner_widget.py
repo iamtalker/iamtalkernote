@@ -27,11 +27,11 @@ t = w.txt
 
 
 def lines():
-    return [t.get(f"{n}.1", f"{n}.end") for n in range(1, int(t.index("end-1c").split(".")[0]) + 1)]
+    return [t.get(f"{n}.2", f"{n}.end") for n in range(1, int(t.index("end-1c").split(".")[0]) + 1)]
 
 
 def at(k, col):
-    t.mark_set("insert", f"{k + 1}.{col + 1}")
+    t.mark_set("insert", f"{k + 1}.{col + 2}")
 
 
 def press(fn, *a):
@@ -50,7 +50,7 @@ check("Enter: 커서 뒤 글이 새 항목", lines()[:3] == ["aX", "", "b"] or l
 w.load("- a\n- b\n    - b1\n    - b2\n- c\n")
 at(0, 1)
 press(w._enter)
-check("Enter 뒤 원문에 새 항목", saved[-1] == "- a\n- \n- b\n    - b1\n    - b2\n- c\n" and t.index("insert") == "2.1")
+check("Enter 뒤 원문에 새 항목", saved[-1] == "- a\n- \n- b\n    - b1\n    - b2\n- c\n" and t.index("insert") == "2.2")
 t.insert("insert", "new")
 press(w._tab)
 check("Tab: 앞 항목 a 의 하위로 들어감", saved[-1].startswith("- a\n    - new\n- b") and lines()[1] == "new")
@@ -59,7 +59,7 @@ check("Shift+Tab: 다시 바깥으로", saved[-1].startswith("- a\n- new\n- b"))
 
 at(1, 0)
 press(w._backspace)
-check("줄 맨 앞 Backspace: 앞 항목에 붙임", lines()[0] == "anew" and t.index("insert") == "1.2")
+check("줄 맨 앞 Backspace: 앞 항목에 붙임", lines()[0] == "anew" and t.index("insert") == "1.3")
 
 at(0, 4)
 press(w._delete)
@@ -87,7 +87,7 @@ press(w._zoom_out)
 check("줌아웃: 전체", lines() == ["a", "b", "b1", "", "b2", "c"])
 
 w.load("- a\n- b\n- c\n")
-t.tag_add("sel", "1.2", "3.2")                             # a 의 끝 ~ c 의 끝 직전
+t.tag_add("sel", "1.3", "3.3")                             # a 의 끝 ~ c 의 끝 직전
 press(w._delete_selection)
 check("여러 줄 선택 지우기: 앞뒤가 한 항목으로", lines() == ["c"] or lines() == ["a"] or len(lines()) == 1)
 press(w._undo)
@@ -98,7 +98,7 @@ check("다시 실행", len(lines()) == 1)
 w.load("- x\n")
 at(0, 1)
 press(w._done)
-check("Ctrl+Enter: 완료 표시([x])", saved[-1] == "- [x] x\n" and "done" in t.tag_names("1.2"))
+check("Ctrl+Enter: 완료 표시([x])", saved[-1] == "- [x] x\n" and "done" in t.tag_names("1.3"))
 
 w.load("- a\n")
 w.clipboard_clear()

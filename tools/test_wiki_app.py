@@ -147,8 +147,8 @@ for _ in range(10):
 check("보기 탭(분할·렌더링)은 숨김", not app.mode_seg.winfo_manager())
 check("아웃라이너 폴더 노트는 아웃라이너 편집기로", app.is_outline_note() and app.ow.winfo_ismapped() and not app.box2.winfo_ismapped())
 ow = app.ow
-check("항목이 줄로 보임(머리말은 제외)", [ow.txt.get(f"{n}.1", f"{n}.end") for n in (1, 2, 3)] == ["a", "b", "b1"])
-ow.txt.mark_set("insert", "1.2")
+check("항목이 줄로 보임(머리말은 제외)", [ow.txt.get(f"{n}.2", f"{n}.end") for n in (1, 2, 3)] == ["a", "b", "b1"])
+ow.txt.mark_set("insert", "1.3")
 ow._enter()
 ow.txt.insert("insert", "새")
 ow._tab()
@@ -171,7 +171,7 @@ check("일반 노트로 가면 평소 화면으로 돌아옴", not app.is_outlin
 app.open_note(on)
 for _ in range(10):
     app.root.update()
-app.ow.txt.mark_set("insert", "1.2")
+app.ow.txt.mark_set("insert", "1.3")
 app.ow.txt.insert("insert", "Q")
 app.ow._released(type("E", (), {"keysym": "Q"})())      # 0.35초 뒤에 넘길 예약만 걸린 상태
 before = open(other["path"], encoding="utf-8").read()

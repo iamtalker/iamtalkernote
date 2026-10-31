@@ -12,6 +12,7 @@ from tkinter import ttk
 from . import model as M
 
 MAX_DEPTH = 12
+OFF = 2                              # 줄 맨 앞의 점 글자("● ")가 차지하는 글자 수: 항목 글은 한 줄의 OFF 번째 글자부터
 
 
 class OutlineEditor(tk.Frame):
@@ -25,7 +26,6 @@ class OutlineEditor(tk.Frame):
         self.undo, self.redo = [], []
         self._typing = False
         self._typing_job = self._change_job = None
-        self._bullets = []
         self.crumb = tk.Frame(self, bg=colors["bg"])
         self.crumb.pack(side="top", fill="x", padx=18)
         wrap = tk.Frame(self, bg=colors["bg"])
@@ -39,6 +39,13 @@ class OutlineEditor(tk.Frame):
         t.pack(side="left", fill="both", expand=True)
         for d in range(MAX_DEPTH + 1):
             t.tag_configure(f"d{d}", lmargin1=6 + 26 * d, lmargin2=6 + 26 * d + 22)
+        t.tag_configure("bul", foreground=colors["muted"], font=(self.family, 8))
+        t.tag_configure("bulc", foreground=colors["accent"], font=(self.family, 8))
+        t.tag_bind("bul", "<Button-1>", self._bullet_click)
+        t.tag_bind("bulc", "<Button-1>", self._bullet_click)
+        for tg in ("bul", "bulc"):
+            t.tag_bind(tg, "<Enter>", lambda e: t.config(cursor="hand2"))
+            t.tag_bind(tg, "<Leave>", lambda e: t.config(cursor="xterm"))
         t.tag_configure("done", foreground=colors["muted"], overstrike=True)
         t.tag_configure("link", foreground=colors["accent"], underline=True)
         for seq, fn in (("<Return>", self._enter), ("<KP_Enter>", self._enter), ("<Tab>", self._tab), ("<ISO_Left_Tab>", self._btab),
@@ -96,31 +103,22 @@ class OutlineEditor(tk.Frame):
         if focus is None and self.vis:
             focus = self.vis[0]
         base = self._floor()
-        for w in self._bullets:
-            try:
-                w.destroy()
-            except tk.TclError:
-                pass
-        self._bullets = []
         t.delete("1.0", "end")
+        parts, spans = [], []                                # 글 전체를 한 번에 넣고 태그만 따로 입힌다(줄마다 insert 하면 느리다)
         for k, i in enumerate(self.vis):
             it = self.items[i]
-            if k:
-                t.insert("end", "\n")
             hidden = it.collapsed and M.has_children(self.items, i)
-            lbl = tk.Label(t, text="◉" if hidden else "●", font=(self.family, 8), bg=self.C["bg"], cursor="hand2", bd=0, padx=4,
-                           fg=self.C["accent"] if hidden else self.C["muted"])
-            lbl.bind("<Button-1>", lambda e, i=i: self.set_zoom(i))
-            self._bullets.append(lbl)
-            t.window_create("end", window=lbl, align="center")
-            t.insert("end", it.text)
-            ln = k + 1
-            t.tag_add(f"d{min(MAX_DEPTH, max(0, it.depth - base))}", f"{ln}.0", f"{ln}.end")
-            if M.is_done(it):
-                t.tag_add("done", f"{ln}.1", f"{ln}.end")
+            parts.append(("◉ " if hidden else "● ") + it.text)
+            spans.append((k + 1, "bulc" if hidden else "bul", f"d{min(MAX_DEPTH, max(0, it.depth - base))}", M.is_done(it)))
+        t.insert("1.0", "\n".join(parts))
+        for ln, bul, dtag, done in spans:
+            t.tag_add(bul, f"{ln}.0", f"{ln}.1")
+            t.tag_add(dtag, f"{ln}.0", f"{ln}.end")
+            if done:
+                t.tag_add("done", f"{ln}.{OFF}", f"{ln}.end")
         if focus is not None and focus in self.vis:
             ln = self.vis.index(focus) + 1
-            t.mark_set("insert", f"{ln}.{1 + min(col, len(self.items[focus].text))}")
+            t.mark_set("insert", f"{ln}.{OFF + min(col, len(self.items[focus].text))}")
         t.yview_moveto(top)
         t.see("insert")
         self._crumbs()
@@ -142,7 +140,7 @@ class OutlineEditor(tk.Frame):
     # ---------------------------------------------------------------- 화면 ↔ 모델
     def _pos(self):
         ln, col = map(int, self.txt.index("insert").split("."))
-        return ln - 1, max(0, col - 1)
+        return ln - 1, max(0, col - OFF)
 
     def _cur(self):
         k, col = self._pos()
@@ -155,12 +153,27 @@ class OutlineEditor(tk.Frame):
         if int(t.index("end-1c").split(".")[0]) != len(self.vis):
             return
         for k, i in enumerate(self.vis):
-            self.items[i].text = t.get(f"{k + 1}.1", f"{k + 1}.end")
+            self.items[i].text = t.get(f"{k + 1}.{OFF}", f"{k + 1}.end")
+
+    def _bullet_click(self, e):
+        k = int(self.txt.index(f"@{e.x},{e.y}").split(".")[0]) - 1
+        if 0 <= k < len(self.vis):
+            self.set_zoom(self.vis[k])
+        return "break"
+
+    def _clamp_sel(self):
+        """고른 곳이 줄 앞의 점 글자를 포함하면 점은 빼 준다(점이 지워지면 구조가 어긋난다)"""
+        r = self.txt.tag_ranges("sel")
+        if r:
+            ln, c = map(int, str(r[0]).split("."))
+            if c < OFF:
+                self.txt.tag_remove("sel", "1.0", "end")
+                self.txt.tag_add("sel", f"{ln}.{OFF}", r[1])
 
     def _fix_cursor(self):
         ln, col = map(int, self.txt.index("insert").split("."))
-        if col == 0 and not self.txt.tag_ranges("sel"):
-            self.txt.mark_set("insert", f"{ln}.1")
+        if col < OFF and not self.txt.tag_ranges("sel"):
+            self.txt.mark_set("insert", f"{ln}.{OFF}")
 
     def _snapshot(self):
         return [(it.depth, it.text, it.collapsed) for it in self.items], self.zoom
@@ -193,6 +206,7 @@ class OutlineEditor(tk.Frame):
         """글자를 칠 때: 첫 글자에서 되돌리기 지점을 만들고, 여러 줄을 고른 채 치면 고른 것을 먼저 지운다"""
         if not e.char or ord(e.char[0]) < 32 or e.keysym in ("Escape",):
             return None
+        self._clamp_sel()
         if self._multi_sel():
             self._delete_selection()
         if not self._typing:
@@ -214,7 +228,7 @@ class OutlineEditor(tk.Frame):
         la, ca = map(int, str(t.index("sel.first")).split("."))
         lb, cb = map(int, str(t.index("sel.last")).split("."))
         ia, ib = self.vis[la - 1], self.vis[lb - 1]
-        ca, cb = max(0, ca - 1), max(0, cb - 1)
+        ca, cb = max(0, ca - OFF), max(0, cb - OFF)
         text = self.items[ia].text[:ca] + self.items[ib].text[cb:]
         del self.items[ia + 1:ib + 1]
         self.items[ia].text = text
@@ -264,6 +278,7 @@ class OutlineEditor(tk.Frame):
 
     def _backspace(self, e=None):
         t = self.txt
+        self._clamp_sel()
         if self._multi_sel():
             self._delete_selection()
             return "break"
@@ -293,6 +308,7 @@ class OutlineEditor(tk.Frame):
 
     def _delete(self, e=None):
         t = self.txt
+        self._clamp_sel()
         if self._multi_sel():
             self._delete_selection()
             return "break"
@@ -300,7 +316,7 @@ class OutlineEditor(tk.Frame):
             return None
         k, col = self._pos()
         ln = k + 1
-        if col < len(t.get(f"{ln}.1", f"{ln}.end")):
+        if col < len(t.get(f"{ln}.{OFF}", f"{ln}.end")):
             return None                                       # 줄 안에서는 글자 하나를 지운다
         if k >= len(self.vis) - 1:
             return "break"
@@ -373,7 +389,7 @@ class OutlineEditor(tk.Frame):
 
     def _home(self, e=None):
         k, _c = self._pos()
-        self.txt.mark_set("insert", f"{k + 1}.1")
+        self.txt.mark_set("insert", f"{k + 1}.{OFF}")
         return "break"
 
     def _left(self, e=None):
@@ -387,8 +403,8 @@ class OutlineEditor(tk.Frame):
     def _right(self, e=None):
         k, col = self._pos()
         ln = k + 1
-        if col >= len(self.txt.get(f"{ln}.1", f"{ln}.end")) and k < len(self.vis) - 1 and not self.txt.tag_ranges("sel"):
-            self.txt.mark_set("insert", f"{ln + 1}.1")
+        if col >= len(self.txt.get(f"{ln}.{OFF}", f"{ln}.end")) and k < len(self.vis) - 1 and not self.txt.tag_ranges("sel"):
+            self.txt.mark_set("insert", f"{ln + 1}.{OFF}")
             return "break"
         return None
 
@@ -402,9 +418,9 @@ class OutlineEditor(tk.Frame):
         rows = []
         for ln in range(la, lb + 1):
             it = self.items[self.vis[ln - 1]]
-            s = it.text[max(0, ca - 1):] if ln == la else it.text
+            s = it.text[max(0, ca - OFF):] if ln == la else it.text
             if ln == lb:
-                s = s[:max(0, cb - 1) - (max(0, ca - 1) if ln == la else 0)]
+                s = s[:max(0, cb - OFF) - (max(0, ca - OFF) if ln == la else 0)]
             rows.append(M.Item(it.depth, s))
         base = min(r.depth for r in rows)
         for r in rows:
