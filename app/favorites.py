@@ -46,6 +46,7 @@ class Favorites:
         self.dir = directory
         self._sig = None
         self._merged = {}
+        self._checked = 0.0
 
     def _signature(self):
         out = []
@@ -59,11 +60,19 @@ class Favorites:
 
     def state(self):
         """{노트 경로: 즐겨찾기인가}"""
+        now = time.monotonic()
+        if self._sig is not None and now - self._checked < 0.3:   # 목록을 그리느라 노트마다 부르므로 0.3초 안에는 파일을 다시 보지 않는다
+            return self._merged
+        self._checked = now
         sig = self._signature()
         if sig != self._sig:
             self._merged = merge(_read(os.path.join(self.dir, OWN)), _read(os.path.join(self.dir, OTHER)))
             self._sig = sig
         return self._merged
+
+    def invalidate(self):
+        """다음 읽을 때 파일을 다시 본다(밖에서 파일을 바꾼 것을 바로 알고 싶을 때)"""
+        self._checked = 0.0
 
     def is_fav(self, rel):
         return bool(self.state().get(rel))
@@ -83,6 +92,7 @@ class Favorites:
             json.dump({"items": items}, fh, ensure_ascii=False)
         os.replace(tmp, own)
         self._sig = None
+        self._checked = 0.0
 
     def toggle(self, rel):
         on = not self.is_fav(rel)

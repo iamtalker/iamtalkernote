@@ -3004,7 +3004,7 @@ class App:
 
     # ---- 즐겨찾기(설정 폴더의 작은 파일에 적어 폰과 맞춘다)
     def fav_rel(self, n):
-        return favorites.rel_of(self.store.root, n["path"])
+        return n.get("key") or favorites.rel_of(self.store.root, n["path"])   # 노트의 key 는 노트 폴더 기준 슬래시 경로(rel_of 와 같다)
 
     def is_fav(self, n):
         return bool(n) and not isinstance(n, docidx.Doc) and self.fav.is_fav(self.fav_rel(n))
@@ -3291,6 +3291,8 @@ class App:
             self.render_job = self.root.after(200 if len(self.text.get("1.0", "end")) < 40000 else 700, self.render)
 
     def flush(self):
+        if self._outl_on and self.cur and self.is_outline_note():
+            self.ow.flush()                       # 아웃라이너에서 막 고친 글(0.35초 뒤에 넘기려던 것)을 노트에 먼저 넣는다
         if self.save_job:
             self.root.after_cancel(self.save_job)
             self.save_job = None
@@ -3824,6 +3826,9 @@ class App:
         new = front + body
         if new != old:
             self.apply_text_change(old, new)
+            self.dirty = True                                # <<Modified>> 는 한 박자 늦게 오므로 바로 표시한다(그 사이 노트를 옮겨도 저장됨)
+            if not self.save_job:
+                self.save_job = self.root.after(600, self.flush)
 
     def apply_layout(self, m):
         on = self.is_outline_note()
@@ -4888,8 +4893,8 @@ class App:
         top.configure(bg=C["bg"])
         top.transient(self.root)
         h = max(420, min(640, top.winfo_screenheight() - 140))   # 화면이 작거나 글자 배율이 크면 창을 화면에 맞추고, 넘치는 내용은 스크롤한다
-        top.geometry(f"720x{h}+{self.root.winfo_x() + 100}+{max(0, min(self.root.winfo_y() + 50, top.winfo_screenheight() - h - 80))}")
-        top.minsize(640, 420)
+        top.geometry(f"900x{h}+{self.root.winfo_x() + 100}+{max(0, min(self.root.winfo_y() + 50, top.winfo_screenheight() - h - 80))}")
+        top.minsize(780, 420)
         nav = tk.Frame(top, bg=C["panel"], width=170)
         nav.pack(side="left", fill="y")
         nav.pack_propagate(False)
@@ -4949,7 +4954,7 @@ class App:
             tk.Checkbutton(p, text="위키 링크 사용  ([[노트 제목]] 으로 노트 연결)", variable=wk, command=set_wiki,
                            bg=C["bg"], activebackground=C["bg"], font=(self.ui, 10), selectcolor=C["bg"]).pack(anchor="w")
             lab(p, "켜 두면 같은 제목의 노트는 만들 수 없고, [[제목]] 은 가장 최근에 고친 노트로 연결됩니다. 없는 제목의 링크는 붉게 보이고 누르면 새로 만들 수 있습니다. 끄면 [[ ]] 는 그냥 글자입니다.",
-                fg=C["muted"], font=(self.ui, 9), wraplength=500).pack(anchor="w", pady=(2, 0))
+                fg=C["muted"], font=(self.ui, 9), wraplength=620).pack(anchor="w", pady=(2, 0))
             hr(p)
             lab(p, "편집기 보기", font=(self.ui, 10, "bold")).pack(anchor="w")
             for key, label in (("edit", "마크다운만"), ("split", "마크다운 + 렌더링 (분할)"), ("view", "렌더링만")):
@@ -4962,7 +4967,7 @@ class App:
                 tk.Radiobutton(p, text=label, value=key, variable=ca, command=lambda: st.write_config(closeAction=ca.get()),
                                bg=C["bg"], activebackground=C["bg"], font=(self.ui, 10), selectcolor=C["bg"]).pack(anchor="w")
             lab(p, "트레이 아이콘을 누르면 창이 다시 열리고, 우클릭 → 종료로 끕니다. 파일 → 종료(와 트레이의 종료)는 언제나 바로 끕니다.",
-                fg=C["muted"], font=(self.ui, 9), wraplength=500).pack(anchor="w", pady=(2, 0))
+                fg=C["muted"], font=(self.ui, 9), wraplength=620).pack(anchor="w", pady=(2, 0))
             hr(p)
             lab(p, "화면 구성", font=(self.ui, 10, "bold")).pack(anchor="w")
             for key, label in (("notebooks", "노트북 보기"), ("tags", "태그 보기"), ("list", "노트 목록 보기"), ("syntax", "문법 해설 보기")):
@@ -5105,7 +5110,7 @@ class App:
             tk.Checkbutton(p, text="문서 안의 글도 색인 (pdf·txt·docx 본문, mp3 태그와 가사)", variable=content, command=save_content, bg=C["bg"],
                            activebackground=C["bg"], selectcolor=C["bg"], font=(self.ui, 10)).pack(anchor="w")
             lab(p, "끄면 파일 이름과 경로로만 찾습니다(빠르고 DB 가 작아집니다). 문서를 열어 둔 상태에서 Ctrl+F 로 그 문서 안에서 찾는 것은 켜든 끄든 쓸 수 있습니다.",
-                fg=C["muted"], font=(self.ui, 9), wraplength=500).pack(anchor="w", pady=(2, 0))
+                fg=C["muted"], font=(self.ui, 9), wraplength=620).pack(anchor="w", pady=(2, 0))
 
         def versions_tab(p):
             title(p, "노트 버전", "노트를 고칠 때마다 이전 내용을 노트별로 보관해 두고, 나중에 골라서 되돌릴 수 있습니다.")

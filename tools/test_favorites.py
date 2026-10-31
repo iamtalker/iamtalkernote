@@ -26,6 +26,7 @@ with tempfile.TemporaryDirectory() as d:
     check("켜면 즐겨찾기", f.is_fav("a.md") and f.all() == ["a.md"])
     check("내 파일에만 적음", os.path.exists(os.path.join(d, fv.OWN)) and not os.path.exists(os.path.join(d, fv.OTHER)))
     json.dump({"items": {"a.md": [0, 200], "b/c.md": [1, 150]}}, open(os.path.join(d, fv.OTHER), "w"))
+    f.invalidate()
     check("폰이 더 나중에 끄면 꺼짐, 폰이 켠 것도 보임", not f.is_fav("a.md") and f.is_fav("b/c.md") and f.all() == ["b/c.md"])
     f.set("a.md", True, now=300)
     check("내가 더 나중에 다시 켜면 켜짐", f.is_fav("a.md"))

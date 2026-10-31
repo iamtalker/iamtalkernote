@@ -167,6 +167,20 @@ app.open_note(other)
 for _ in range(10):
     app.root.update()
 check("일반 노트로 가면 평소 화면으로 돌아옴", not app.is_outline_note() and app.box2.winfo_manager() == "pack" and not app.ow.winfo_ismapped() and app.edit_frame.winfo_ismapped() and app.mode_seg.winfo_manager() == "pack")
+# --- 아웃라이너에서 막 친 글이 노트를 옮겨도 그 노트에 저장되고 다른 노트로 새지 않음
+app.open_note(on)
+for _ in range(10):
+    app.root.update()
+app.ow.txt.mark_set("insert", "1.2")
+app.ow.txt.insert("insert", "Q")
+app.ow._released(type("E", (), {"keysym": "Q"})())      # 0.35초 뒤에 넘길 예약만 걸린 상태
+before = open(other["path"], encoding="utf-8").read()
+app.open_note(other)                                     # 키보드로 곧바로 다른 노트로 이동
+for _ in range(10):
+    app.root.update()
+check("옮기기 전 친 글이 아웃라이너 노트 파일에 저장됨", "- aQ" in open(on["path"], encoding="utf-8").read())
+check("다른 노트는 그대로", open(other["path"], encoding="utf-8").read() == before)
+
 app.nb = notes.ALL
 
 app.root.destroy()
