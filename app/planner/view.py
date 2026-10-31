@@ -1,7 +1,7 @@
 """달력·할일·공수 화면: 위에 달력(공휴일 표시), 아래에 할일 목록, 맨 아래에 이 달의 공수 요약(공수달력을 켰을 때)."""
 import datetime
 import tkinter as tk
-from tkinter import simpledialog, ttk
+from tkinter import messagebox, simpledialog, ttk
 
 from . import model as M
 
@@ -45,9 +45,9 @@ class PlannerView(tk.Frame):
         self.sumlab = tk.Label(self, text="", bg=C["bg"], fg=C["text"], font=(ui, 10), anchor="w", justify="left", padx=18)
         self.sumlab.pack(fill="x")
         bottom = tk.Frame(self, bg=C["bg"])            # 할일 입력칸·목록은 창이 낮아도 가려지지 않게 먼저 아래에 자리를 잡는다(달력이 남는 만큼만 쓴다)
-        bottom.pack(side="bottom", fill="x")
+        bottom.pack(side="bottom", fill="both", expand=True)
         grid = tk.Frame(self, bg=C["line"])
-        grid.pack(fill="both", expand=True, padx=18, pady=(8, 0))
+        grid.pack(fill="x", padx=18, pady=(8, 0))
         for c in range(7):
             grid.grid_columnconfigure(c, weight=1, uniform="d")
             tk.Label(grid, text=WEEK[c], bg=C["panel"], fg=C["danger"] if c == 0 else (C["accent"] if c == 6 else C["muted"]),
@@ -63,23 +63,15 @@ class PlannerView(tk.Frame):
         tk.Label(mid, text="할일", bg=C["bg"], fg=C["text"], font=(ui, 11, "bold")).pack(side="left")
         tk.Checkbutton(mid, text="선택한 날만", variable=self.only_sel, command=self.draw_todos, bg=C["bg"], activebackground=C["bg"],
                        selectcolor=C["bg"], font=(ui, 9), fg=C["muted"]).pack(side="right")
-        bar = tk.Frame(bottom, bg=C["bg"])
-        bar.pack(fill="x", padx=18)
-        self.entry = tk.Entry(bar, relief="flat", bd=0, bg=C["panel"], fg=C["text"], insertbackground=C["text"], font=(ui, 10),
-                              highlightthickness=1, highlightbackground=C["line"], highlightcolor=C["accent"])
-        self.entry.pack(side="left", fill="x", expand=True, ipady=5)
-        self.entry.bind("<Return>", lambda e: self.add_undated())
-        self.target = tk.Label(bar, text="", bg=C["bg"], fg=C["muted"], font=(ui, 9), padx=8)   # 할일은 달력에서 고른 날에 시작한다
-        self.target.pack(side="left", before=self.entry)
-        for text, fn in (("추가", self.add_undated), ("삭제", self.delete)):
-            b = tk.Label(bar, text=text, bg=C["panel"], fg=C["text"], font=(ui, 9), cursor="hand2", padx=8, pady=5)
-            b.bind("<Button-1>", lambda e, fn=fn: fn())
-            b.pack(side="left", padx=(6, 0))
         wrap = tk.Frame(bottom, bg=C["bg"])
-        wrap.pack(fill="x", padx=18, pady=(6, 14))
-        self.tree = ttk.Treeview(wrap, style="Flat.Treeview", columns=("date",), show="tree", selectmode="browse", height=6)
+        wrap.pack(fill="both", expand=True, padx=18, pady=(6, 14))
+        self.tree = ttk.Treeview(wrap, style="Flat.Treeview", columns=("start", "end"), show="tree headings", selectmode="browse", height=6)
+        self.tree.heading("#0", text="할일  (앞의 ☐ 를 누르면 오늘 날짜로 완료)", anchor="w")
+        self.tree.heading("start", text="추가한 날", anchor="e")
+        self.tree.heading("end", text="완료한 날", anchor="e")
         self.tree.column("#0", stretch=True, width=300)
-        self.tree.column("date", width=150, anchor="e", stretch=False)   # 날짜와 며칠째인지
+        self.tree.column("start", width=150, anchor="e", stretch=False)
+        self.tree.column("end", width=100, anchor="e", stretch=False)
         sb = ttk.Scrollbar(wrap, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=sb.set)
         sb.pack(side="right", fill="y")
@@ -109,7 +101,6 @@ class PlannerView(tk.Frame):
         self.pl.sync()                                     # 밖(다른 편집기·폰 동기화)에서 고친 달력 파일을 반영
         C, cfg = self.C, self.get_cfg()
         self.title.config(text=f"{self.year}년 {self.month}월")
-        self.target.config(text=f"{self.sel[5:]} 에 할일")
         hol = {**self.pl.holidays_for(self.year - 1), **self.pl.holidays_for(self.year), **self.pl.holidays_for(self.year + 1)}
         today = M.iso(datetime.date.today())
         days = M.month_grid(self.year, self.month)
@@ -173,6 +164,8 @@ class PlannerView(tk.Frame):
             m.add_command(label="공수 지우기", command=lambda: self.set_gongsu(0))
             m.add_separator()
         m.add_command(label="이 날 할일 추가…", command=self.add_dated)
+        for t in [x for x in self.pl.todos if x.get("date") == self.sel]:
+            m.add_command(label="삭제: " + t["text"][:24], command=lambda t=t: self.delete_todo(t))
         m.tk_popup(e.x_root, e.y_root)
 
     def changed(self):
@@ -203,9 +196,11 @@ class PlannerView(tk.Frame):
         self.tree.delete(*self.tree.get_children())
         for t in self.pl.ordered(self.sel if self.only_sel.get() else None):
             d = M.parse(t.get("date"))
-            age = (datetime.date.today() - d).days if d and not t["done"] else 0
+            diff = (datetime.date.today() - d).days if d and not t["done"] else 0     # 양수 = 며칠째 밀림, 음수 = 앞으로 며칠 남음(D-n)
+            age = max(diff, 0)
             self.tree.insert("", "end", iid=t["id"], text=("☑  " if t["done"] else "☐  ") + t["text"],
-                             values=((t["date"] + (f"  {age}일째" if age > 0 else "")) if t.get("date") else "",), tags=("done",) if t["done"] else ())
+                             values=((t["date"] + (f"  {age}일째" if age > 0 else f"  D-{-diff}" if diff < 0 else "  D-day")) if t.get("date") else "", t.get("done_on") or ""),
+                             tags=("done",) if t["done"] else ())
 
     def on_tree_click(self, e):
         row = self.tree.identify_row(e.y)
@@ -215,18 +210,7 @@ class PlannerView(tk.Frame):
                 self.pl.update(row, done=not t["done"])
                 self.changed()
 
-    def selected(self):
-        sel = self.tree.selection()
-        return sel[0] if sel else None
-
-    def add_undated(self):
-        text = self.entry.get()
-        if self.pl.add(text, self.sel):                   # 할일은 항상 달력의 날짜에 쓴다(그 날부터 끝내기 전까지 이어진다)
-            self.entry.delete(0, "end")
-            self.changed()
-
-    def delete(self):
-        tid = self.selected()
-        if tid:
-            self.pl.remove(tid)
+    def delete_todo(self, t):
+        if messagebox.askyesno("할일 삭제", f"「{t['text']}」을(를) 지울까요?", parent=self):
+            self.pl.remove(t["id"])
             self.changed()

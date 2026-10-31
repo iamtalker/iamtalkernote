@@ -306,9 +306,9 @@ class Planner:
         return self.on(date) + (self.carried(d.year, d.month) if d and d.day == 1 else [])
 
     def ordered(self, only_date=None):
-        """아래 목록 순서: 안 한 것(날짜 있는 것은 날짜순, 날짜 없는 것은 그 뒤) → 한 것"""
+        """아래 목록 순서: 맨 위가 가장 과거, 맨 아래가 가장 미래(날짜순). 끝낸 것도 자기 날짜 자리에 있다. 날짜 없는 예전 할일은 맨 위"""
         pool = self.shown_on(only_date) if only_date else self.todos
-        return sorted(pool, key=lambda t: (t["done"], t.get("date") is None, t.get("date") or "", t["text"]))
+        return sorted(pool, key=lambda t: (t.get("date") or "", t["text"]))
 
     def due(self, today):
         """오늘(이전 날짜 포함) 알릴 할일: 안 했고 날짜가 오늘 이하이며 오늘 아직 안 알린 것"""
