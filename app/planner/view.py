@@ -97,7 +97,7 @@ class PlannerView(tk.Frame):
         self.year, self.month, self.sel = d.year, d.month, M.iso(d)
         self.refresh()
 
-    def refresh(self):
+    def refresh(self, keep_rate=False):
         C, cfg = self.C, self.get_cfg()
         self.title.config(text=f"{self.year}년 {self.month}월")
         hol = {**self.pl.holidays_for(self.year - 1), **self.pl.holidays_for(self.year), **self.pl.holidays_for(self.year + 1)}
@@ -122,8 +122,8 @@ class PlannerView(tk.Frame):
             if not self.rate.winfo_ismapped():
                 self.rate.pack(fill="x", padx=18, pady=(0, 4), before=self.sumlab)
             for k in ("wage", "meal"):
-                if self.focus_get() is not None and str(self.focus_get()).startswith(str(self.rate)):
-                    break                                  # 입력 중이면 칸을 덮어쓰지 않는다
+                if keep_rate:
+                    break                                  # 다른 칸을 고치다 저장했으면 아직 저장 안 한 칸의 글을 덮어쓰지 않는다
                 self.rate_vars[k].set(f"{cfg[k]:,}" if cfg[k] else "")
             r = self.pl.summary(self.year, self.month, cfg["wage"], cfg["meal"])
             self.sumlab.config(text=(f"공수 합계 {M.fmt_gongsu(r['gongsu'])}  ·  출근 {r['days']}일  ·  일당 {r['pay']:,}원  +  일비 {r['meal']:,}원"
@@ -141,7 +141,8 @@ class PlannerView(tk.Frame):
             return
         if self.set_cfg and self.get_cfg()[key] != v:
             self.set_cfg(key, v)
-            self.refresh()
+            self.rate_vars[key].set(f"{v:,}" if v else "")
+            self.refresh(keep_rate=True)
 
     def click(self, i, e):
         d = self.days[i]
