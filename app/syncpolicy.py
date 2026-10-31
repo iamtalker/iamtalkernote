@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import secrets
+import time
 
 POLICY_DIR = ".sync"
 POLICY_FILE = "policy.json"
@@ -59,14 +60,20 @@ def _modules_from_simple(policy):
         mods[key] = {"kind": key, "label": label, "path": rel, "direction": sm["direction"] if on else OFF}
 
 
-def set_simple(policy, direction=None, **include):
-    """새 방식의 설정을 바꾼다(direction: 방향, include: media=True/False …)"""
+def set_simple(policy, direction=None, stamp=True, **include):
+    """새 방식의 설정을 바꾼다(direction: 방향, include: media=True/False …). 실제로 바뀌면 바꾼 시각(simple.updated, ms)을 적는다
+    (폰과 '더 최근에 바꾼 쪽이 이긴다'로 맞추려는 것. 상대 설정을 받아들일 때는 stamp=False)"""
     sm = policy["simple"]
-    if direction in DIRECTIONS:
+    changed = False
+    if direction in DIRECTIONS and sm.get("direction") != direction:
         sm["direction"] = direction
+        changed = True
     for k, v in include.items():
-        if k in {o[0] for o in SIMPLE_OPTIONS}:
+        if k in {o[0] for o in SIMPLE_OPTIONS} and bool(sm["include"].get(k)) != bool(v):
             sm["include"][k] = bool(v)
+            changed = True
+    if changed and stamp:
+        sm["updated"] = int(time.time() * 1000)
     _modules_from_simple(policy)
 
 
@@ -196,11 +203,12 @@ def _rel(policy, mid):
     return (m.get("path") or "").replace("\\", "/").strip("/")
 
 
-def plan(policy, root, role="pc", external_paths=None):
+def plan(policy, root, role="pc", external_paths=None, control_path=None):
     """이 기기에서 만들어야 할 Syncthing 폴더 목록. 각 항목: id, label, path, type, ignore(줄 목록), module.
     - 방향이 '안 함'인 노트북·미디어도 상위 폴더가 그 안을 건드리지 않도록 상위의 제외 목록에는 들어간다.
     - 노트 폴더 안의 하위 모듈(미디어·노트북 등)은 상위 폴더(마크다운 전체)가 `/<경로>` 로 제외하고 따로 동기화한다.
-    - 외부 폴더는 이 기기의 로컬 경로(external_paths: ext id → 경로)가 있어야 한다."""
+    - 외부 폴더는 이 기기의 로컬 경로(external_paths: ext id → 경로)가 있어야 한다.
+    - 새 방식에서 control_path 를 주면 설정만 담는 작은 양방향 폴더(종류 cfg)도 만든다(폰과 설정을 맞추는 길, syncsettings.py)."""
     external_paths = external_paths or {}
     root = os.path.abspath(root)
     simple = is_simple(policy)
@@ -218,6 +226,9 @@ def plan(policy, root, role="pc", external_paths=None):
             ign.append("/.snapshots")
             ign.extend(COMMON_IGNORE)
             out.append({"id": folder_id(policy, "markdown"), "label": "iamtalkernote", "path": root, "type": typ, "ignore": ign, "module": "markdown"})
+    if simple and control_path:
+        out.append({"id": "%s%s-cfg-%s" % (ID_PREFIX, policy["vault"], hashlib.sha1(b"control").hexdigest()[:8]), "label": "iamtalkernote 설정",
+                    "path": os.path.abspath(control_path), "type": "sendreceive", "ignore": [], "module": "control"})
     for mid, m in policy["modules"].items():
         if simple and m["kind"] != "external":
             continue

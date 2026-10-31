@@ -10,6 +10,7 @@ import store as st
 import syncengine as se
 import stages
 import stagesync
+import syncsettings
 import syncpolicy as sp
 
 
@@ -38,7 +39,7 @@ def current_plans(app, policy=None):
     """이 컴퓨터에서 만들 Syncthing 폴더 목록. 외부 폴더의 경로는 '가져오기' 에 등록된 폴더에서 가져온다"""
     policy = policy or sp.load(app.store.root)
     ext = {f["id"]: f["path"] for f in app.docs.folders()}
-    return stagesync.apply_plans(sp.plan(policy, app.store.root, "pc", ext), app.store.root, policy)   # 아직 열지 않은 단계는 가린다
+    return stagesync.apply_plans(sp.plan(policy, app.store.root, "pc", ext, syncsettings.control_dir()), app.store.root, policy)   # 아직 열지 않은 단계는 가린다
 
 
 def apply_now(app, policy=None):
@@ -82,6 +83,9 @@ def start_stage_watcher(app):
                 if app.sync.running() and sp.exists(app.store.root):
                     pol = sp.load(app.store.root)
                     stagesync.tick(app.sync, app.store.root, pol, lambda: current_plans(app, pol))
+                    if syncsettings.reconcile(pol, syncsettings.control_dir()) == "pull":   # 폰에서 더 최근에 바꿨다 → 정책에 받아들이고 적용
+                        sp.save(app.store.root, pol)
+                        app.sync.apply(current_plans(app, pol))
             except Exception:  # noqa: BLE001
                 pass
     threading.Thread(target=loop, daemon=True).start()
