@@ -21,5 +21,10 @@ ss.extra_ignore = lambda root, policy: ["/a.md", "/b.md"]
 out = ss.apply_plans(plans, "r", pol)
 check("노트 폴더에만 가림 줄이 붙음", out[0]["ignore"] == ["/.history", "/a.md", "/b.md"] and out[1]["ignore"] == ["x"])
 check("원본 목록은 안 바뀜", plans[0]["ignore"] == ["/.history"])
+plan = {"tiers": [{"files": ["a"] * 10}, {"files": ["b"] * 100}, {"files": ["c"] * 900}, {"files": ["d"] * 700}, {"files": ["e"] * 5000}]}
+check("작은 단계는 묶어서 연다(100+900+700 ≥ 1500)", ss.batch_step(plan, 1) == 3)
+check("큰 단계는 하나만", ss.batch_step(plan, 4 - 0) == 1 and ss.batch_step({"tiers": [{"files": ["x"] * 3000}, {"files": ["y"]}]}, 0) == 1)
+check("끝에서는 남은 것까지만", ss.batch_step(plan, 3) == 2 and ss.batch_step(plan, 4) == 1)
+check("decide 가 step 만큼 연다", ss.decide(2, 14, True, 100.0, 0.0, 200.0, step=3)[0] == 5 and ss.decide(13, 14, True, 100.0, 0.0, 200.0, step=3)[0] == 14)
 print("통과 %d / %d" % (sum(ok), len(ok)))
 sys.exit(0 if all(ok) else 1)

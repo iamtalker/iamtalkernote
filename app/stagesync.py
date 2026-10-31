@@ -57,8 +57,21 @@ def apply_plans(plans, root, policy):
     return [dict(p, ignore=list(p["ignore"]) + extra) if p.get("module") == "markdown" else p for p in plans]
 
 
-def decide(r, total, done, since, last, now):
-    """다음 단계로 갈지 정하는 순수 계산 → (열린 단계 수, 새 since, 새 last)"""
+MIN_BATCH = 1500   # 한 번에 열 파일이 이보다 적으면 다음 단계도 함께 연다(열 때마다 폴더를 처음부터 다시 훑는 데 몇 분이 걸려서)
+
+
+def batch_step(plan, r, min_files=MIN_BATCH):
+    """지금 r 단계가 열려 있을 때 다음에 한꺼번에 열 단계 수(1 이상). 작은 단계는 묶는다"""
+    tiers = plan["tiers"]
+    k, n = 1, len(tiers[r]["files"]) if r < len(tiers) else 0
+    while n < min_files and r + k < len(tiers):
+        n += len(tiers[r + k]["files"])
+        k += 1
+    return k
+
+
+def decide(r, total, done, since, last, now, step=1):
+    """다음 단계로 갈지 정하는 순수 계산 → (열린 단계 수, 새 since, 새 last). step: 한꺼번에 열 단계 수"""
     if r >= total or not done:
         return r, 0, last
     if now - last < COOLDOWN:
@@ -66,7 +79,7 @@ def decide(r, total, done, since, last, now):
     if since == 0:
         return r, now, last
     if now - since >= HOLD:
-        return r + 1, 0, now
+        return min(r + step, total), 0, now
     return r, since, last
 
 
@@ -94,7 +107,7 @@ def tick(eng, root, policy, plans_fn):
     cfg = st.read_config()
     r = released()
     new_r, since, last = decide(r, len(plan["tiers"]), peers_done(eng, sp.folder_id(policy, "markdown")),
-                                float(cfg.get("stagesSince", 0)), float(cfg.get("stagesLast", 0)), time.time())
+                                float(cfg.get("stagesSince", 0)), float(cfg.get("stagesLast", 0)), time.time(), batch_step(plan, r))
     if new_r != r:
         st.write_config(stagesReleased=new_r, stagesSince=0, stagesLast=last)
         eng.apply(plans_fn())

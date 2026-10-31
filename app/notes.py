@@ -45,6 +45,7 @@ import store as st  # noqa: E402
 import tray  # noqa: E402   (닫기 버튼을 누르면 앱을 끄지 않고 알림 영역 아이콘으로)
 import updater  # noqa: E402
 import wikiconv  # noqa: E402
+import viewdelete  # noqa: E402
 import winpreview  # noqa: E402   (윈도 미리보기 처리기를 노트 화면 안에: pdf·mp3 …)
 from version import VERSION  # noqa: E402
 
@@ -2177,6 +2178,7 @@ class App:
         self.view.bind("<Button-1>", self.on_view_click)
         box2.bind("<Configure>", self.on_view_resize)
         self.view.bind("<Button-3>", self.on_view_menu)
+        self.view.bind("<Control-z>", lambda e: (self.text_do("edit_undo"), self.render(), "break")[2])   # 렌더링만 볼 때도 되돌리기(우클릭 → 삭제를 되돌림)
         self.text.bind("<Button-3>", self.on_text_menu)
         self.show_empty(True)
 
@@ -3850,7 +3852,31 @@ class App:
             m.add_separator()
         m.add_command(label="복사", command=lambda: v.event_generate("<<Copy>>"), state="normal" if v.tag_ranges("sel") else "disabled")
         m.add_command(label="모두 선택", command=lambda: v.tag_add("sel", "1.0", "end-1c"))
+        m.add_separator()
+        m.add_command(label="삭제", command=self.delete_view_selection, state="normal" if v.tag_ranges("sel") else "disabled")
         m.tk_popup(e.x_root, e.y_root)
+
+    def delete_view_selection(self):
+        """렌더링 화면에서 고른 글을 마크다운 원문에서 바로 지운다(불필요한 부분을 손으로 정리할 때). Ctrl+Z 로 되돌린다"""
+        v = self.view
+        if not v.tag_ranges("sel") or not self.cur:
+            return
+        sel = v.get("sel.first", "sel.last")
+        before = v.get("1.0", "sel.first")
+        old = self.text.get("1.0", "end-1c")
+        new = viewdelete.delete(old, sel, before)
+        if new is None:
+            return self.status.config(text="고른 글을 원문에서 정확히 찾지 못해 지우지 않았습니다. ‘마크다운만’ 보기에서 지워 주세요.")
+        p, s = viewdelete.minimal_change(old, new)
+        self.text.edit_separator()
+        self.text.delete(f"1.0+{p}c", f"1.0+{len(old) - s}c")
+        mid = new[p:len(new) - s]
+        if mid:
+            self.text.insert(f"1.0+{p}c", mid)
+        self.text.edit_separator()
+        v.tag_remove("sel", "1.0", "end")
+        self.status.config(text="선택한 글을 지웠습니다 (Ctrl+Z 로 되돌립니다)")
+        self.render()
 
     def on_text_menu(self, e):
         t = self.text
