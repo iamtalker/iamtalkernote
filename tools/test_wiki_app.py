@@ -257,6 +257,15 @@ check("칸에서 고치면 설정에 저장되고 요약이 바뀜", st.read_con
 app.feat["gongsu"] = False
 st.write_config(cal_gongsu=False)
 pv.refresh()
+dn_ = pv.pl.add("끝낸 일", "2026-10-01")
+pv.pl.update(dn_["id"], done=True)
+pv.draw_todos()
+check("완료된 항목도 목록에 보임(기본)", dn_["id"] in pv.tree.get_children())
+pv.hide_done.set(True)
+pv.toggle_hide_done()
+check("'완료된 항목 숨기기'를 켜면 목록에서 빠지고 설정에 기억됨", dn_["id"] not in pv.tree.get_children() and st.read_config().get("cal_hide_done") is True)
+pv.hide_done.set(False)
+pv.toggle_hide_done()
 check("공수달력을 끄면 단가·일비 칸이 사라짐", not pv.rate.winfo_ismapped())
 app.nb = notes.ALL
 app.reload_notes()

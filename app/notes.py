@@ -2378,9 +2378,9 @@ class App:
         c = st.read_config()
         num = lambda k: int(float(c.get(k) or 0))  # noqa: E731
         try:
-            return {"gongsu": bool(c.get("cal_gongsu", False)), "wage": num("cal_wage"), "meal": num("cal_meal")}
+            return {"gongsu": bool(c.get("cal_gongsu", False)), "wage": num("cal_wage"), "meal": num("cal_meal"), "hide_done": bool(c.get("cal_hide_done", False))}
         except (TypeError, ValueError):
-            return {"gongsu": bool(c.get("cal_gongsu", False)), "wage": 0, "meal": 0}
+            return {"gongsu": bool(c.get("cal_gongsu", False)), "wage": 0, "meal": 0, "hide_done": bool(c.get("cal_hide_done", False))}
 
     def sync_holidays(self, force=False):
         """구글 달력의 공개 '대한민국의 휴일'(로그인 필요 없음)을 뒤에서 받아 달력에 쓴다. 한 달에 한 번, 못 받으면 내장 표를 쓴다"""

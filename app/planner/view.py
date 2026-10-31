@@ -16,6 +16,7 @@ class PlannerView(tk.Frame):
         today = datetime.date.today()
         self.year, self.month, self.sel = today.year, today.month, M.iso(today)
         self.only_sel = tk.BooleanVar(value=False)
+        self.hide_done = tk.BooleanVar(value=bool(get_cfg().get("hide_done")))
         self.cells = []
         C = colors
         head = tk.Frame(self, bg=C["bg"])
@@ -63,6 +64,8 @@ class PlannerView(tk.Frame):
         tk.Label(mid, text="할일", bg=C["bg"], fg=C["text"], font=(ui, 11, "bold")).pack(side="left")
         tk.Checkbutton(mid, text="선택한 날만", variable=self.only_sel, command=self.draw_todos, bg=C["bg"], activebackground=C["bg"],
                        selectcolor=C["bg"], font=(ui, 9), fg=C["muted"]).pack(side="right")
+        tk.Checkbutton(mid, text="완료된 항목 숨기기", variable=self.hide_done, command=self.toggle_hide_done, bg=C["bg"], activebackground=C["bg"],
+                       selectcolor=C["bg"], font=(ui, 9), fg=C["muted"]).pack(side="right", padx=(0, 10))
         wrap = tk.Frame(bottom, bg=C["bg"])
         wrap.pack(fill="both", expand=True, padx=18, pady=(6, 14))
         self.tree = ttk.Treeview(wrap, style="Flat.Treeview", columns=("start", "end"), show="tree headings", selectmode="browse", height=6)
@@ -195,12 +198,19 @@ class PlannerView(tk.Frame):
     def draw_todos(self):
         self.tree.delete(*self.tree.get_children())
         for t in self.pl.ordered(self.sel if self.only_sel.get() else None):
+            if t["done"] and self.hide_done.get():
+                continue
             d = M.parse(t.get("date"))
             diff = (datetime.date.today() - d).days if d and not t["done"] else 0     # 양수 = 며칠째 밀림, 음수 = 앞으로 며칠 남음(D-n)
             age = max(diff, 0)
             self.tree.insert("", "end", iid=t["id"], text=("☑  " if t["done"] else "☐  ") + t["text"],
                              values=((t["date"] + (f"  {age}일째" if age > 0 else f"  D-{-diff}" if diff < 0 else "  D-day")) if t.get("date") else "", t.get("done_on") or ""),
                              tags=("done",) if t["done"] else ())
+
+    def toggle_hide_done(self):
+        if self.set_cfg:
+            self.set_cfg("hide_done", bool(self.hide_done.get()))   # 설정에 기억
+        self.draw_todos()
 
     def on_tree_click(self, e):
         row = self.tree.identify_row(e.y)
