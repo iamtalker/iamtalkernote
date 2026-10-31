@@ -264,8 +264,12 @@ class Engine:
             f.update({"id": p["id"], "label": p["label"], "path": p["path"], "type": p["type"], "devices": devices,
                       "fsWatcherEnabled": True, "fsWatcherDelayS": 10, "rescanIntervalS": 3600, "ignorePerms": True, "paused": False,
                       "order": "smallestFirst"})   # 작은 파일(노트)부터 받아 목록이 빨리 채워지게
-            self.api("/rest/config/folders/" + p["id"], "PUT", f)
-            self.api("/rest/db/ignores?folder=" + urllib.parse.quote(p["id"]), "POST", {"ignore": p["ignore"]})
+            # 바뀐 것이 없으면 올리지 않는다: 폴더 설정·무시 목록을 올릴 때마다 폴더가 다시 시작되며 수만 개 파일을 처음부터 훑는다(앱을 켤 때마다 몇 분)
+            if have.get(p["id"]) != f:
+                self.api("/rest/config/folders/" + p["id"], "PUT", f)
+            cur = (self.api("/rest/db/ignores?folder=" + urllib.parse.quote(p["id"])) or {}).get("ignore") or []
+            if list(cur) != list(p["ignore"]):
+                self.api("/rest/db/ignores?folder=" + urllib.parse.quote(p["id"]), "POST", {"ignore": p["ignore"]})
             want.add(p["id"])
         gone = [i for i in have if i not in want]
         keep = {os.path.normcase(os.path.abspath(p["path"])) for p in plans}
