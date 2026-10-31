@@ -95,11 +95,6 @@ check("되돌리기", lines() == ["a", "b", "c"])
 press(w._undo, True)
 check("다시 실행", len(lines()) == 1)
 
-w.load("- x\n")
-at(0, 1)
-press(w._done)
-check("Ctrl+Enter: 완료 표시([x])", saved[-1] == "- [x] x\n" and "done" in t.tag_names("1.3"))
-
 w.load("- a\n")
 w.clipboard_clear()
 w.clipboard_append("- p\n    - q\n- r")

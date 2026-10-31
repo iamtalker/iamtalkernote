@@ -3,7 +3,7 @@
 처리한 뒤 다시 그린다. 바뀔 때마다 on_change(마크다운 원문)를 부른다.
 
 키: Enter 새 항목(커서 뒤 글은 새 항목으로) · Tab / Shift+Tab 들여쓰기·내어쓰기 · 줄 맨 앞 Backspace 앞 항목에 붙이기(빈 항목은 지우기) ·
-Delete(줄 끝) 다음 항목 붙이기 · Ctrl+↑/↓ 접기·펼치기 · Ctrl+Shift+↑/↓ 항목 옮기기 · Ctrl+Enter 완료 · Alt+→ 줌인 · Alt+← 줌아웃 ·
+Delete(줄 끝) 다음 항목 붙이기 · Ctrl+↑/↓ 접기·펼치기 · Ctrl+Shift+↑/↓ 항목 옮기기 · Alt+→ 줌인 · Alt+← 줌아웃 ·
 점(●)을 누르면 줌인 · Ctrl+Z / Ctrl+Y 되돌리기·다시"""
 import tkinter as tk
 import tkinter.font as tkfont
@@ -47,11 +47,10 @@ class OutlineEditor(tk.Frame):
         for tg in ("bul", "bulc"):
             t.tag_bind(tg, "<Enter>", lambda e: t.config(cursor="hand2"))
             t.tag_bind(tg, "<Leave>", lambda e: t.config(cursor="xterm"))
-        t.tag_configure("done", foreground=colors["muted"], overstrike=True)
         t.tag_configure("link", foreground=colors["accent"], underline=True)
         for seq, fn in (("<Return>", self._enter), ("<KP_Enter>", self._enter), ("<Tab>", self._tab), ("<ISO_Left_Tab>", self._btab),
                         ("<Shift-Tab>", self._btab), ("<BackSpace>", self._backspace), ("<Delete>", self._delete),
-                        ("<Control-Return>", self._done), ("<Control-Up>", lambda e: self._fold(True)), ("<Control-Down>", lambda e: self._fold(False)),
+                        ("<Control-Up>", lambda e: self._fold(True)), ("<Control-Down>", lambda e: self._fold(False)),
                         ("<Control-Shift-Up>", lambda e: self._move(True)), ("<Control-Shift-Down>", lambda e: self._move(False)),
                         ("<Alt-Right>", self._zoom_in), ("<Alt-Left>", self._zoom_out), ("<Control-z>", lambda e: self._undo()),
                         ("<Control-y>", lambda e: self._undo(redo=True)), ("<Control-Shift-Z>", lambda e: self._undo(redo=True)),
@@ -121,8 +120,6 @@ class OutlineEditor(tk.Frame):
         for ln, bul, dtag, done in spans:
             t.tag_add(bul, f"{ln}.0", f"{ln}.1")
             t.tag_add(dtag, f"{ln}.0", f"{ln}.end")
-            if done:
-                t.tag_add("done", f"{ln}.{OFF}", f"{ln}.end")
         if focus is not None and focus in self.vis:
             ln = self.vis.index(focus) + 1
             t.mark_set("insert", f"{ln}.{OFF + min(col, len(self.items[focus].text))}")
@@ -142,7 +139,7 @@ class OutlineEditor(tk.Frame):
             lb.bind("<Button-1>", lambda e, idx=idx: self.set_zoom(idx))
             tk.Label(self.crumb, text=" › ", bg=self.C["bg"], fg=self.C["muted"], font=(self.family, 9)).pack(side="left")
         tk.Label(self.crumb, text=self.items[self.zoom].text or "(빈 항목)", bg=self.C["bg"], fg=self.C["text"],
-                 font=(self.family, 11, "bold")).pack(side="left")
+                 font=(self.family, 10)).pack(side="left")
 
     # ---------------------------------------------------------------- 화면 ↔ 모델
     def _pos(self):
@@ -331,14 +328,6 @@ class OutlineEditor(tk.Frame):
         self._push_undo()
         i, c = M.merge_next(self.items, self.vis[k], self.vis[k + 1])
         self._commit(i, c)
-        return "break"
-
-    def _done(self, e=None):
-        self.pull()
-        i, col, _k = self._cur()
-        self._push_undo()
-        M.toggle_done(self.items[i])
-        self._commit(i, col + 4 if M.is_done(self.items[i]) else col)
         return "break"
 
     def _fold(self, collapse):
