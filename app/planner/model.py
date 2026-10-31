@@ -1,11 +1,17 @@
 """달력·할일·공수 모델(화면을 모르는 순수 계산). 날짜는 'YYYY-MM-DD' 글자로 다룬다."""
 import datetime
+import hashlib
 import json
 import os
-import uuid
+import re
 
-DIR = ".planner"
+DIR = ".planner"           # 앱 상태(구글 공휴일을 받아 둔 것, 알린 기록)
 FILE = "data.json"
+MD_DIR = "달력"            # 달마다 마크다운 파일 하나: '2026년 11월.md' (공수와 그 달 날짜가 있는 할일), 날짜 없는 할일은 '할일.md'
+UNDATED = "할일.md"
+MONTH_RE = re.compile(r"^(\d{4})년 (\d{1,2})월\.md$")
+TODO_RE = re.compile(r"^\s*[-*]\s*\[( |x|X)\]\s*(?:(\d{4}-\d{2}-\d{2})\s+)?(.*?)(?:\s*✓(\d{4}-\d{2}-\d{2}))?\s*$")   # 끝의 ✓날짜 = 완료한 날
+GONGSU_RE = re.compile(r"^\s*[-*]\s*(\d{4}-\d{2}-\d{2})\s*[:：]\s*(\d+(?:\.\d+)?)")
 
 # 양력 공휴일(고정). 신정·현충일·성탄절 말고는 대체공휴일 대상이다(성탄절은 2023년부터).
 FIXED = {(1, 1): "신정", (3, 1): "삼일절", (5, 5): "어린이날", (6, 6): "현충일", (8, 15): "광복절", (10, 3): "개천절", (10, 9): "한글날", (12, 25): "성탄절"}
@@ -66,32 +72,162 @@ def month_grid(year, month):
     return [start + datetime.timedelta(i) for i in range(42)]
 
 
+def render_month(year, month, todos, gongsu):
+    """그 달 파일의 글: 공수 목록과 할일 목록. 손으로 고쳐도 읽히도록 보통 마크다운 목록이다"""
+    out = [f"# {year}년 {month}월", ""]
+    if gongsu:
+        out += ["## 공수"] + [f"- {d}: {fmt_gongsu(v)}" for d, v in sorted(gongsu.items())] + [""]
+    if todos:
+        out += ["## 할일"] + [f"- [{'x' if t['done'] else ' '}] {t['date']} {t['text']}" + (f" ✓{t['done_on']}" if t["done"] and t.get("done_on") else "")
+                            for t in sorted(todos, key=lambda t: (t["date"], t["text"]))] + [""]
+    return "\n".join(out).rstrip("\n") + "\n"
+
+
+def render_undated(todos):
+    return "\n".join(["# 할일", ""] + [f"- [{'x' if t['done'] else ' '}] {t['text']}" + (f" ✓{t['done_on']}" if t["done"] and t.get("done_on") else "") for t in todos]) + "\n"
+
+
+def parse_md(text):
+    """파일 글 → ([(날짜 또는 None, 글, 했나, 완료한 날)], {날짜: 공수}). 못 읽는 줄은 건너뛴다"""
+    todos, gongsu = [], {}
+    for line in text.split("\n"):
+        m = TODO_RE.match(line)
+        if m:
+            if m.group(3):
+                todos.append((m.group(2), m.group(3), m.group(1) in "xX", m.group(4)))
+            continue
+        m = GONGSU_RE.match(line)
+        if m and parse(m.group(1)):
+            v = float(m.group(2))
+            if v > 0:
+                gongsu[m.group(1)] = v
+    return todos, gongsu
+
+
+def _tid(date, text, seen):
+    base = hashlib.sha1(f"{date}|{text}".encode("utf-8")).hexdigest()[:8]
+    n, tid = 1, base
+    while tid in seen:                                 # 같은 날 같은 글이 둘이면 번호를 붙여 구분
+        n += 1
+        tid = f"{base}{n}"
+    seen.add(tid)
+    return tid
+
+
 class Planner:
-    """할일·공수 자료. path 는 노트 폴더. 바뀔 때마다 바로 저장한다(작은 파일 하나, 임시 파일로 쓴 뒤 바꿔치기)"""
+    """할일·공수 자료. root 는 노트 폴더. 자료는 노트 폴더의 '달력' 폴더에 달마다 마크다운 파일로 저장한다(다른 편집기·폰에서도 열린다).
+    바뀔 때마다 바로 저장한다(임시 파일로 쓴 뒤 바꿔치기). 앱 상태(구글 공휴일·알린 기록)는 .planner/data.json"""
 
     def __init__(self, root):
         self.path = os.path.join(root, DIR, FILE)
+        self.dir = os.path.join(root, MD_DIR)
         self.todos, self.gongsu = [], {}
         self.google, self.google_at = {}, ""        # 구글 달력에서 받아 둔 공휴일 {날짜: 이름}, 받은 날
+        self.notified = {}                          # {할일 id: 알린 날}
+        self._sig = None
         self.load()
 
-    def load(self):
+    def signature(self):
+        try:
+            return tuple(sorted((e.name, e.stat().st_mtime_ns) for e in os.scandir(self.dir) if e.name.endswith(".md")))
+        except OSError:
+            return ()
+
+    def sync(self):
+        """밖(다른 편집기·폰 동기화)에서 파일이 바뀌었으면 다시 읽는다 → 바뀌었는가"""
+        if self.signature() != self._sig:
+            self.load()
+            return True
+        return False
+
+    def _state(self):
         try:
             with open(self.path, encoding="utf-8") as fh:
-                d = json.load(fh)
+                return json.load(fh)
         except (OSError, ValueError):
-            d = {}
-        self.todos = [t for t in d.get("todos", []) if isinstance(t, dict) and t.get("text")]
-        self.gongsu = {k: float(v) for k, v in d.get("gongsu", {}).items() if parse(k) and isinstance(v, (int, float)) and v > 0}
-        self.google = {k: v for k, v in d.get("google", {}).items() if parse(k)}
-        self.google_at = d.get("google_at", "")
+            return {}
+
+    def load(self):
+        st = self._state()
+        self.google = {k: v for k, v in st.get("google", {}).items() if parse(k)}
+        self.google_at = st.get("google_at", "")
+        self.notified = {k: v for k, v in st.get("notified", {}).items() if isinstance(v, str)}
+        rows, self.gongsu, found = [], {}, False
+        try:
+            names = sorted(os.listdir(self.dir))
+        except OSError:
+            names = []
+        for name in names:
+            if not (MONTH_RE.match(name) or name == UNDATED):
+                continue
+            try:
+                with open(os.path.join(self.dir, name), encoding="utf-8") as fh:
+                    todos, gongsu = parse_md(fh.read())
+            except OSError:
+                continue
+            found = True
+            rows += todos
+            self.gongsu.update(gongsu)
+        if not found and (st.get("todos") or st.get("gongsu")):   # 예전 방식(.planner/data.json)의 자료를 마크다운으로 옮긴다
+            rows = [(t.get("date"), t["text"], bool(t.get("done")), None) for t in st.get("todos", []) if isinstance(t, dict) and t.get("text")]
+            self.gongsu = {k: float(v) for k, v in st.get("gongsu", {}).items() if parse(k) and isinstance(v, (int, float)) and v > 0}
+            self.todos = self._make(rows)
+            self.save()
+            return
+        self.todos = self._make(rows)
+        self._sig = self.signature()
+
+    def _make(self, rows):
+        seen, out = set(), []
+        for date, text, done, done_on in rows:
+            tid = _tid(date, text, seen)
+            t = {"id": tid, "text": text, "date": date or None, "done": done}
+            if done and done_on:
+                t["done_on"] = done_on
+            if self.notified.get(tid):
+                t["notified"] = self.notified[tid]
+            out.append(t)
+        return out
 
     def save(self):
+        os.makedirs(self.dir, exist_ok=True)
+        months = {}
+        for t in self.todos:
+            if t.get("date") and parse(t["date"]):
+                d = parse(t["date"])
+                months.setdefault((d.year, d.month), ([], {}))[0].append(t)
+        for k, v in self.gongsu.items():
+            d = parse(k)
+            months.setdefault((d.year, d.month), ([], {}))[1][k] = v
+        want = {f"{y}년 {m:02d}월.md": render_month(y, m, ts, gs) for (y, m), (ts, gs) in months.items()}
+        undated = [t for t in self.todos if not (t.get("date") and parse(t["date"]))]
+        if undated:
+            want[UNDATED] = render_undated(undated)
+        for name, text in want.items():
+            self._write(os.path.join(self.dir, name), text)
+        try:
+            for name in os.listdir(self.dir):       # 이제 비어 있는 달 파일은 지운다(우리가 만드는 이름 모양만)
+                if (MONTH_RE.match(name) or name == UNDATED) and name not in want:
+                    os.remove(os.path.join(self.dir, name))
+        except OSError:
+            pass
+        self.notified = {t["id"]: t["notified"] for t in self.todos if t.get("notified")}
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
-        tmp = self.path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump({"todos": self.todos, "gongsu": self.gongsu, "google": self.google, "google_at": self.google_at}, fh, ensure_ascii=False, indent=1)
-        os.replace(tmp, self.path)
+        self._write(self.path, json.dumps({"google": self.google, "google_at": self.google_at, "notified": self.notified}, ensure_ascii=False, indent=1))
+        self._sig = self.signature()
+
+    @staticmethod
+    def _write(path, text):
+        try:
+            with open(path, encoding="utf-8") as fh:
+                if fh.read() == text:
+                    return                                    # 같으면 다시 쓰지 않는다(동기화·수정 시각을 건드리지 않게)
+        except OSError:
+            pass
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(text)
+        os.replace(tmp, path)
 
     # ---- 공휴일(내장 표 + 구글 달력에서 받은 것: 구글 것이 우선)
     def holidays_for(self, year):
@@ -108,11 +244,11 @@ class Planner:
 
     # ---- 할일
     def add(self, text, date=None):
-        t = {"id": uuid.uuid4().hex[:8], "text": text.strip(), "date": date or None, "done": False}
-        if t["text"]:
-            self.todos.append(t)
+        text = " ".join(text.split())
+        if text:
+            self.todos.append({"id": _tid(date, text, {x["id"] for x in self.todos}), "text": text, "date": date or None, "done": False})
             self.save()
-            return t
+            return self.todos[-1]
 
     def find(self, tid):
         return next((t for t in self.todos if t["id"] == tid), None)
@@ -123,6 +259,11 @@ class Planner:
             t.update(kw)
             if "date" in kw or "done" in kw:
                 t.pop("notified", None)
+            if "done" in kw:                                   # 끝낸 날을 적어 둔다(그 달까지만 이월 표시)
+                if kw["done"]:
+                    t["done_on"] = iso(datetime.date.today())
+                else:
+                    t.pop("done_on", None)
             self.save()
 
     def remove(self, tid):
@@ -133,9 +274,26 @@ class Planner:
         """그 날짜의 할일"""
         return [t for t in self.todos if t.get("date") == date]
 
+    def carried(self, year, month):
+        """그 달로 넘어와 표시할 할일: 앞선 달에 날짜가 있는데 아직 안 끝낸 것(끝낸 것은 끝낸 달까지만)"""
+        first = f"{year:04d}-{month:02d}"
+        out = []
+        for t in self.todos:
+            d = t.get("date")
+            if not d or d[:7] >= first:
+                continue
+            if not t["done"] or (t.get("done_on") and t["done_on"][:7] >= first):
+                out.append(t)
+        return out
+
+    def shown_on(self, date):
+        """달력 칸에 보일 그날의 할일: 그날 것 + (그 달 1일이면) 지난달에서 넘어온 것"""
+        d = parse(date)
+        return self.on(date) + (self.carried(d.year, d.month) if d and d.day == 1 else [])
+
     def ordered(self, only_date=None):
         """아래 목록 순서: 안 한 것(날짜 있는 것은 날짜순, 날짜 없는 것은 그 뒤) → 한 것"""
-        pool = self.on(only_date) if only_date else self.todos
+        pool = self.shown_on(only_date) if only_date else self.todos
         return sorted(pool, key=lambda t: (t["done"], t.get("date") is None, t.get("date") or "", t["text"]))
 
     def due(self, today):

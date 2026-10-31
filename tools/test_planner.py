@@ -62,5 +62,48 @@ with tempfile.TemporaryDirectory() as d2:
     check("받은 공휴일이 내장 표보다 우선하고 저장됨", q.holidays_for(2026)["2026-10-01"] == "임시 연휴" and M.Planner(d2).google == g)
     check("한 달 안에는 다시 안 받음, 지나면 받음", not q.google_stale("2026-11-20") and q.google_stale("2026-12-05"))
 
+# --- 마크다운 파일 저장·이월
+with tempfile.TemporaryDirectory() as d3:
+    p = M.Planner(d3)
+    p.add("날짜 없는 할일")
+    p.add("회의 준비", "2026-11-05")
+    p.set_gongsu("2026-11-02", 1)
+    p.set_gongsu("2026-11-03", 1.5)
+    md = os.path.join(d3, "달력", "2026년 11월.md")
+    text = open(md, encoding="utf-8").read()
+    check("달마다 마크다운 파일: 공수·할일", "# 2026년 11월" in text and "- 2026-11-02: 1\n" in text and "- 2026-11-03: 1.5\n" in text and "- [ ] 2026-11-05 회의 준비" in text)
+    check("날짜 없는 할일은 할일.md", "- [ ] 날짜 없는 할일" in open(os.path.join(d3, "달력", "할일.md"), encoding="utf-8").read())
+    open(md, "a", encoding="utf-8").write("- [ ] 2026-11-20 손으로 쓴 할일\n- 2026-11-04: 2\n")
+    check("밖에서 파일을 고치면 sync 로 읽음", p.sync() and any(t["text"] == "손으로 쓴 할일" for t in p.todos) and p.gongsu["2026-11-04"] == 2.0)
+    tid = next(t["id"] for t in p.todos if t["text"] == "회의 준비")
+    p.update(tid, date="2026-12-01")
+    check("날짜를 옮기면 그 달 파일로 옮겨짐", "회의 준비" in open(os.path.join(d3, "달력", "2026년 12월.md"), encoding="utf-8").read() and "회의 준비" not in open(md, encoding="utf-8").read())
+    p.remove(next(t["id"] for t in p.todos if t["text"] == "회의 준비"))
+    check("비게 된 달 파일은 지워짐", not os.path.exists(os.path.join(d3, "달력", "2026년 12월.md")))
+
+with tempfile.TemporaryDirectory() as d4:
+    p = M.Planner(d4)
+    a = p.add("10월 할일", "2026-10-20")
+    b = p.add("10월에 끝낸 일", "2026-10-21")
+    p.update(b["id"], done=True)
+    p.todos[1]["done_on"] = "2026-10-25"
+    p.save()
+    check("안 끝낸 할일은 다음 달로 이월 표시", [t["text"] for t in p.carried(2026, 11)] == ["10월 할일"] and [t["text"] for t in p.carried(2026, 12)] == ["10월 할일"])
+    check("그 달에 끝낸 일은 다음 달에 안 나옴", "10월에 끝낸 일" not in [t["text"] for t in p.carried(2026, 11)])
+    check("이월된 것은 그 달 1일 칸·목록에 보임", [t["text"] for t in p.shown_on("2026-11-01")] == ["10월 할일"] and p.shown_on("2026-11-02") == [])
+    a2 = next(t for t in p.todos if t["text"] == "10월 할일")
+    p.update(a2["id"], done=True)
+    p.todos[0]["done_on"] = "2026-11-12"
+    p.save()
+    q = M.Planner(d4)
+    check("11월에 끝내면 11월까지만 표시되고 12월에는 안 나옴(파일에 끝낸 날이 남음)", [t["text"] for t in q.carried(2026, 11)] == ["10월 할일"] and q.carried(2026, 12) == [])
+
+with tempfile.TemporaryDirectory() as d5:
+    os.makedirs(os.path.join(d5, ".planner"))
+    open(os.path.join(d5, ".planner", "data.json"), "w", encoding="utf-8").write(
+        '{"todos": [{"id": "a", "text": "옛 방식 할일", "date": "2026-11-05", "done": false}], "gongsu": {"2026-11-02": 1}}')
+    p = M.Planner(d5)
+    check("예전 방식(.planner/data.json)의 자료를 마크다운으로 옮김", p.todos[0]["text"] == "옛 방식 할일" and os.path.exists(os.path.join(d5, "달력", "2026년 11월.md")) and p.gongsu == {"2026-11-02": 1.0})
+
 print("실패 %d" % fails if fails else "전부 통과")
 sys.exit(1 if fails else 0)

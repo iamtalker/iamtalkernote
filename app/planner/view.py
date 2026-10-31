@@ -98,6 +98,7 @@ class PlannerView(tk.Frame):
         self.refresh()
 
     def refresh(self, keep_rate=False):
+        self.pl.sync()                                     # 밖(다른 편집기·폰 동기화)에서 고친 달력 파일을 반영
         C, cfg = self.C, self.get_cfg()
         self.title.config(text=f"{self.year}년 {self.month}월")
         hol = {**self.pl.holidays_for(self.year - 1), **self.pl.holidays_for(self.year), **self.pl.holidays_for(self.year + 1)}
@@ -111,9 +112,9 @@ class PlannerView(tk.Frame):
             if d.month != self.month:
                 fg = C["muted"]
             lines = [str(d.day) + (" " + hol[s] if s in hol else "")]
-            todos = [t for t in self.pl.on(s) if not t["done"]]
+            todos = [t for t in self.pl.shown_on(s) if not t["done"]]
             if todos:
-                lines.append("● " + (todos[0]["text"][:6] + ("…" if len(todos[0]["text"]) > 6 or len(todos) > 1 else "")))
+                lines.append(("↪ " if todos[0].get("date") != s else "● ") + (todos[0]["text"][:6] + ("…" if len(todos[0]["text"]) > 6 or len(todos) > 1 else "")))
             if cfg["gongsu"] and s in self.pl.gongsu:
                 lines.append("공수 " + M.fmt_gongsu(self.pl.gongsu[s]))
             lb.config(text="\n".join(lines), fg=fg, bg=C["soft"] if s == self.sel else C["bg"],
