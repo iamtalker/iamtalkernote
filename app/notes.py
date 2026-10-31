@@ -5023,14 +5023,25 @@ class App:
         top.title("옵션")
         top.configure(bg=C["bg"])
         top.transient(self.root)
-        top.geometry(f"720x640+{self.root.winfo_x() + 100}+{self.root.winfo_y() + 50}")
-        top.minsize(640, 600)
+        h = max(420, min(640, top.winfo_screenheight() - 140))   # 화면이 작거나 글자 배율이 크면 창을 화면에 맞추고, 넘치는 내용은 스크롤한다
+        top.geometry(f"720x{h}+{self.root.winfo_x() + 100}+{max(0, min(self.root.winfo_y() + 50, top.winfo_screenheight() - h - 80))}")
+        top.minsize(640, 420)
         nav = tk.Frame(top, bg=C["panel"], width=170)
         nav.pack(side="left", fill="y")
         nav.pack_propagate(False)
         tk.Label(nav, text="옵션", bg=C["panel"], fg=C["text"], font=(self.ui, 12, "bold"), anchor="w", padx=18, pady=16).pack(fill="x")
-        content = tk.Frame(top, bg=C["bg"], padx=28, pady=22)
-        content.pack(side="left", fill="both", expand=True)
+        outer = tk.Frame(top, bg=C["bg"])
+        outer.pack(side="left", fill="both", expand=True)
+        sb = ttk.Scrollbar(outer, orient="vertical")
+        cv = tk.Canvas(outer, bg=C["bg"], highlightthickness=0, bd=0, yscrollcommand=sb.set)
+        sb.config(command=cv.yview)
+        sb.pack(side="right", fill="y")
+        cv.pack(side="left", fill="both", expand=True)
+        content = tk.Frame(cv, bg=C["bg"], padx=28, pady=22)
+        cwin = cv.create_window(0, 0, window=content, anchor="nw")
+        cv.bind("<Configure>", lambda e: cv.itemconfigure(cwin, width=e.width))
+        content.bind("<Configure>", lambda e: cv.configure(scrollregion=cv.bbox("all")))
+        top.bind("<MouseWheel>", lambda e: cv.yview_scroll(-1 if e.delta > 0 else 1, "units") if content.winfo_reqheight() > cv.winfo_height() else None)
         foot = tk.Frame(top, bg=C["bg"])
         tabs = {}
 
@@ -5495,12 +5506,13 @@ class App:
             for w in content.winfo_children():
                 w.destroy()
             dict((k, f) for k, _, f in pages)[key](content)
+            cv.yview_moveto(0)
 
         for key, label, _ in pages:
             b = Btn(nav, label, lambda k=key: select(k), kind="nav", padx=18, pady=8, anchor="w")
             b.pack(fill="x", padx=8, pady=1)
             tabs[key] = b
-        foot.pack(side="bottom", fill="x", padx=28, pady=(0, 16), before=content)
+        foot.pack(side="bottom", fill="x", padx=28, pady=(0, 16), before=outer)
         Btn(foot, "닫기", top.destroy, kind="primary", padx=22, pady=5).pack(side="right")
         select(tab)
 
