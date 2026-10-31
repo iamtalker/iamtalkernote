@@ -15,7 +15,6 @@ class PlannerView(tk.Frame):
         self.C, self.ui, self.pl, self.get_cfg, self.set_cfg, self.on_change = colors, ui, planner, get_cfg, set_cfg, on_change
         today = datetime.date.today()
         self.year, self.month, self.sel = today.year, today.month, M.iso(today)
-        self.only_sel = tk.BooleanVar(value=False)
         self.hide_done = tk.BooleanVar(value=bool(get_cfg().get("hide_done")))
         self.cells = []
         C = colors
@@ -63,8 +62,6 @@ class PlannerView(tk.Frame):
         mid = tk.Frame(bottom, bg=C["bg"])
         mid.pack(fill="x", padx=18, pady=(12, 4))
         tk.Label(mid, text="할일", bg=C["bg"], fg=C["text"], font=(ui, 11, "bold")).pack(side="left")
-        tk.Checkbutton(mid, text="선택한 날만", variable=self.only_sel, command=self.draw_todos, bg=C["bg"], activebackground=C["bg"],
-                       selectcolor=C["bg"], font=(ui, 9), fg=C["muted"]).pack(side="right")
         tk.Checkbutton(mid, text="완료된 항목 숨기기", variable=self.hide_done, command=self.toggle_hide_done, bg=C["bg"], activebackground=C["bg"],
                        selectcolor=C["bg"], font=(ui, 9), fg=C["muted"]).pack(side="right", padx=(0, 10))
         wrap = tk.Frame(bottom, bg=C["bg"])
@@ -198,7 +195,7 @@ class PlannerView(tk.Frame):
     # ---- 할일
     def draw_todos(self):
         self.tree.delete(*self.tree.get_children())
-        for t in self.pl.ordered(self.sel if self.only_sel.get() else None):
+        for t in self.pl.ordered():
             if t["done"] and self.hide_done.get():
                 continue
             d = M.parse(t.get("date"))
