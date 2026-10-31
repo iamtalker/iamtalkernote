@@ -106,8 +106,6 @@ _DARK = dict(bg="#1f2128", panel="#181a20", line="#32353f", text="#e6e8ee", mute
 THEMES = {   # BASE 와 다른 값만 적는다
     "라이트 보라": {},
     "라이트 파랑": dict(accent="#2563eb", accent_d="#1d4ed8", soft="#dbeafe", sel="#bfdbfe"),
-    "라이트 초록": dict(accent="#059669", accent_d="#047857", soft="#d1fae5", sel="#a7f3d0"),
-    "라이트 분홍": dict(accent="#db2777", accent_d="#be185d", soft="#fce7f3", sel="#fbcfe8"),
     "세피아": dict(bg="#fbf5e9", panel="#f3ead8", line="#e4d7bd", text="#3b2f20", muted="#8c7b62", sub="#5d4e3a",
                  accent="#b45309", accent_d="#92400e", soft="#f5e2c3", hover="#efe4cb", seg="#efe4cb", sel="#ecd3a5",
                  code="#f0e6d0", mark="#f7d774", thumb="#d8c9aa", thumb_h="#bba980"),
@@ -132,6 +130,17 @@ def luminance(h):
     return 0.2126 * r + 0.7152 * g + 0.0722 * b
 
 
+LEGACY_THEMES = {"라이트 초록": ("라이트 보라", "#059669"), "라이트 분홍": ("라이트 보라", "#db2777")}   # 없앤 프리셋은 같은 색의 '강조색 직접 고르기' 로 옮긴다
+
+
+def resolve_theme(name, accent=None):
+    """저장돼 있던 이름이 없앤 프리셋이면 (바탕 테마, 같은 강조색) 으로 바꿔 준다"""
+    if name in LEGACY_THEMES:
+        base, acc = LEGACY_THEMES[name]
+        return base, accent or acc
+    return name, accent
+
+
 def compute_theme(name, accent=None):
     """테마 이름(과 직접 고른 강조색)으로 색 사전을 만든다(화면은 건드리지 않는다)"""
     t = dict(BASE)
@@ -149,6 +158,7 @@ def compute_theme(name, accent=None):
 
 def apply_theme(name, accent=None):
     """전역 색(C)을 바꾼다. 이미 만들어진 화면은 App.rebuild_ui 로 다시 그려야 반영된다."""
+    name, accent = resolve_theme(name, accent)
     t = compute_theme(name if name in THEMES else DEFAULT_THEME, accent)
     C.clear()
     C.update(t)

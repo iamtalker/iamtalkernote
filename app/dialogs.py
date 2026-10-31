@@ -1023,7 +1023,7 @@ class DialogsMixin:
             Btn(p, "이 노트의 버전 보기", lambda: (top.destroy(), self.show_versions()), padx=12, pady=4).pack(anchor="w", pady=(14, 0))
 
         def theme_tab(p):
-            title(p, "테마·색상", "노트 전체의 색을 고릅니다. 누르면 바로 적용됩니다.")
+            title(p, "테마·색상", "자주 쓰는 5가지에서 고르거나, 아래에서 강조색을 직접 고릅니다. 누르면 바로 적용됩니다.")
             cfg = st.read_config().get("theme", {})
             cur_name = cfg.get("name", DEFAULT_THEME)
             cur_acc = cfg.get("accent")
@@ -1052,7 +1052,7 @@ class DialogsMixin:
             for i, tname in enumerate(THEMES):
                 card(i, tname)
             hr(p)
-            lab(p, "강조색", font=(self.ui, 10, "bold")).pack(anchor="w")
+            lab(p, "직접 고르기 (강조색)", font=(self.ui, 10, "bold")).pack(anchor="w")
             row = tk.Frame(p, bg=C["bg"])
             row.pack(fill="x", pady=8)
             tk.Frame(row, bg=C["accent"], width=34, height=22, highlightthickness=1, highlightbackground=C["line"]).pack(side="left")

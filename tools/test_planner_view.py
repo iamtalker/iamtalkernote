@@ -30,6 +30,8 @@ pv.pack(fill="both", expand=True)
 root.update()
 answer = {"v": ""}
 simpledialog.askstring = lambda *a, **k: answer["v"]
+from planner import datepick
+datepick.ask = lambda parent, colors, ui, title, prompt, initial="": answer["v"]   # 날짜 입력 창(달력 선택)도 같은 가짜 답으로
 messagebox.askyesno = lambda *a, **k: True
 messagebox.showinfo = lambda *a, **k: None
 
