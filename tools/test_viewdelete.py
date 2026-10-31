@@ -28,5 +28,42 @@ check("링크 글자", vd.delete("앞 [네이버](https://naver.com) 뒤", "네�
 p, s = vd.minimal_change("abcXYZdef", "abcdef")
 check("가장 작은 바뀐 구간", (p, s) == (3, 3))
 check("바뀐 게 없을 때", vd.minimal_change("abc", "abc") == (3, 0))
+# 블록 단위(그림·표·목록·제목·인용·코드·서식 글) — 실제 렌더링 파이프라인으로 맞춰 본다
+import wikiconv
+import preview
+import bulk
+
+
+def rf(t):
+    return "".join(x for x, _, _ in preview.layout(wikiconv.parse(t, bulk.SYNTAX["markdown"], "t")))
+
+
+bsrc = ("# 제목입니다\n\n첫 문단 **굵게** 와 *기울임* 입니다.\n같은 문단 둘째 줄\n\n- 목록 하나\n- 목록 **둘**\n  - 중첩\n\n> 인용문 한 줄\n\n"
+        "![그림](../.resources/a.png)\n\n| 이름 | 값 |\n|---|---|\n| a | 1 |\n\n```\n코드 블록\n\n빈줄 포함\n```\n\n---\n\n끝 문단\n")
+full = rf(bsrc)
+
+
+def rng(text, end_text=None):
+    i = full.index(text)
+    return i, (full.index(end_text) + len(end_text) if end_text else i + len(text))
+
+
+for label, text, check_fn in (
+    ("그림 한 줄", "[그림: 그림]", lambda r: "a.png" not in r and "끝 문단" in r),
+    ("표 전체", "│ 이름 │ 값 │\n├──────┼────┤\n│ a    │ 1  │", lambda r: "| 이름" not in r and "a.png" in r),
+    ("목록 전체", "• 목록 하나\n• 목록 둘\n• 중첩", lambda r: "목록 하나" not in r and "> 인용문" in r),
+    ("제목", "제목입니다", lambda r: not r.startswith("#")),
+    ("인용문", "인용문 한 줄", lambda r: "인용문" not in r),
+    ("코드 블록(안에 빈 줄)", "코드 블록\n\n빈줄 포함", lambda r: "```" not in r and "빈줄" not in r),
+    ("구분선", "─" * 40, lambda r: "\n---\n" not in r and "끝 문단" in r),
+    ("서식 안의 글 일부", "굵게", lambda r: "굵게" not in r and "첫 문단" in r),
+):
+    a, b = rng(text)
+    r = vd.delete_range(bsrc, a, b, rf)
+    check("블록 단위 삭제: " + label, r is not None and check_fn(r))
+a, b = rng("제목입니다", "입니다.\n같은 문단 둘째 줄")
+r = vd.delete_range(bsrc, a, b, rf)
+check("블록 둘에 걸친 선택", r is not None and "제목입니다" not in r and "첫 문단" not in r and "목록 하나" in r)
+check("블록 맞춤이 안 되면 None(아무것도 안 지움)", vd.delete_range(bsrc, 0, 3, lambda t: "다른 결과") is None)
 print("통과" if not fails else "실패 %d" % fails)
 sys.exit(1 if fails else 0)

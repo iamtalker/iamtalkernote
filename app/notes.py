@@ -47,12 +47,36 @@ import updater  # noqa: E402
 import wikiconv  # noqa: E402
 import viewdelete  # noqa: E402
 import tagac  # noqa: E402
+import favorites  # noqa: E402
+import syncsettings  # noqa: E402
 import winpreview  # noqa: E402   (윈도 미리보기 처리기를 노트 화면 안에: pdf·mp3 …)
 from version import VERSION  # noqa: E402
 
 APP = "iamtalkernote"
 LIST_CHUNK = 100   # 노트 목록은 이만큼씩 이어서 그린다(스크롤하면 계속)
 VIEWABLE = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg", ".ico", ".mp4", ".webm", ".mov", ".mp3", ".wav", ".pdf", ".txt"}   # 안 쓰는 미디어 목록에서 눌렀을 때 바로 열어도 되는 파일(실행 파일 등은 위치만 보여 준다)
+def utf16_len(t):
+    """Tk 글 위치는 UTF-16 단위(이모지 같은 글자는 2칸)라서 위치를 셀 때 쓴다"""
+    return len(t) if t.isascii() else len(t.encode("utf-16-le")) // 2
+
+
+def idx_to_u16(t, i):
+    """파이썬 글자 위치 i → Tk(UTF-16) 위치"""
+    return i if t.isascii() else len(t[:i].encode("utf-16-le")) // 2
+
+
+def u16_to_idx(t, u):
+    """Tk(UTF-16) 위치 → 파이썬 글자 위치"""
+    if t.isascii():
+        return u
+    n = 0
+    for i, ch in enumerate(t):
+        if n >= u:
+            return i
+        n += 2 if ord(ch) > 0xFFFF else 1
+    return len(t)
+
+
 SOURCE_LINE = re.compile(r"\A[ \t]*원본:[ \t]*<?https?://[^\s>]+>?[ \t]*(?:\r?\n)+")   # 글 맨 위의 '원본: <주소>' 줄
 DOC_RESCAN_SECONDS = 300   # 앱을 열어 두는 동안 가져온 폴더를 이 간격(초)마다 훑어 바뀐 파일만 다시 읽는다
 PREVIEW_EXT = ("pdf", *docidx.AUDIO_EXT, *docidx.OFFICE_EXT)   # 윈도 미리보기 처리기로 원본을 보여 줄 형식(txt·md 같은 글 파일은 글로)
@@ -434,6 +458,8 @@ class App:
         self.show = {k: bool(view.get(k, d)) for k, d in (("notebooks", True), ("list", True), ("tags", False), ("syntax", True))}
         self.mode = view.get("mode") if view.get("mode") in ("edit", "split", "view") else "split"
         self.store = st.Store()
+        self.fav = favorites.Favorites(syncsettings.control_dir())   # 즐겨찾기(설정 폴더의 작은 파일, 폰과 맞춤)
+        self.fav_only = False
         self.store.tagger = note_tags   # 색인에 태그도 함께 기억
         self.docs = docidx.DocIndex()  # 가져온 폴더의 문서 색인
         self.doc_open = False          # 가져온 문서(읽기 전용)를 열어 둔 중인가
@@ -1718,7 +1744,10 @@ class App:
         self.sort_names = {"relevance": "관련도순", "time": "수정순", "ctime": "생성순", "title": "제목순"}
         self.sort_btns = {k: Btn(bar, v, lambda k=k: self.sort_by(k), padx=6, pady=3) for k, v in self.sort_names.items()}
         self.b_date = Btn(bar, "기간", self.toggle_date, padx=6, pady=3)
-        for b in (*self.sort_btns.values(), self.b_date):
+        self.b_fav = Btn(bar, "★", self.toggle_fav_filter, padx=6, pady=3)   # 즐겨찾기만 보기
+        self.b_fav.set_on(self.fav_only)
+        self.tip(self.b_fav, "즐겨찾기한 노트만 보기(노트 우클릭 → 즐겨찾기, 또는 Ctrl+D)")
+        for b in (*self.sort_btns.values(), self.b_date, self.b_fav):
             b.pack(side="left", padx=1)
         # 가져온 파일의 '문서 안 글'까지 찾을지(끄면 이름·경로·태그·메모만 찾아서 빠르고 결과가 짧다). 가져온 폴더가 있을 때만 보인다
         self.v_content = tk.BooleanVar(value=self.docs.content_search)
@@ -1764,6 +1793,7 @@ class App:
         self.lst.pack(side="left", fill="both", expand=True)
         L = self.lst
         L.tag_configure("title", font=self.fonts["card"], lmargin1=18, lmargin2=18, spacing1=10, rmargin=14)
+        L.tag_configure("star", foreground="#e0a020")   # 즐겨찾기 노트 제목 앞의 별
         L.tag_configure("meta", font=self.fonts["meta"], foreground=C["muted"], lmargin1=18, lmargin2=18, rmargin=14, spacing1=1)
         L.tag_configure("snip", font=self.fonts["meta"], foreground=C["sub"], lmargin1=18, lmargin2=18, rmargin=14, spacing1=3, spacing3=10)
         L.tag_configure("pad", spacing3=10)
@@ -2118,6 +2148,10 @@ class App:
         self.mode_seg = seg
         self.doc_toggle = Btn(head, "", self.toggle_doc_view, kind="tab", padx=9, pady=3)   # 가져온 문서: 원본 미리보기 ↔ 뽑은 글(찾기). 평소엔 숨김
         self.memo_btn = Btn(head, "메모", self.edit_memo, kind="tab", padx=9, pady=3)       # 가져온 문서: 메모 붙이기. 평소엔 숨김
+        self.star_lbl = tk.Label(head, text="☆", bg=C["bg"], fg=C["muted"], font=(self.ui, 15), cursor="hand2", padx=2)   # 누르면 즐겨찾기 켜고 끔
+        self.star_lbl.pack(side="left")
+        self.star_lbl.bind("<Button-1>", lambda e: self.toggle_favorite())
+        self.tip(self.star_lbl, "즐겨찾기 (Ctrl+D)")
         self.title_entry =tk.Entry(head, textvariable=self.title_var, relief="flat", bd=0, font=self.fonts["title"],
                                     bg=C["bg"], fg=C["text"], insertbackground=C["accent"], width=8)
         self.title_entry.pack(side="left", fill="x", expand=True, ipady=3)
@@ -2193,6 +2227,13 @@ class App:
         self.view.bind("<Button-1>", self.on_view_click)
         box2.bind("<Configure>", self.on_view_resize)
         self.view.bind("<Button-3>", self.on_view_menu)
+        self._pair_side = "edit"
+        for w in (self.text, self.view):
+            w.tag_configure("pair", background=C["soft"])          # 좌우 분할에서 반대쪽 칸의 같은 블록 강조
+            w.tag_lower("pair")
+        self.text.bind("<KeyRelease>", lambda e: self.pair_later("edit"), add="+")
+        self.text.bind("<ButtonRelease-1>", lambda e: self.pair_later("edit"), add="+")
+        self.view.bind("<ButtonRelease-1>", lambda e: self.pair_later("view"), add="+")
         self.view.bind("<Control-z>", lambda e: (self.text_do("edit_undo"), self.render(), "break")[2])   # 렌더링만 볼 때도 되돌리기(우클릭 → 삭제를 되돌림)
         self.text.bind("<Button-3>", self.on_text_menu)
         self.show_empty(True)
@@ -2705,6 +2746,8 @@ class App:
         """검색·정렬을 다시 하고 목록을 그린다. keep_page=True 는 자동 저장 때처럼 보던 자리를 유지"""
         self.search_job = None
         pool = [n for n in self.notes if self.tag in n["tags"]] if self.tag else self.notes
+        if self.fav_only:
+            pool = [n for n in pool if self.is_fav(n)]
         self.results, self.words = search.run(pool, self.q.get(), self.sort, self.asc, self.d_from.get(), self.d_to.get(),
                                            index=self.docs if self.nb.startswith("@doc") else
                                            docidx.Combined(self.store, self.docs) if self.scope_all() else self.store)
@@ -2712,11 +2755,13 @@ class App:
 
     def draw_list(self, keep_scroll=False):
         total = len(self.results)
-        searching = self.q.get().strip() or self.d_from.get().strip() or self.d_to.get().strip() or self.tag
+        searching = self.q.get().strip() or self.d_from.get().strip() or self.d_to.get().strip() or self.tag or self.fav_only
         unit = "파일" if self.scope_all() or self.nb.startswith("@doc") else "노트"
         text = f"{len(self.notes):,}개 중 {total:,}개 찾음" if searching else f"{total:,}개의 {unit}"
         if self.tag:
             text += f"  ·  # {self.tag}"
+        if self.fav_only:
+            text += "  ·  ★ 즐겨찾기"
         self.count.config(text=text)
         L = self.lst
         if not keep_scroll:
@@ -2733,6 +2778,7 @@ class App:
         if top_line:
             L.yview(top_line)
         self.mark_selected()
+        self.update_star()   # 폰에서 바꾼 즐겨찾기도 편집기의 별에 반영
         for k, b in self.sort_btns.items():
             arrow = ""
             if self.sort == k:   # 제목순은 기본이 가나다(오름차순)라서 화살표 뜻이 반대
@@ -2750,6 +2796,8 @@ class App:
         L.config(state="normal")
         for n in chunk:
             a = self.next_line
+            if self.is_fav(n):
+                L.insert("end", "★ ", ("title", "star"))
             L.insert("end", n["title"] + "\n", "title")
             shown_t = n.get("ctime", n["mtime"]) if self.sort == "ctime" else n["mtime"]   # 생성순이면 생성 시각을 보여 준다
             meta = time.strftime("%Y.%m.%d %H:%M", time.localtime(shown_t))
@@ -2922,6 +2970,38 @@ class App:
         lm.tk_popup(e.x_root, e.y_root)
         return "break"
 
+    # ---- 즐겨찾기(설정 폴더의 작은 파일에 적어 폰과 맞춘다)
+    def fav_rel(self, n):
+        return favorites.rel_of(self.store.root, n["path"])
+
+    def is_fav(self, n):
+        return bool(n) and not isinstance(n, docidx.Doc) and self.fav.is_fav(self.fav_rel(n))
+
+    def update_star(self):
+        if not hasattr(self, "star_lbl"):
+            return
+        on = bool(self.cur) and self.is_fav(self.cur)
+        self.star_lbl.config(text="★" if on else "☆", fg="#e0a020" if on else C["muted"])
+
+    def toggle_favorite(self, n=None):
+        """노트의 즐겨찾기를 켜고 끈다(가져온 문서는 제외)"""
+        n = n or self.cur
+        if not n or isinstance(n, docidx.Doc):
+            return
+        on = self.fav.toggle(self.fav_rel(n))
+        self.status.config(text=("★ 즐겨찾기에 넣었습니다: " if on else "☆ 즐겨찾기에서 뺐습니다: ") + n["title"])
+        self.update_star()
+        if self.fav_only:
+            self.refresh(keep_page=True)
+        else:
+            self.draw_list(keep_scroll=True)
+        return "break"
+
+    def toggle_fav_filter(self):
+        self.fav_only = not self.fav_only
+        self.b_fav.set_on(self.fav_only)
+        self.refresh()
+
     def on_list_menu(self, e):
         """노트 우클릭 메뉴 (조플린: 삭제 · 노트북으로 이동 · 링크 복사 …)"""
         n = self.card_at(e)
@@ -2941,6 +3021,7 @@ class App:
             label = ("    " * key.count("/") + (self.nb_short(key) if key else self.store.root_name))
             mm.add_command(label=label, command=lambda k=key: self.move_note(n, k), state="disabled" if key == n["nb"] else "normal")
         lm.add_cascade(label="노트북으로 이동", menu=mm)
+        lm.add_command(label="즐겨찾기 해제" if self.is_fav(n) else "즐겨찾기 추가", accelerator="Ctrl+D", command=lambda: self.toggle_favorite(n))
         lm.add_command(label="태그 추가…", command=lambda: self.tag_new([n]))
         lm.add_command(label="노트 링크 복사", command=lambda: (self.root.clipboard_clear(), self.root.clipboard_append(f"[[{n['title']}]]")))
         lm.add_command(label="노트 속성…", command=self.show_properties)
@@ -3017,6 +3098,7 @@ class App:
             self.hpos = len(self.hist) - 1
         self.show_empty(False)
         self.title_var.set(n["title"])
+        self.update_star()
         self.title_entry.config(state="readonly")
         for b in self.mode_btns.values():   # 가져온 문서에는 원문·분할 보기가 없다
             b.enabled = False
@@ -3153,6 +3235,7 @@ class App:
     def close_note(self):
         self.leave_doc()
         self.cur = None
+        self.update_star()
         self.dirty = False
         self.show_empty(True)
 
@@ -3716,6 +3799,7 @@ class App:
         self.links.clear()
         self.photos.clear()
         self.img_files.clear()
+        vmap, w_off, s_off = [], 0, 0        # 화면 위치(w) ↔ 렌더링 글 위치(s): 렌더링만으로는 원문 위치를 몰라서 블록 맞추기에 쓴다
         for t, tags, extra in segs:
             tg = list(tags)
             if "b" in tg and "i" in tg:
@@ -3725,6 +3809,9 @@ class App:
                 self.links[key] = extra[1:]
                 tg.append(key)
             if extra and extra[0] == "img" and self.show_image(extra[1], extra[3] if len(extra) > 3 else 0):
+                vmap.append((w_off, 1, s_off, len(t), None))        # 화면에는 그림 한 칸, 렌더링 글로는 '[그림: …]'
+                w_off += 1
+                s_off += len(t)
                 if len(extra) > 5:   # 링크로 감싼 그림(썸네일 등): 그림을 누르면 그 링크가 열린다
                     key = "L%d" % len(self.links)
                     self.links[key] = extra[4:6]
@@ -3736,9 +3823,23 @@ class App:
                 self.links[key] = extra[4:6]
                 tg += [key, "link"]
             v.insert("end", t, tuple(tg))
+            wl = utf16_len(t)
+            vmap.append((w_off, wl, s_off, len(t), t))
+            w_off += wl
+            s_off += len(t)
         v.config(state="disabled")
+        try:
+            total = v.count("1.0", "end-1c", "indices")
+            self.view_ok = bool(total) and int(total[0]) == w_off or (not total and w_off == 0)
+        except (tk.TclError, TypeError, ValueError):
+            self.view_ok = False
+        self.view_map = vmap
+        self.view_w0 = [m[0] for m in vmap]
+        self.view_s0 = [m[2] for m in vmap]
+        self.view_total_s = s_off
         v.yview_moveto(top)
         self.find_later()   # 다시 그렸으면 찾은 곳의 강조도 다시 한다
+        self.pair_later(self._pair_side)   # 다시 그렸으면 왼쪽↔오른쪽 짝 강조도 다시 한다
 
     def data_image(self, src):
         """data:image/...;base64,… 주소 → 화면에 쓸 PhotoImage(실패하면 None). GIF·PNG 는 바로, 그 밖(JPEG 등)은 PNG 로 바꿔서"""
@@ -3861,14 +3962,171 @@ class App:
         m.add_command(label="복사", command=lambda: v.event_generate("<<Copy>>"), state="normal" if v.tag_ranges("sel") else "disabled")
         m.add_command(label="모두 선택", command=lambda: v.tag_add("sel", "1.0", "end-1c"))
         m.add_separator()
+        if name is not None:
+            m.add_command(label="그림 삭제", command=lambda: self.delete_view_image(e))
         m.add_command(label="삭제", command=self.delete_view_selection, state="normal" if v.tag_ranges("sel") else "disabled")
         m.tk_popup(e.x_root, e.y_root)
 
+    # ---- 렌더링 화면 ↔ 원문 맞추기(블록 단위): 우클릭 삭제와 좌우 분할 짝 강조가 함께 쓴다
+    def render_flat(self, src):
+        """원문을 그려 본 렌더링 글(화면에 그릴 글자들을 이어 붙인 것)"""
+        return "".join(t for t, _, _ in preview.layout(wikiconv.parse(src, bulk.SYNTAX[FMT], self.title_var.get())))
+
+    def view_source(self):
+        """렌더링에 실제로 쓰인 원문('원본: 주소' 줄을 뺀 것)과 그 줄의 길이"""
+        text = self.text.get("1.0", "end-1c")
+        m = SOURCE_LINE.match(text)
+        return (text[m.end():], m.end()) if m else (text, 0)
+
+    def block_map(self):
+        """[(원문 블록 시작, 끝, 렌더링 글 시작, 끝)] — 블록마다 따로 그려 본 길이로 원문과 렌더링 글을 맞춘다. 맞출 수 없으면 None.
+        같은 원문이면 다시 계산하지 않는다(커서를 옮길 때마다 부르므로)"""
+        src, _off = self.view_source()
+        key = (self.cur.get("path") if self.cur else None, len(src), hash(src), self.title_var.get())
+        if getattr(self, "_bm_key", None) == key:
+            return self._bm
+        res = None
+        if len(src) < 300_000:
+            try:
+                blocks = viewdelete.split_blocks(src)
+                texts = [self.render_flat(b + "\n") for b, _ in blocks]
+                if "".join(texts) == self.render_flat(src):
+                    res, ps, pr = [], 0, 0
+                    for (b, sep), t in zip(blocks, texts):
+                        res.append((ps, ps + len(b), pr, pr + len(t.rstrip("\n"))))
+                        ps += len(b) + len(sep)
+                        pr += len(t)
+            except Exception:  # noqa: BLE001
+                res = None
+        self._bm_key, self._bm = key, res
+        return res
+
+    def wcount(self, widget, index):
+        """글 칸의 맨 앞에서 index 까지의 Tk 글 위치(UTF-16 단위)"""
+        r = widget.count("1.0", index, "indices")
+        return int(r[0]) if r else 0
+
+    def w2s(self, w, end=False):
+        """화면 위치 → 렌더링 글 위치. 맞출 수 없으면 None"""
+        m = getattr(self, "view_map", None)
+        if not m or not getattr(self, "view_ok", False):
+            return None
+        i = bisect.bisect_right(self.view_w0, w) - 1
+        if i < 0:
+            return 0
+        w0, wl, s0, sl, t = m[i]
+        if w >= w0 + wl:
+            return s0 + sl
+        if t is None:                               # 그림: 앞이면 그림 앞, 뒤면 그림 뒤
+            return s0 + sl if (end or w > w0) else s0
+        return s0 + u16_to_idx(t, w - w0)
+
+    def s2w(self, s, end=False):
+        """렌더링 글 위치 → 화면 위치"""
+        m = getattr(self, "view_map", None)
+        if not m or not getattr(self, "view_ok", False):
+            return None
+        i = (bisect.bisect_left(self.view_s0, s) - 1) if end else (bisect.bisect_right(self.view_s0, s) - 1)
+        i = min(max(i, 0), len(m) - 1)
+        w0, wl, s0, sl, t = m[i]
+        if s >= s0 + sl:
+            return w0 + wl
+        if t is None:
+            return w0 + wl if end else w0
+        return w0 + idx_to_u16(t, s - s0)
+
+    def pair_later(self, side=None):
+        """좌우 분할: 커서가 있는 쪽의 블록을 반대쪽에서 강조한다. 키·클릭이 이어질 때 한 번만 하려고 잠깐 미룬다"""
+        if side:
+            self._pair_side = side
+        if self.mode != "split" or not self.cur or self.doc_open:
+            return
+        if getattr(self, "_pair_job", None):
+            self.root.after_cancel(self._pair_job)
+        self._pair_job = self.root.after(90, self.pair_run)
+
+    def pair_clear(self):
+        for w in (self.text, self.view):
+            w.tag_remove("pair", "1.0", "end")
+
+    def pair_run(self):
+        self._pair_job = None
+        if self.mode != "split" or not self.cur or self.doc_open:
+            return self.pair_clear()
+        bm = self.block_map()
+        self.pair_clear()
+        if not bm:
+            return
+        src, off = self.view_source()
+        text = self.text.get("1.0", "end-1c")
+        try:
+            if self._pair_side == "view":
+                w = self.wcount(self.view, "insert")
+                sv = self.w2s(w)
+                hit = next((b for b in bm if sv is not None and b[2] <= sv <= b[3] and b[3] > b[2]), None)
+                if not hit:
+                    return
+                a, z = off + hit[0], off + hit[1]
+                ua, uz = idx_to_u16(text, a), idx_to_u16(text, z)
+                self.text.tag_add("pair", f"1.0+{ua}c", f"1.0+{uz}c")
+                self.text.see(f"1.0+{ua}c")
+            else:
+                u = self.wcount(self.text, "insert")
+                p = u16_to_idx(text, u) - off
+                hit = next((b for b in bm if b[0] <= p <= b[1] and b[3] > b[2]), None)
+                if not hit:
+                    return
+                w0, w1 = self.s2w(hit[2]), self.s2w(hit[3], end=True)
+                if w0 is None or w1 is None or w1 <= w0:
+                    return
+                self.view.tag_add("pair", f"1.0+{w0}c", f"1.0+{w1}c")
+                self.view.see(f"1.0+{w0}c")
+        except tk.TclError:
+            pass
+
+    def view_sel_range(self):
+        """렌더링 화면에서 고른 범위 → 렌더링 글 위치 (시작, 끝). 맞출 수 없으면 None"""
+        v = self.view
+        if not v.tag_ranges("sel"):
+            return None
+        a, z = self.w2s(self.wcount(v, "sel.first")), self.w2s(self.wcount(v, "sel.last"), end=True)
+        return (a, z) if a is not None and z is not None and z > a else None
+
+    def delete_view_image(self, e):
+        """그림 위에서 우클릭 → '그림 삭제': 그 그림을 고른 것으로 두고 삭제한다"""
+        v = self.view
+        idx = v.index(f"@{e.x},{e.y}")
+        v.tag_remove("sel", "1.0", "end")
+        v.tag_add("sel", idx, idx + "+1c")
+        self.delete_view_selection()
+
+    def apply_text_change(self, old, new):
+        """글 칸을 old 에서 new 로 바꾼다(바뀐 구간만 지우고 넣어 되돌리기·커서가 덜 흔들린다)"""
+        p, s_ = viewdelete.minimal_change(old, new)
+        T = self.text
+        up, ue = idx_to_u16(old, p), idx_to_u16(old, len(old) - s_)
+        T.edit_separator()
+        T.delete(f"1.0+{up}c", f"1.0+{ue}c")
+        mid = new[p:len(new) - s_]
+        if mid:
+            T.insert(f"1.0+{up}c", mid)
+        T.edit_separator()
+
     def delete_view_selection(self):
-        """렌더링 화면에서 고른 글을 마크다운 원문에서 바로 지운다(불필요한 부분을 손으로 정리할 때). Ctrl+Z 로 되돌린다"""
+        """렌더링 화면에서 고른 글·그림·표·목록을 마크다운 원문에서 바로 지운다(불필요한 부분을 손으로 정리할 때). Ctrl+Z 로 되돌린다"""
         v = self.view
         if not v.tag_ranges("sel") or not self.cur:
             return
+        rng = self.view_sel_range()
+        if rng:      # 블록 단위로 원문과 맞춰 지운다(그림·표·목록·서식이 든 글도 된다)
+            src, off = self.view_source()
+            new_src = viewdelete.delete_range(src, rng[0], rng[1], self.render_flat)
+            if new_src is not None:
+                old = self.text.get("1.0", "end-1c")
+                self.apply_text_change(old, old[:off] + new_src)
+                v.tag_remove("sel", "1.0", "end")
+                self.status.config(text="선택한 부분을 지웠습니다 (Ctrl+Z 로 되돌립니다)")
+                return self.render()
         sel = v.get("sel.first", "sel.last")
         before = v.get("1.0", "sel.first")
         old = self.text.get("1.0", "end-1c")
@@ -4833,6 +5091,7 @@ class App:
     def bind_keys(self):
         r = self.root
         r.bind_all("<Control-n>", lambda e: self.new_note())
+        r.bind_all("<Control-d>", lambda e: (self.toggle_favorite(), "break")[1])   # 즐겨찾기 켜고 끄기
         r.bind_all("<Control-N>", lambda e: self.add_notebook())
         r.bind_all("<Control-l>", lambda e: self.cur and self.cycle_mode())
         r.bind_all("<Control-e>", lambda e: self.cur and self.cycle_mode())
@@ -4842,6 +5101,7 @@ class App:
         r.bind_all("<Control-F>", lambda e: self.focus_search())
         for w in (self.text, self.view):   # 글자 칸의 기본 Ctrl+F(커서를 한 글자 오른쪽으로)는 막는다
             w.bind("<Control-f>", lambda e: (self.on_ctrl_f(), "break")[1])
+            w.bind("<Control-d>", lambda e: (self.toggle_favorite(), "break")[1])   # 글자 칸의 기본 Ctrl+D(오른쪽 글자 지우기)는 즐겨찾기로 바꾼다
         r.bind_all("<F3>", lambda e: self.find_step(1) if self.findbar.winfo_ismapped() else None)
         r.bind_all("<Shift-F3>", lambda e: self.find_step(-1) if self.findbar.winfo_ismapped() else None)
         r.bind_all("<Control-comma>", lambda e: self.show_options("general"))
