@@ -116,6 +116,20 @@ tops = [w for w in app.root.winfo_children() if w.winfo_class() == "Toplevel"]
 lbs = [c for c in tops[-1].winfo_children() if c.winfo_class() == "Listbox"]
 check("연결 창: 이 노트를 가리키는 노트에 링크원이 뜸", lbs and "링크원" in lbs[0].get(0, "end"))
 
+# --- 즐겨찾기 노트북
+tgt = next(x for x in app.all_notes if x["title"] == "링크원")
+app.toggle_favorite(tgt)
+check("노트북 목록에 즐겨찾기 항목", notes.FAVS in app.nb_keys)
+app.nb = notes.FAVS
+app.reload_notes()
+for _ in range(60):
+    app.root.update()
+    time.sleep(0.03)
+check("즐겨찾기를 고르면 즐겨찾기한 노트만", [n["title"] for n in app.notes] == ["링크원"])
+app.toggle_favorite(tgt)
+check("해제하면 목록에서 빠짐", app.notes == [] and not hasattr(app, "star_lbl"))
+app.nb = notes.ALL
+
 app.root.destroy()
 print("실패 %d" % fails if fails else "전부 통과")
 sys.exit(1 if fails else 0)

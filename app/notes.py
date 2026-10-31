@@ -87,6 +87,7 @@ MORE_MAX = 4000      # 목록을 이어 그릴 때 한 번에 붙이는 노트 �
 MORE_MAX_SEARCH = 600  # 검색 중에는 노트마다 본문을 읽어 미리 보기를 만들어서 더 적게
 MORE_SCREENS = 4  # 목록 아래에 남은 글이 이만큼의 화면보다 적어지면 미리 다음 노트들을 이어 그린다
 ALL = "*"
+FAVS = "@favs"   # 노트북 목록의 즐겨찾기 항목
 FMT = "markdown"
 
 # 밝고 차분한 색 하나(보라) + 슬레이트 회색
@@ -2161,10 +2162,6 @@ class App:
         self.tip(ob, "목록(-, 1.)을 아웃라이너로 보기: 점(●)을 누르면 그 항목으로 줌인(렌더링 화면)")
         self.doc_toggle = Btn(head, "", self.toggle_doc_view, kind="tab", padx=9, pady=3)   # 가져온 문서: 원본 미리보기 ↔ 뽑은 글(찾기). 평소엔 숨김
         self.memo_btn = Btn(head, "메모", self.edit_memo, kind="tab", padx=9, pady=3)       # 가져온 문서: 메모 붙이기. 평소엔 숨김
-        self.star_lbl = tk.Label(head, text="☆", bg=C["bg"], fg=C["muted"], font=(self.ui, 15), cursor="hand2", padx=2)   # 누르면 즐겨찾기 켜고 끔
-        self.star_lbl.pack(side="left")
-        self.star_lbl.bind("<Button-1>", lambda e: self.toggle_favorite())
-        self.tip(self.star_lbl, "즐겨찾기 (Ctrl+D)")
         self.link_lbl = tk.Label(head, text="연결", bg=C["bg"], fg=C["muted"], font=(self.ui, 9), cursor="hand2", padx=4)   # 이 노트와 [[ ]] 로 이어진 노트
         self.link_lbl.pack(side="left")
         self.link_lbl.bind("<Button-1>", lambda e: self.show_links())
@@ -2363,6 +2360,8 @@ class App:
     # ------------------------------------------------------------ 노트북·태그
     def nb_label(self, key):
         """노트북 경로 → 보여 줄 이름 (하위 노트북은 '업무 › 프로젝트')"""
+        if key == FAVS:
+            return "즐겨찾기"
         if key == "@docs":
             return "가져온 폴더"
         if key.startswith("@smart"):
@@ -2461,6 +2460,8 @@ class App:
         """지금 고른 노트북에 속한 노트인가 (하위 노트북의 노트 포함)"""
         if self.nb == ALL:
             return True
+        if self.nb == FAVS:
+            return self.is_fav(n)
         if self.nb == "":
             return n["nb"] == ""
         return n["nb"] == self.nb or n["nb"].startswith(self.nb + "/")
@@ -2471,9 +2472,9 @@ class App:
         doc_keys = (["@docs"] + ["@doc:" + f["id"] for f in dfolders]) if dfolders else []
         smarts = self.smart_list()
         smart_keys = (["@smarts"] + ["@smart:" + s["id"] for s in smarts]) if smarts else []
-        if self.nb not in (ALL, "") and self.nb not in names and self.nb not in doc_keys and self.nb not in smart_keys:
+        if self.nb not in (ALL, "", FAVS) and self.nb not in names and self.nb not in doc_keys and self.nb not in smart_keys:
             self.nb = ALL
-        self.nb_keys = [ALL, ""] + names + doc_keys + smart_keys
+        self.nb_keys = [ALL, FAVS, ""] + names + doc_keys + smart_keys
         dcounts = self.docs.counts() if dfolders else {}
         direct = {}
         for n in self.all_notes:
@@ -2483,7 +2484,9 @@ class App:
         self.nbtree.delete(*self.nbtree.get_children())
         idx = {key: i for i, key in enumerate(self.nb_keys)}
         for i, key in enumerate(self.nb_keys):
-            if key == ALL:
+            if key == FAVS:
+                label, count, parent = "★ 즐겨찾기", sum(1 for n in self.all_notes if self.is_fav(n)), ""
+            elif key == ALL:
                 label, count, parent = "모든 파일", len(self.all_notes) + sum(dcounts.values()), ""   # 노트 + 가져온 문서
             elif key == "":
                 label, count, parent = self.store.root_name, None, ""   # 저장 폴더 줄에는 숫자를 달지 않는다(아래 노트북들이 실제 내용)
@@ -2570,6 +2573,8 @@ class App:
         self.nb_menu_target = key
         m = self.nbmenu
         m.delete(0, "end")
+        if key == FAVS:
+            return
         if key.startswith("@smart"):   # 저장된 검색
             if key == "@smarts":
                 m.add_command(label="지금의 검색 저장…", command=self.save_search)
@@ -3021,10 +3026,7 @@ class App:
         return bool(n) and not isinstance(n, docidx.Doc) and self.fav.is_fav(self.fav_rel(n))
 
     def update_star(self):
-        if not hasattr(self, "star_lbl"):
-            return
-        on = bool(self.cur) and self.is_fav(self.cur)
-        self.star_lbl.config(text="★" if on else "☆", fg="#e0a020" if on else C["muted"])
+        return
 
     def toggle_favorite(self, n=None):
         """노트의 즐겨찾기를 켜고 끈다(가져온 문서는 제외)"""
@@ -3033,8 +3035,10 @@ class App:
             return
         on = self.fav.toggle(self.fav_rel(n))
         self.status.config(text=("★ 즐겨찾기에 넣었습니다: " if on else "☆ 즐겨찾기에서 뺐습니다: ") + n["title"])
-        self.update_star()
-        if self.fav_only:
+        if self.nb == FAVS:   # 즐겨찾기 목록을 보는 중이면 빠진 노트는 목록에서도 빠진다
+            self.notes = [x for x in self.all_notes if self.is_fav(x)]
+        self.reload_notebooks()
+        if self.fav_only or self.nb == FAVS:
             self.refresh(keep_page=True)
         else:
             self.draw_list(keep_scroll=True)
