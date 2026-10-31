@@ -358,7 +358,11 @@ class Store:
 
     def hide_system_dirs(self):
         """볼트 안의 앱 전용 폴더(.history .snapshots .trash .resources)에 윈도 '숨김' 속성을 준다(이미 있는 것만)"""
-        for name in (HISTORY_DIR, ".snapshots", TRASH_DIR, MEDIA_DIR):
+        try:   # 이름이 .으로 시작하는 폴더(.sync .imported 등 앱이 만든 것)는 모두 숨긴다
+            dots = [n for n in os.listdir(self.root) if n.startswith(".")]
+        except OSError:
+            dots = []
+        for name in {HISTORY_DIR, ".snapshots", TRASH_DIR, MEDIA_DIR, *dots}:
             p = os.path.join(self.root, name)
             if os.path.isdir(p):
                 self.hide_dir(p)

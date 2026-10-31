@@ -87,6 +87,7 @@ MORE_MAX_SEARCH = 600  # 검색 중에는 노트마다 본문을 읽어 미리 �
 MORE_SCREENS = 4  # 목록 아래에 남은 글이 이만큼의 화면보다 적어지면 미리 다음 노트들을 이어 그린다
 ALL = "*"
 FAVS = "@favs"   # 노트북 목록의 즐겨찾기 항목
+QUICK = "@quick"   # 노트북 목록의 '바로가기' 묶음 머리글(즐겨찾기·아웃라이너·달력)
 OUTL = "아웃라이너"   # 이 폴더(와 그 하위)의 노트는 WorkFlowy 식 아웃라이너 편집기로 연다(파일은 그냥 마크다운 목록 .md)
 FRONT = re.compile(r"\A---[ \t]*\n.*?\n---[ \t]*(?:\n|\Z)\s*", re.S)
 FMT = "markdown"
@@ -477,6 +478,8 @@ class App:
             self.store.purge_trash()   # 휴지통에 보관 기간(기본 30일)이 지난 항목은 완전히 지운다
         except OSError:
             pass
+        cfg = st.read_config()
+        self.feat = {k: bool(cfg.get("use_" + k, d)) for k, d in (("favs", True), ("outl", True), ("cal", False))}   # 설정 → 일반 → 기능 체크
         self.nb = win.get("nb") if isinstance(win.get("nb"), str) and not win["nb"].startswith("@smart") else ALL   # '*' 모든 노트 · '' 기본 · 그 밖은 노트북 폴더 이름(없어졌으면 읽은 뒤 '*' 로)
         self.tag = None                # 태그로 거르는 중이면 그 태그
         self.nb_keys, self.tag_keys = [], []
@@ -1708,7 +1711,7 @@ class App:
         self.left_pane = tk.PanedWindow(f, orient="vertical", sashwidth=4, sashrelief="flat", bg=C["line"], bd=0)
         self.left_pane.pack(fill="both", expand=True)
         self.nb_sec = tk.Frame(self.left_pane, bg=C["bg"])
-        self.section_head(self.nb_sec, "노트북", self.add_notebook)
+        self.section_head(self.nb_sec, "노트북")
         self.nbtree = self.make_tree(self.nb_sec)
         self.nbtree.bind("<<TreeviewSelect>>", self.on_nb_select)
         self.nbtree.bind("<Delete>", lambda e: self.delete_notebook())
@@ -2349,6 +2352,8 @@ class App:
     # ------------------------------------------------------------ 노트북·태그
     def nb_label(self, key):
         """노트북 경로 → 보여 줄 이름 (하위 노트북은 '업무 › 프로젝트')"""
+        if key == QUICK:
+            return "바로가기"
         if key == FAVS:
             return "즐겨찾기"
         if key == "@docs":
@@ -2467,10 +2472,13 @@ class App:
         doc_keys = (["@docs"] + ["@doc:" + f["id"] for f in dfolders]) if dfolders else []
         smarts = self.smart_list()
         smart_keys = (["@smarts"] + ["@smart:" + s["id"] for s in smarts]) if smarts else []
-        if self.nb not in (ALL, "", FAVS) and self.nb not in names and self.nb not in doc_keys and self.nb not in smart_keys:
+        if self.nb not in (ALL, "", FAVS, QUICK) and self.nb not in names and self.nb not in doc_keys and self.nb not in smart_keys:
             self.nb = ALL
-        outl = [n for n in names if n == OUTL or n.startswith(OUTL + "/")]
-        self.nb_keys = [ALL, FAVS] + outl + [""] + [n for n in names if n not in outl] + doc_keys + smart_keys
+        outl = [n for n in names if n == OUTL or n.startswith(OUTL + "/")] if self.feat["outl"] else []
+        quick = ([FAVS] if self.feat["favs"] else []) + outl
+        if self.nb == FAVS and not self.feat["favs"]:
+            self.nb = ALL
+        self.nb_keys = [ALL] + ([QUICK] + quick if quick else []) + [""] + [n for n in names if n not in outl] + doc_keys + smart_keys
         dcounts = self.docs.counts() if dfolders else {}
         direct = {}
         for n in self.all_notes:
@@ -2480,10 +2488,12 @@ class App:
         self.nbtree.delete(*self.nbtree.get_children())
         idx = {key: i for i, key in enumerate(self.nb_keys)}
         for i, key in enumerate(self.nb_keys):
-            if key == FAVS:
-                label, count, parent = "★ 즐겨찾기", sum(1 for n in self.all_notes if self.is_fav(n)), ""
+            if key == QUICK:
+                label, count, parent = "바로가기", None, ""
+            elif key == FAVS:
+                label, count, parent = "★ 즐겨찾기", sum(1 for n in self.all_notes if self.is_fav(n)), f"nb{idx[QUICK]}"
             elif key == OUTL:
-                label, count, parent = "아웃라이너", total(key), ""
+                label, count, parent = "아웃라이너", total(key), f"nb{idx[QUICK]}"
             elif key == ALL:
                 label, count, parent = "모든 파일", len(self.all_notes) + sum(dcounts.values()), ""   # 노트 + 가져온 문서
             elif key == "":
@@ -2551,7 +2561,7 @@ class App:
         key = self.nb_keys[int(sel[0][2:])]
         if key == self.nb:
             return
-        if key == "@smarts":   # 머리글: 고를 수 없다. 원래 선택으로 되돌린다
+        if key in ("@smarts", QUICK):   # 머리글: 고를 수 없다. 원래 선택으로 되돌린다
             self.quiet = True
             self.nbtree.selection_set(f"nb{self.nb_keys.index(self.nb)}")
             self.quiet = False
@@ -2571,7 +2581,7 @@ class App:
         self.nb_menu_target = key
         m = self.nbmenu
         m.delete(0, "end")
-        if key == FAVS:
+        if key in (FAVS, QUICK):
             return
         if key.startswith("@smart"):   # 저장된 검색
             if key == "@smarts":
@@ -3797,7 +3807,7 @@ class App:
             self.root.after(60, self.find_run)
 
     def is_outline_note(self):
-        return bool(self.cur) and not self.doc_open and (self.cur["nb"] == OUTL or self.cur["nb"].startswith(OUTL + "/"))
+        return self.feat["outl"] and bool(self.cur) and not self.doc_open and (self.cur["nb"] == OUTL or self.cur["nb"].startswith(OUTL + "/"))
 
     def show_outline_layout(self, on):
         """아웃라이너 폴더의 노트는 편집 칸·렌더링 칸 대신 아웃라이너 편집기 한 칸을 쓴다"""
@@ -4972,6 +4982,19 @@ class App:
                            bg=C["bg"], activebackground=C["bg"], font=(self.ui, 10), selectcolor=C["bg"]).pack(anchor="w")
             lab(p, "켜 두면 같은 제목의 노트는 만들 수 없고, [[제목]] 은 가장 최근에 고친 노트로 연결됩니다. 없는 제목의 링크는 붉게 보이고 누르면 새로 만들 수 있습니다. 끄면 [[ ]] 는 그냥 글자입니다.",
                 fg=C["muted"], font=(self.ui, 9), wraplength=620).pack(anchor="w", pady=(2, 0))
+            hr(p)
+            lab(p, "기능 (쓰지 않으면 끕니다)", font=(self.ui, 10, "bold")).pack(anchor="w")
+            for key, label in (("favs", "즐겨찾기"), ("outl", "아웃라이너 폴더"), ("cal", "달력·할일")):
+                var = tk.BooleanVar(value=self.feat[key])
+
+                def set_feat(k=key, v=var):
+                    self.feat[k] = v.get()
+                    st.write_config(**{"use_" + k: v.get()})
+                    self.reload_notebooks()
+                    if self.cur:
+                        self.open_note(self.cur, record=False)
+                tk.Checkbutton(p, text=label, variable=var, command=set_feat, bg=C["bg"], activebackground=C["bg"], font=(self.ui, 10),
+                               selectcolor=C["bg"]).pack(anchor="w")
             hr(p)
             lab(p, "편집기 보기", font=(self.ui, 10, "bold")).pack(anchor="w")
             for key, label in (("edit", "마크다운만"), ("split", "마크다운 + 렌더링 (분할)"), ("view", "렌더링만")):

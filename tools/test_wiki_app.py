@@ -131,7 +131,7 @@ check("해제하면 목록에서 빠짐", app.notes == [] and not hasattr(app, "
 app.nb = notes.ALL
 
 # --- 아웃라이너 폴더
-check("사이드바에 아웃라이너 폴더(즐겨찾기 바로 아래)", app.nb_keys[:3] == [notes.ALL, notes.FAVS, notes.OUTL])
+check("사이드바에 아웃라이너 폴더(즐겨찾기 바로 아래)", app.nb_keys[:4] == [notes.ALL, notes.QUICK, notes.FAVS, notes.OUTL])
 check("폴더는 볼트 안의 실제 폴더", os.path.isdir(os.path.join(vault, notes.OUTL)))
 os.makedirs(os.path.join(vault, notes.OUTL), exist_ok=True)
 put(notes.OUTL + "/할일.md", "---\ntags: [x]\n---\n- a\n- b\n    - b1\n", now)
