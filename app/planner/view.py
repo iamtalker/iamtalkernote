@@ -122,8 +122,12 @@ class PlannerView(tk.Frame):
                 fg = C["muted"]
             lines = [str(d.day) + (" " + hol[s] if s in hol else "")]
             for t, start in self.pl.span_on(s)[:2]:        # 쓴 날은 ●, 끝내기 전까지 이어지는 날은 ┆
-                if not t["done"] or start:
-                    lines.append(("● " if start else "┆ ") + t["text"][:8] + ("…" if len(t["text"]) > 8 else ""))
+                if start:
+                    lines.append("● " + t["text"][:8] + ("…" if len(t["text"]) > 8 else ""))
+                elif d.weekday() == 6 or d.day == 1:        # 이어지는 칸은 줄(┆)만, 글은 한 주의 첫 칸(일요일)과 1일에만(칸마다 같은 글이 반복되면 지저분하다)
+                    lines.append("┆ " + t["text"][:8] + ("…" if len(t["text"]) > 8 else ""))
+                else:
+                    lines.append("┆")
             if len(self.pl.span_on(s)) > 2:
                 lines.append(f"  +{len(self.pl.span_on(s)) - 2}")
             if cfg["gongsu"] and s in self.pl.gongsu:
