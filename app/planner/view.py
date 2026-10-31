@@ -115,15 +115,11 @@ class PlannerView(tk.Frame):
             if d.month != self.month:
                 fg = C["muted"]
             lines = [str(d.day) + (" " + hol[s] if s in hol else "")]
-            for t, start in self.pl.span_on(s)[:2]:        # 쓴 날은 ●, 끝내기 전까지 이어지는 날은 ┆
-                if start:
-                    lines.append("● " + t["text"][:8] + ("…" if len(t["text"]) > 8 else ""))
-                elif d.weekday() == 6 or d.day == 1:        # 이어지는 칸은 줄(┆)만, 글은 한 주의 첫 칸(일요일)과 1일에만(칸마다 같은 글이 반복되면 지저분하다)
-                    lines.append("┆ " + t["text"][:8] + ("…" if len(t["text"]) > 8 else ""))
-                else:
-                    lines.append("┆")
-            if len(self.pl.span_on(s)) > 2:
-                lines.append(f"  +{len(self.pl.span_on(s)) - 2}")
+            todos = self.pl.on(s)                           # 달력에는 쓴 날에만 표시한다(이어서 밀린 것은 아래 할일 목록에 며칠째로 나온다)
+            for t in todos[:2]:
+                lines.append(("✓ " if t["done"] else "● ") + t["text"][:8] + ("…" if len(t["text"]) > 8 else ""))
+            if len(todos) > 2:
+                lines.append(f"  +{len(todos) - 2}")
             if cfg["gongsu"] and s in self.pl.gongsu:
                 lines.append("공수 " + M.fmt_gongsu(self.pl.gongsu[s]))
             lb.config(text="\n".join(lines), fg=fg, bg=C["soft"] if s == self.sel else C["bg"],
