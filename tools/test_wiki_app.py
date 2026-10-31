@@ -201,6 +201,30 @@ check("옵션을 켜면 제목과 같은 낱말이 링크", bool(r) and app.view
 st.write_config(wikiAuto=False)
 app.set_mode("edit")
 
+# --- 달력·할일·공수
+st.write_config(use_cal=True, cal_gongsu=True, cal_wage=150000, cal_meal=20000)
+app.feat["cal"] = True
+app.reload_notebooks()
+check("바로가기 묶음에 달력·할일", notes.CAL in app.nb_keys)
+app.nb = notes.CAL
+app.close_note()
+app.reload_notes()
+for _ in range(30):
+    app.root.update()
+    time.sleep(0.02)
+pv = app.planner_view
+check("달력·할일을 고르면 오른쪽에 달력이 뜸", pv is not None and pv.winfo_ismapped() and not app.empty.winfo_ismapped())
+pv.sel = notes.pm.iso(__import__("datetime").date.today())
+pv.pl.add("할일 하나")
+pv.pl.set_gongsu(pv.sel, 1.5)
+pv.refresh()
+check("공수 요약이 보임", "공수 합계 1.5" in pv.sumlab.cget("text") and "225,000" not in "" and "일비 20,000원" in pv.sumlab.cget("text"))
+check("아래 할일 목록에 표시", len(pv.tree.get_children()) == 1)
+app.nb = notes.ALL
+app.reload_notes()
+app.close_note()
+check("다른 항목을 고르면 달력이 사라짐", not pv.winfo_ismapped())
+
 app.root.destroy()
 print("실패 %d" % fails if fails else "전부 통과")
 sys.exit(1 if fails else 0)

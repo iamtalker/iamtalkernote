@@ -49,6 +49,8 @@ import viewdelete  # noqa: E402
 import tagac  # noqa: E402
 import favorites  # noqa: E402
 from outliner.widget import OutlineEditor  # noqa: E402
+from planner import model as pm  # noqa: E402
+from planner.view import PlannerView  # noqa: E402
 import wikilinks  # noqa: E402
 import syncsettings  # noqa: E402
 import winpreview  # noqa: E402   (윈도 미리보기 처리기를 노트 화면 안에: pdf·mp3 …)
@@ -87,6 +89,7 @@ MORE_MAX_SEARCH = 600  # 검색 중에는 노트마다 본문을 읽어 미리 �
 MORE_SCREENS = 4  # 목록 아래에 남은 글이 이만큼의 화면보다 적어지면 미리 다음 노트들을 이어 그린다
 ALL = "*"
 FAVS = "@favs"   # 노트북 목록의 즐겨찾기 항목
+CAL = "@cal"      # 노트북 목록의 달력·할일 항목(누르면 오른쪽에 달력과 할일이 뜬다)
 QUICK = "@quick"   # 노트북 목록의 '바로가기' 묶음 머리글(즐겨찾기·아웃라이너·달력)
 OUTL = "아웃라이너"   # 이 폴더(와 그 하위)의 노트는 WorkFlowy 식 아웃라이너 편집기로 연다(파일은 그냥 마크다운 목록 .md)
 FRONT = re.compile(r"\A---[ \t]*\n.*?\n---[ \t]*(?:\n|\Z)\s*", re.S)
@@ -479,6 +482,8 @@ class App:
         except OSError:
             pass
         cfg = st.read_config()
+        self.planner = pm.Planner(self.store.root)
+        self.planner_view = None
         self.feat = {k: bool(cfg.get("use_" + k, d)) for k, d in (("favs", True), ("outl", True), ("cal", False))}   # 설정 → 일반 → 기능 체크
         self.nb = win.get("nb") if isinstance(win.get("nb"), str) and not win["nb"].startswith("@smart") else ALL   # '*' 모든 노트 · '' 기본 · 그 밖은 노트북 폴더 이름(없어졌으면 읽은 뒤 '*' 로)
         self.tag = None                # 태그로 거르는 중이면 그 태그
@@ -524,6 +529,7 @@ class App:
         self.set_mode(self.mode)
         self.relayout()
         self.reload_notes(background=True)
+        self.root.after(3000, self.check_due)
         self.root.after(300, self.fit_panes)
         self.root.after(400, self.poll_single)
         self.root.after(20000, self.auto_scan_docs)   # 가져온 폴더에서 바뀐 파일만 뒤에서 다시 읽기
@@ -2276,10 +2282,55 @@ class App:
     def show_empty(self, on):
         if on:
             self.main.pack_forget()
-            self.empty.pack(fill="both", expand=True)
+            if self.nb == CAL and self.feat["cal"]:          # 달력·할일을 골랐으면 노트 자리에 달력과 할일
+                self.empty.pack_forget()
+                if self.planner_view is None:
+                    self.planner_view = PlannerView(self.editf, C, self.ui, self.planner, self.planner_cfg)
+                self.planner_view.refresh()
+                self.planner_view.pack(fill="both", expand=True)
+            else:
+                if self.planner_view is not None:
+                    self.planner_view.pack_forget()
+                self.empty.pack(fill="both", expand=True)
         else:
             self.empty.pack_forget()
+            if self.planner_view is not None:
+                self.planner_view.pack_forget()
             self.main.pack(fill="both", expand=True)
+
+    def planner_cfg(self):
+        c = st.read_config()
+        num = lambda k: int(float(c.get(k) or 0))  # noqa: E731
+        try:
+            return {"gongsu": bool(c.get("cal_gongsu", False)), "wage": num("cal_wage"), "meal": num("cal_meal")}
+        except (TypeError, ValueError):
+            return {"gongsu": bool(c.get("cal_gongsu", False)), "wage": 0, "meal": 0}
+
+    def check_due(self):
+        """달력의 할일이 그날(또는 지난 날짜)이 되면 알린다: 앱 안에 잠깐 뜨는 알림(하루에 한 번). 10분마다 확인"""
+        self.root.after(600000, self.check_due)
+        if not self.feat["cal"]:
+            return
+        today = pm.iso(__import__("datetime").date.today())
+        due = self.planner.due(today)
+        if due:
+            for t in due:
+                self.planner.mark_notified(t["id"], today)
+            self.toast("오늘 할일\n" + "\n".join("· " + t["text"] for t in due[:5]) + (f"\n… 외 {len(due) - 5}개" if len(due) > 5 else ""))
+            if self.planner_view is not None:
+                self.planner_view.refresh()
+
+    def toast(self, text, ms=8000):
+        """화면 오른쪽 아래에 잠깐 뜨는 알림 창(누르면 닫힘)"""
+        top = tk.Toplevel(self.root)
+        top.overrideredirect(True)
+        top.attributes("-topmost", True)
+        lb = tk.Label(top, text=text, justify="left", bg=C["text"], fg=C["bg"], font=(self.ui, 10), padx=16, pady=12, cursor="hand2")
+        lb.pack()
+        top.update_idletasks()
+        top.geometry(f"+{top.winfo_screenwidth() - top.winfo_reqwidth() - 24}+{top.winfo_screenheight() - top.winfo_reqheight() - 70}")
+        lb.bind("<Button-1>", lambda e: top.destroy())
+        top.after(ms, lambda: top.winfo_exists() and top.destroy())
 
     def configure_tags(self):
         v, f = self.view, self.fonts
@@ -2359,6 +2410,8 @@ class App:
         """노트북 경로 → 보여 줄 이름 (하위 노트북은 '업무 › 프로젝트')"""
         if key == QUICK:
             return "바로가기"
+        if key == CAL:
+            return "달력·할일"
         if key == FAVS:
             return "즐겨찾기"
         if key == "@docs":
@@ -2459,6 +2512,8 @@ class App:
         """지금 고른 노트북에 속한 노트인가 (하위 노트북의 노트 포함)"""
         if self.nb == ALL:
             return True
+        if self.nb == CAL:
+            return False
         if self.nb == FAVS:
             return self.is_fav(n)
         if self.nb == "":
@@ -2477,10 +2532,12 @@ class App:
         doc_keys = (["@docs"] + ["@doc:" + f["id"] for f in dfolders]) if dfolders else []
         smarts = self.smart_list()
         smart_keys = (["@smarts"] + ["@smart:" + s["id"] for s in smarts]) if smarts else []
-        if self.nb not in (ALL, "", FAVS, QUICK) and self.nb not in names and self.nb not in doc_keys and self.nb not in smart_keys:
+        if self.nb not in (ALL, "", FAVS, QUICK, CAL) and self.nb not in names and self.nb not in doc_keys and self.nb not in smart_keys:
             self.nb = ALL
         outl = [n for n in names if n == OUTL or n.startswith(OUTL + "/")] if self.feat["outl"] else []
-        quick = ([FAVS] if self.feat["favs"] else []) + outl
+        quick = ([FAVS] if self.feat["favs"] else []) + outl + ([CAL] if self.feat["cal"] else [])
+        if self.nb == CAL and not self.feat["cal"]:
+            self.nb = ALL
         if self.nb == FAVS and not self.feat["favs"]:
             self.nb = ALL
         self.nb_keys = [ALL] + ([QUICK] + quick if quick else []) + [""] + [n for n in names if n not in outl] + doc_keys + smart_keys
@@ -2499,6 +2556,8 @@ class App:
                 label, count, parent = "★ 즐겨찾기", sum(1 for n in self.all_notes if self.is_fav(n)), f"nb{idx[QUICK]}"
             elif key == OUTL:
                 label, count, parent = "아웃라이너", total(key), f"nb{idx[QUICK]}"
+            elif key == CAL:
+                label, count, parent = "달력·할일", sum(1 for t in self.planner.todos if not t["done"]), f"nb{idx[QUICK]}"
             elif key == ALL:
                 label, count, parent = "모든 파일", len(self.all_notes) + sum(dcounts.values()), ""   # 노트 + 가져온 문서
             elif key == "":
@@ -2586,7 +2645,7 @@ class App:
         self.nb_menu_target = key
         m = self.nbmenu
         m.delete(0, "end")
-        if key in (FAVS, QUICK):
+        if key in (FAVS, QUICK, CAL):
             return
         if key.startswith("@smart"):   # 저장된 검색
             if key == "@smarts":
@@ -5446,7 +5505,45 @@ class App:
         def sync_tab(p):
             syncui.tab(self, p, dict(lab=lab, title=title, hr=hr, copy=copy, Btn=Btn, C=C, top=top, ui=self.ui))
 
-        pages = (("general", "일반", general), ("folders", "폴더", folders_tab), ("imports", "가져오기", imports_tab), ("fonts", "글꼴", fonts_tab), ("theme", "테마·색상", theme_tab), ("versions", "노트 버전", versions_tab), ("sync", "동기화", sync_tab), ("clipper", "웹 클리퍼", clipper))
+        def planner_tab(p):
+            title(p, "달력·할일", "달력과 할일, 그리고 일용직·건설직의 공수달력을 정합니다.")
+            on = tk.BooleanVar(value=self.feat["cal"])
+            gs = tk.BooleanVar(value=bool(st.read_config().get("cal_gongsu", False)))
+
+            def apply_cal():
+                self.feat["cal"] = on.get()
+                st.write_config(use_cal=on.get(), cal_gongsu=gs.get())
+                self.reload_notebooks()
+                if self.nb == CAL:
+                    self.show_empty(True)
+            tk.Checkbutton(p, text="달력·할일 사용 (노트북 목록의 '바로가기'에 나타납니다)", variable=on, command=apply_cal, bg=C["bg"],
+                           activebackground=C["bg"], font=(self.ui, 10), selectcolor=C["bg"]).pack(anchor="w")
+            hr(p)
+            tk.Checkbutton(p, text="공수달력 사용 (날을 누르면 공수 0.5·1·1.5·2 를 적고, 달마다 합계를 계산)", variable=gs, command=apply_cal, bg=C["bg"],
+                           activebackground=C["bg"], font=(self.ui, 10), selectcolor=C["bg"]).pack(anchor="w")
+            cfg = st.read_config()
+            for key, label in (("cal_wage", "단가 (1공수, 원)"), ("cal_meal", "일비 (하루, 원)")):
+                row = tk.Frame(p, bg=C["bg"])
+                row.pack(anchor="w", pady=4, padx=(24, 0))
+                lab(row, label, width=16).pack(side="left")
+                var = tk.StringVar(value=str(cfg.get(key) or ""))
+                e = tk.Entry(row, textvariable=var, width=14, relief="flat", bd=0, bg=C["panel"], fg=C["text"], highlightthickness=1,
+                             highlightbackground=C["line"], highlightcolor=C["accent"], font=(self.ui, 10))
+                e.pack(side="left", ipady=4)
+
+                def save(*_, k=key, v=var):
+                    s = v.get().replace(",", "").strip()
+                    try:
+                        st.write_config(**{k: int(float(s)) if s else 0})
+                    except ValueError:
+                        return
+                    if self.planner_view is not None:
+                        self.planner_view.refresh()
+                var.trace_add("write", save)
+            lab(p, "공수 합계 × 단가 = 일당, 출근한 날 수 × 일비 = 일비. 공휴일은 내장 표(2024~2030년)로 표시합니다.", fg=C["muted"], font=(self.ui, 9),
+                wraplength=620).pack(anchor="w", pady=(10, 0))
+
+        pages = (("general", "일반", general), ("planner", "달력·할일", planner_tab), ("folders", "폴더", folders_tab), ("imports", "가져오기", imports_tab), ("fonts", "글꼴", fonts_tab), ("theme", "테마·색상", theme_tab), ("versions", "노트 버전", versions_tab), ("sync", "동기화", sync_tab), ("clipper", "웹 클리퍼", clipper))
 
         def select(key):
             for k, b in tabs.items():
