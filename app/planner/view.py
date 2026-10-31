@@ -79,7 +79,7 @@ class PlannerView(tk.Frame):
         wrap.pack(fill="x", padx=18, pady=(6, 14))
         self.tree = ttk.Treeview(wrap, style="Flat.Treeview", columns=("date",), show="tree", selectmode="browse", height=6)
         self.tree.column("#0", stretch=True, width=300)
-        self.tree.column("date", width=90, anchor="e", stretch=False)
+        self.tree.column("date", width=150, anchor="e", stretch=False)   # 날짜와 며칠째인지
         sb = ttk.Scrollbar(wrap, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=sb.set)
         sb.pack(side="right", fill="y")
@@ -198,8 +198,10 @@ class PlannerView(tk.Frame):
     def draw_todos(self):
         self.tree.delete(*self.tree.get_children())
         for t in self.pl.ordered(self.sel if self.only_sel.get() else None):
-            self.tree.insert("", "end", iid=t["id"], text=("☑  " if t["done"] else "☐  ") + t["text"], values=(t.get("date") or "",),
-                             tags=("done",) if t["done"] else ())
+            d = M.parse(t.get("date"))
+            age = (datetime.date.today() - d).days if d and not t["done"] else 0
+            self.tree.insert("", "end", iid=t["id"], text=("☑  " if t["done"] else "☐  ") + t["text"],
+                             values=((t["date"] + (f"  {age}일째" if age > 0 else "")) if t.get("date") else "",), tags=("done",) if t["done"] else ())
 
     def on_tree_click(self, e):
         row = self.tree.identify_row(e.y)
