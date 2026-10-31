@@ -106,12 +106,11 @@ _DARK = dict(bg="#1f2128", panel="#181a20", line="#32353f", text="#e6e8ee", mute
 THEMES = {   # BASE 와 다른 값만 적는다
     "라이트 보라": {},
     "라이트 파랑": dict(accent="#2563eb", accent_d="#1d4ed8", soft="#dbeafe", sel="#bfdbfe"),
-    "세피아": dict(bg="#fbf5e9", panel="#f3ead8", line="#e4d7bd", text="#3b2f20", muted="#8c7b62", sub="#5d4e3a",
-                 accent="#b45309", accent_d="#92400e", soft="#f5e2c3", hover="#efe4cb", seg="#efe4cb", sel="#ecd3a5",
-                 code="#f0e6d0", mark="#f7d774", thumb="#d8c9aa", thumb_h="#bba980"),
-    "다크 보라": dict(_DARK, accent="#a78bfa", accent_d="#8b5cf6", soft="#2f2a52", sel="#4a3f85"),
-    "다크 파랑": dict(_DARK, accent="#60a5fa", accent_d="#3b82f6", soft="#1f3556", sel="#2f5384"),
+    "라이트 초록": dict(accent="#059669", accent_d="#047857", soft="#d1fae5", sel="#a7f3d0"),
+    "다크 검정": {},   # 아래 DERIVED: 배경색 하나와 강조색으로 계산(내 테마와 같은 방식)
+    "다크 회색": {},
 }
+DERIVED = {"다크 검정": ("#111111", "#ffffff"), "다크 회색": ("#22272e", "#539bf5")}   # 이름: (배경색, 강조색)
 
 
 def _rgb(h):
@@ -130,21 +129,47 @@ def luminance(h):
     return 0.2126 * r + 0.7152 * g + 0.0722 * b
 
 
-LEGACY_THEMES = {"라이트 초록": ("라이트 보라", "#059669"), "라이트 분홍": ("라이트 보라", "#db2777")}   # 없앤 프리셋은 같은 색의 '강조색 직접 고르기' 로 옮긴다
+CUSTOM = "내 테마"   # 사용자가 배경색·강조색 두 가지로 만드는 여섯 번째 테마
+LEGACY_THEMES = {   # 없앤 프리셋: 같은 색의 내 테마로 옮긴다 (배경색, 강조색)
+    "라이트 분홍": ("#ffffff", "#db2777"), "세피아": ("#fbf5e9", "#b45309"),
+    "다크 보라": ("#1f2128", "#a78bfa"), "다크 파랑": ("#1f2128", "#60a5fa")}
 
 
-def resolve_theme(name, accent=None):
-    """저장돼 있던 이름이 없앤 프리셋이면 (바탕 테마, 같은 강조색) 으로 바꿔 준다"""
+def custom_base(bg):
+    """배경색 하나로 나머지 바탕색(패널·선·글자색 등)을 정한다: 어두우면 밝은 글자, 밝으면 어두운 글자"""
+    if luminance(bg) < 0.5:
+        return dict(_DARK, bg=bg, card=bg, panel=blend(bg, "#000000", 0.15), line=blend(bg, "#ffffff", 0.12),
+                    hover=blend(bg, "#ffffff", 0.06), seg=blend(bg, "#ffffff", 0.06), code=blend(bg, "#ffffff", 0.05),
+                    thumb=blend(bg, "#ffffff", 0.2), thumb_h=blend(bg, "#ffffff", 0.32))
+    return dict(bg=bg, card=bg, panel=blend(bg, "#000000", 0.03), line=blend(bg, "#000000", 0.08),
+                hover=blend(bg, "#000000", 0.06), seg=blend(bg, "#000000", 0.06), code=blend(bg, "#000000", 0.04),
+                thumb=blend(bg, "#000000", 0.17), thumb_h=blend(bg, "#000000", 0.3))
+
+
+def migrate_theme(cfg):
+    """저장된 theme 설정을 {name, custom} 으로 맞춘다. 예전의 프리셋 + 강조색 덮어쓰기는 내 테마로 옮긴다."""
+    name, acc, custom = cfg.get("name", DEFAULT_THEME), cfg.get("accent"), cfg.get("custom")
     if name in LEGACY_THEMES:
-        base, acc = LEGACY_THEMES[name]
-        return base, accent or acc
-    return name, accent
+        bg, a0 = LEGACY_THEMES[name]
+        name, acc, custom = CUSTOM, None, {"bg": bg, "accent": a0}
+    if acc and name != CUSTOM:
+        custom = {"bg": compute_theme(name)["bg"], "accent": acc}
+        name = CUSTOM
+    return {"name": name if name in THEMES or name == CUSTOM else DEFAULT_THEME, "custom": custom}
 
 
-def compute_theme(name, accent=None):
-    """테마 이름(과 직접 고른 강조색)으로 색 사전을 만든다(화면은 건드리지 않는다)"""
+def compute_theme(name, custom=None):
+    """테마 이름(내 테마면 custom = {bg, accent})으로 색 사전을 만든다(화면은 건드리지 않는다)"""
     t = dict(BASE)
-    t.update(THEMES.get(name, {}))
+    accent = None
+    if name in DERIVED:
+        custom = {"bg": DERIVED[name][0], "accent": DERIVED[name][1]}
+    if name == CUSTOM or name in DERIVED:
+        custom = custom or {"bg": BASE["bg"], "accent": BASE["accent"]}
+        t.update(custom_base(custom["bg"]))
+        accent = custom["accent"]
+    else:
+        t.update(THEMES.get(name, {}))
     if accent:
         dark = luminance(t["bg"]) < 0.5
         t["accent"] = accent
@@ -156,10 +181,9 @@ def compute_theme(name, accent=None):
     return t
 
 
-def apply_theme(name, accent=None):
+def apply_theme(name, custom=None):
     """전역 색(C)을 바꾼다. 이미 만들어진 화면은 App.rebuild_ui 로 다시 그려야 반영된다."""
-    name, accent = resolve_theme(name, accent)
-    t = compute_theme(name if name in THEMES else DEFAULT_THEME, accent)
+    t = compute_theme(name if name in THEMES or name == CUSTOM else DEFAULT_THEME, custom)
     C.clear()
     C.update(t)
     Btn.refresh_kinds()

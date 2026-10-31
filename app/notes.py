@@ -11,13 +11,15 @@ import notes_shared as _shared  # noqa: E402
 import autotitle  # noqa: E402   (제목 없이 쓴 새 노트: 본문 첫 줄을 제목으로)
 from dialogs import DialogsMixin  # noqa: E402   (큰 대화창들: dialogs.py)
 from searchbox import SearchBoxMixin  # noqa: E402   (검색창 자동완성·입력기 글꼴: searchbox.py)
+from wikiui import WikiUIMixin  # noqa: E402   (위키 링크(켜짐 확인·[[ 자동완성·연결된 노트 보기): wikiui.py)
+from tagedit import TagEditMixin  # noqa: E402   (태그 편집(맨 아래 태그 박스·메모·이름 바꾸기·삭제·합치기): tagedit.py)
 
 
-class App(DialogsMixin, SearchBoxMixin):
+class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin):
     def __init__(self):
         global UI
-        theme = st.read_config().get("theme", {})
-        apply_theme(theme.get("name", DEFAULT_THEME), theme.get("accent"))
+        theme = migrate_theme(st.read_config().get("theme", {}))
+        apply_theme(theme["name"], theme["custom"])
         self.root = tk.Tk()
         self.root.title(APP)
         win = st.read_config().get("window", {})
@@ -163,7 +165,7 @@ class App(DialogsMixin, SearchBoxMixin):
             s.layout(name, [(f"{orient}.Scrollbar.trough", {"sticky": "nswe", "children": [
                 (f"{orient}.Scrollbar.thumb", {"expand": "1", "sticky": "nswe"})]})])
             s.configure(name, troughcolor=C["bg"], background=C["thumb"], bordercolor=C["bg"], lightcolor=C["thumb"],
-                        darkcolor=C["thumb"], gripcount=0, width=9, relief="flat")
+                        darkcolor=C["thumb"], gripcount=0, width=5, arrowsize=9, relief="flat")
             s.map(name, background=[("active", C["thumb_h"])])
         s.configure("TCombobox", fieldbackground=C["bg"], background=C["bg"], bordercolor=C["line"], arrowsize=12,
                     lightcolor=C["bg"], darkcolor=C["bg"], padding=3, foreground=C["text"])
@@ -266,6 +268,7 @@ class App(DialogsMixin, SearchBoxMixin):
         m = tk.Menu(mb, tearoff=0)
         m.add_command(label="사용 설명서 (GitHub)…", accelerator="F1", command=self.open_manual)
         m.add_command(label="검색 문법", command=self.help_search)
+        m.add_command(label="안드로이드 앱 내려받기 (APK)…", command=lambda: webbrowser.open(self.ANDROID_URL))
         m.add_separator()
         m.add_command(label="업데이트 확인…", command=self.check_update)
         m.add_command(label=f"{APP} 정보 (버전 {VERSION})", command=lambda: messagebox.showinfo(
@@ -628,6 +631,8 @@ class App(DialogsMixin, SearchBoxMixin):
         self.quit()   # 앱이 끝나야 실행 파일이 풀려서 바뀐다. 바뀐 뒤 새 버전이 자동으로 다시 시작된다.
 
     MANUAL_URL = "https://github.com/iamtalker/iamtalkernote/blob/main/docs/manual.md"
+
+    ANDROID_URL = "https://github.com/iamtalker/iamtalkernote-android/releases/latest"   # 폰 앱(APK) 최신 릴리스
 
     def open_manual(self):
         """도움말 → 사용 설명서(F1): GitHub 의 설명서 문서를 기본 브라우저로 연다"""
@@ -1377,12 +1382,16 @@ class App(DialogsMixin, SearchBoxMixin):
             return n["nb"] == ""
         return n["nb"] == self.nb or n["nb"].startswith(self.nb + "/")
 
+    def visible_notebooks(self):
+        """노트북 목록에 보일 폴더: 달력 마크다운 폴더(달력/)는 '바로가기 > 달력·할일' 로만 들어가므로 뺀다"""
+        return [n for n in self.store.notebooks() if n != pm.MD_DIR and not n.startswith(pm.MD_DIR + "/")]
+
     def reload_notebooks(self):
-        names = self.store.notebooks()
+        names = self.visible_notebooks()
         if OUTL not in names:
             try:
                 self.store.create_notebook(OUTL)
-                names = self.store.notebooks()
+                names = self.visible_notebooks()
             except OSError:
                 pass
         dfolders = self.docs.folders()
@@ -2083,7 +2092,7 @@ class App(DialogsMixin, SearchBoxMixin):
         lm, mm = self.listmenu, self.movemenu
         lm.delete(0, "end")
         mm.delete(0, "end")
-        for key in [""] + self.store.notebooks():
+        for key in [""] + self.visible_notebooks():
             label = ("    " * key.count("/") + (self.nb_short(key) if key else self.store.root_name))
             mm.add_command(label=label, command=lambda k=key: self.move_note(n, k), state="disabled" if key == n["nb"] else "normal")
         lm.add_cascade(label="노트북으로 이동", menu=mm)
@@ -2103,7 +2112,7 @@ class App(DialogsMixin, SearchBoxMixin):
         lm, mm = self.listmenu, self.movemenu
         lm.delete(0, "end")
         mm.delete(0, "end")
-        for key in [""] + self.store.notebooks():
+        for key in [""] + self.visible_notebooks():
             label = ("    " * key.count("/") + (self.nb_short(key) if key else self.store.root_name))
             mm.add_command(label=label, command=lambda k=key: self.move_multi(k))
         lm.add_cascade(label=f"노트 {len(self.multi)}개를 노트북으로 이동", menu=mm)
@@ -2396,268 +2405,6 @@ class App(DialogsMixin, SearchBoxMixin):
                 tags = sorted(self.cur.get("tags", ()))
                 shown = "   ".join("# " + t for t in tags[:6]) + (f"   … +{len(tags) - 6}" if len(tags) > 6 else "")
                 self.tagbtn.config(text=shown or "# 태그 추가", fg=C["accent"] if tags else C["muted"])
-
-    def edit_tags(self, e=None):
-        """맨 아래 줄의 태그를 누르면 하단에 작은 박스가 열린다(조플린의 '태그 추가 및 제거'): 태그를 치고 Enter 하면 칩으로 쌓이고 다음 태그를 받는다.
-        [확인] 을 눌러야 한꺼번에 들어가고 [취소](Esc)는 아무것도 바꾸지 않는다. 이미 있는 태그도 칩으로 보이며 × 로 뺀다."""
-        if not self.cur or self.tag_edit:
-            return
-        self.flush()
-        self.ac_tagc = (0.0, self.ac_tagc[1])   # 박스를 여는 순간 뒤에서 태그 개수를 세기 시작한다(열린 뒤 키 입력은 기다리지 않는다)
-        self.ac_tags()
-        box = tagac.TagBox(self.main, sorted(self.cur.get("tags", ())), self.ac_tags, C, (self.ui, 9),
-                           lambda tags: self.finish_tags(True, tags), lambda: self.finish_tags(False), Btn, ime.composing, ime.cancel)
-        box.pack(side="bottom", fill="x", after=self.status_sep)   # 맨 아래 상태줄 바로 위
-        self.tagbtn.pack_forget()
-        self.tag_edit = box
-        box.ent.focus_set()
-
-    def finish_tags(self, save, tags=None):
-        box = self.tag_edit
-        if not box:
-            return
-        self.tag_edit = None
-        box.close()
-        box.destroy()
-        self.tagbtn.pack(side="left")
-        if save and self.cur and tags is not None:
-            self.apply_tags(" ".join("#" + t for t in tags))
-        self.update_status()
-        if self.cur:
-            (self.text if self.mode != "view" else self.lst).focus_set()
-
-    def apply_tags(self, value):
-        """입력칸의 태그로 노트를 고친다. 글 맨 아래의 '태그: #a #b' 줄에 적는다(없으면 만든다).
-        본문 속 #해시태그나 머리말 tags 로 생긴 태그는 여기서 지울 수 없어서(글 자체를 고쳐야 한다) 알려 준다."""
-        if self.doc_open:
-            return self.apply_doc_tags(value)
-        want = []
-        for t in re.split(r"[,\s]+", value):
-            t = t.strip().lstrip("#").strip()
-            if t and len(t) <= 30 and not re.search(r"[\[\]()/<>]", t) and t not in want:
-                want.append(t)
-        T = self.text
-        body = T.get("1.0", "end-1c")
-        have = note_tags(body)
-        off = len(body) - len(body_after_fm(body))   # 머리말의 'tags:' 줄을 '태그:' 줄로 착각해 건드리지 않게 머리말 뒤부터만 본다
-        on_line = line_tags(body[off:])
-        removed = have - set(want)
-        stuck = sorted(t for t in removed if t not in on_line)       # 줄에 없는 태그는 지울 수 없다
-        keep = [t for t in on_line if t not in removed]
-        new_line = keep + [t for t in want if t not in have]
-        if set(new_line) == set(on_line):
-            if stuck:
-                self.status.config(text="본문에 직접 쓴 #태그는 여기서 못 지웁니다: " + " ".join("#" + t for t in stuck))
-            return
-        line = "태그: " + " ".join("#" + t for t in new_line) if new_line else ""
-        T.edit_separator()
-        spans = [(m.start() + off, m.end() + off) for m in TAG_LINE.finditer(body[off:])]
-        if spans:
-            for k, (a, b) in reversed(list(enumerate(spans))):
-                if k == 0 and line:
-                    T.delete(f"1.0+{a}c", f"1.0+{b}c")
-                    T.insert(f"1.0+{a}c", line)
-                else:   # 둘째 줄부터(또는 태그가 없어졌으면 첫 줄도) 줄째로 지운다
-                    end = b + 1 if b < len(body) else b
-                    T.delete(f"1.0+{a}c", f"1.0+{end}c")
-        else:
-            tail = "" if body.endswith("\n\n") else ("\n" if body.endswith("\n") else "\n\n")
-            T.insert("end-1c", f"{tail}{line}\n")
-        T.edit_separator()
-        self.dirty = True
-        self.flush()                                                  # 바로 저장하고 목록·사이드바·상태 줄을 갱신
-        if stuck:
-            self.status.config(text="태그를 저장했습니다. 본문에 직접 쓴 #태그는 못 지웁니다: " + " ".join("#" + t for t in stuck))
-        else:
-            self.update_status("태그 저장됨")
-
-    # ------------------------------------------------------------ 태그 목록: 우클릭으로 추가·이름 바꾸기·삭제
-    def on_tag_menu(self, e):
-        """태그 목록 우클릭: 이름 변경 · 삭제(둘 다 그 태그가 든 모든 노트에서). Ctrl/Shift+클릭으로 여러 개를 골랐으면 그 태그들 모두"""
-        row = self.tagtree.identify_row(e.y)
-        if not row:
-            return
-        if row not in self.tagtree.selection():   # 고른 태그들 밖을 누르면 그 태그 하나만 고른다
-            self.tagtree.selection_set(row)
-        tags = [self.tag_keys[int(i[2:])] for i in self.tagtree.selection()]
-        m = tk.Menu(self.root, tearoff=0)
-        if len(tags) == 1:
-            m.add_command(label="태그 이름 변경…", command=lambda: self.tag_rename(tags))
-            m.add_command(label="태그 삭제…", command=lambda: self.tag_delete(tags))
-        else:
-            m.add_command(label=f"태그 {len(tags)}개를 하나의 이름으로 바꾸기(합치기)…", command=lambda: self.tag_rename(tags))
-            m.add_command(label=f"태그 {len(tags)}개 삭제…", command=lambda: self.tag_delete(tags))
-        m.tk_popup(e.x_root, e.y_root)
-        return "break"
-
-    def apply_doc_tags(self, value):
-        """가져온 파일의 태그: 원본은 건드리지 않고 앱의 DB 에만 적는다(입력칸의 태그가 곧 전체 태그)"""
-        n = self.cur
-        want = [t for t in (clean_tag_name(x) for x in re.split(r"[,\s]+", value)) if t]
-        want = list(dict.fromkeys(want))
-        if set(want) != set(n.get("tags", ())):
-            self.docs.set_annot(n["path"], tags=want)
-            n["tags"] = set(want)
-            self.reload_tags()
-            self.refresh(keep_page=True)
-            self.status.config(text="태그를 저장했습니다 (원본 파일은 그대로)")
-        self.update_status()
-
-    def edit_memo(self):
-        """가져온 파일에 메모를 붙인다: 앱의 DB 에만 저장되고 검색에도 잡힌다(원본 파일은 그대로)"""
-        n = self.cur
-        if not (self.doc_open and n):
-            return
-        top = self.tool_window("메모 — " + n["title"], "520x340")
-        tk.Label(top, text="이 파일에 붙이는 메모입니다. 원본 파일은 건드리지 않고 앱의 DB 에만 저장되며, 검색에도 잡힙니다.",
-                 bg=C["bg"], fg=C["muted"], font=(self.ui, 9), anchor="w", justify="left", wraplength=480, padx=16, pady=10).pack(fill="x")
-        btns = tk.Frame(top, bg=C["bg"])
-        btns.pack(side="bottom", fill="x", padx=16, pady=12)
-        box = tk.Text(top, wrap="word", font=(self.ui, 10), bg=C["panel"], fg=C["text"], insertbackground=C["accent"], relief="flat", bd=0,
-                      highlightthickness=1, highlightbackground=C["line"], highlightcolor=C["accent"], padx=10, pady=8, undo=True)
-        box.pack(fill="both", expand=True, padx=16)
-        box.insert("1.0", n.get("memo", ""))
-        box.focus_set()
-
-        def save():
-            memo = box.get("1.0", "end-1c").strip()
-            self.docs.set_annot(n["path"], memo=memo)
-            n["memo"] = memo
-            top.destroy()
-            self.refresh(keep_page=True)
-            if self.cur is n:
-                self.show_doc(n, native=self.pv_active)
-        Btn(btns, "저장", save, kind="primary", bold=True, padx=22, pady=5).pack(side="right")
-        Btn(btns, "취소", top.destroy, padx=14, pady=5).pack(side="right", padx=8)
-
-    def tag_new(self, targets):
-        """노트 목록에서 고른 노트(들)에 태그를 붙인다(공백·쉼표로 여러 개 가능)"""
-        who = f"노트 {len(targets)}개" if len(targets) > 1 else "이 노트"
-        name = simpledialog.askstring("태그 추가", f"{who}에 추가할 태그를 적으세요.\n(공백이나 쉼표로 여러 개, 앞의 # 는 없어도 됩니다)", parent=self.root)
-        if name is None:
-            return
-        tags = [t for t in (clean_tag_name(x) for x in re.split(r"[,\s]+", name)) if t]
-        if not tags:
-            return messagebox.showinfo(APP, "쓸 수 있는 태그가 없습니다. (비었거나 30자를 넘거나 [ ] ( ) / < > 가 들어 있습니다)", parent=self.root)
-        self.tag_add_to(targets, list(dict.fromkeys(tags)))
-
-    def tag_add_to(self, targets, tags):
-        """노트(들)에 태그들을 더한다: 글 아래의 '태그:' 줄에 적는다"""
-        self.flush()
-        cur_path = self.cur["path"] if self.cur else None
-        done = 0
-        for n in targets:
-            try:
-                body, changed = n.read(), False
-                for t in tags:
-                    body, ok = add_tag(body, t)
-                    changed = changed or ok
-                if changed:
-                    self.store.save(n["path"], body, versioned=True, force=True, ev="tags")
-                    done += 1
-            except OSError as ex:
-                return messagebox.showerror(APP, f"태그를 더하지 못했습니다.\n{ex}", parent=self.root)
-        self.after_tag_change(cur_path)
-        self.status.config(text=f"태그 {' '.join('#' + t for t in tags)} 를 노트 {done}개에 더했습니다"
-                                + ("" if done == len(targets) else f" (나머지 {len(targets) - done}개는 이미 있음)"))
-
-    def tag_rename(self, tags):
-        """tags(하나 이상)를 모두 새 이름 하나로 바꾼다. 여러 개를 골랐으면 그 이름으로 합쳐진다"""
-        if len(tags) == 1:
-            title, ask, suggest = "태그 이름 바꾸기", f"'{tags[0]}' 의 새 이름 (공백은 _ 로 바뀝니다):", re.sub(r"\s+", "_", tags[0])
-        else:
-            title, suggest = "태그 합치기", re.sub(r"\s+", "_", tags[0])
-            ask = f"선택한 태그 {len(tags)}개({', '.join(tags[:4])}{' …' if len(tags) > 4 else ''})를\n모두 이 이름 하나로 바꿉니다 (공백은 _ 로 바뀝니다):"
-        name = simpledialog.askstring(title, ask, initialvalue=suggest, parent=self.root)
-        if name is None:
-            return
-        new = clean_tag_name(name)
-        if not new:
-            return messagebox.showinfo(APP, "쓸 수 없는 이름입니다. (비었거나 30자를 넘거나 [ ] ( ) / < > , 가 들어 있습니다)", parent=self.root)
-        if tags == [new]:
-            return
-        self.tag_apply(tags, new)
-
-    def tag_delete(self, tags):
-        self.tag_apply(tags, None)
-
-    def tag_apply(self, tags, new):
-        """태그들(tags)을 가진 모든 노트에서 new 로 바꾸거나(None 이면 지우고) 미리 몇 곳이 바뀌는지 보여 준 뒤 적용한다"""
-        self.flush()
-        want = set(tags)
-        targets = [n for n in self.all_notes if want & n["tags"]]
-        names = ", ".join(f"'{t}'" for t in tags[:5]) + (f" 외 {len(tags) - 5}개" if len(tags) > 5 else "")
-
-        def scan(prog, cancel):
-            out, total = [], {"fm": 0, "line": 0, "inline": 0, "stuck": 0}
-            for i, n in enumerate(targets):
-                if cancel():
-                    return None
-                if i % 50 == 0:
-                    prog(i, len(targets))
-                body = orig = n.read()
-                for t in tags:
-                    if t == new:
-                        continue
-                    body, c = edit_tag(body, t, new)
-                    for k in total:
-                        total[k] += c[k]
-                if body != orig:
-                    out.append((n, body))
-            return out, total
-
-        def confirm(res):
-            if res is None:
-                return
-            items, c = res
-            dcount = self.docs.tag_use_count(tags)   # 가져온 파일에 붙인 같은 태그(원본은 그대로, 앱의 DB 만 바뀐다)
-            if not items and not dcount:
-                return messagebox.showinfo(APP, "바꿀 곳이 없습니다." + (f"\n(본문 속 #태그 {c['stuck']}곳은 이 이름으로 바꿀 수 없습니다)" if c["stuck"] else ""), parent=self.root)
-            parts = [f"{label} {c[k]}곳" for k, label in (("fm", "머리말"), ("line", "태그 줄"), ("inline", "본문 #태그")) if c[k]]
-            what = (f"{names} → '{new}' 로 " + ("합칩니다" if len(tags) > 1 else "바꿉니다")) if new else f"{names} 를 지웁니다"
-            extra = ""
-            if new is None and c["inline"]:
-                extra += "\n본문 속 #태그는 글에서 그 글자가 지워집니다."
-            if c["stuck"]:
-                extra += f"\n본문 속 #태그 {c['stuck']}곳은 '{new}' 가 본문 태그로 쓸 수 없는 이름이라 그대로 남습니다."
-            if dcount:
-                parts.append(f"가져온 파일 {dcount:,}개")
-            if not messagebox.askyesno(APP, f"{what}.\n\n노트 {len(items):,}개 ({', '.join(parts)}){extra}\n\n"
-                                            "이전 내용은 노트 버전으로 남고, 수정 시각은 바뀌지 않습니다. 계속할까요?", parent=self.root):
-                return
-            self.checkpoint("태그 정리 전", lambda: self.tag_write(items, tags, new)) if len(items) >= 5 else self.tag_write(items, tags, new)
-        self.run_task("태그 확인", scan, confirm, text="태그가 든 노트를 확인하는 중…")
-
-    def tag_write(self, items, tags, new):
-        cur_path = self.cur["path"] if self.cur else None
-        top = self.tool_window("태그 바꾸는 중", "420x110", native=True)
-        msg = tk.Label(top, text="", bg=C["bg"], fg=C["text"], font=(self.ui, 10), pady=24)
-        msg.pack()
-        top.protocol("WM_DELETE_WINDOW", lambda: None)
-        done = 0
-        for i, (n, body) in enumerate(items):
-            if i % 10 == 0:
-                msg.config(text=f"노트의 태그를 바꾸는 중… {i:,} / {len(items):,}")
-                top.update()
-            try:   # 수정 시각은 그대로 두고(touch=False), 이전 내용은 버전으로 남긴다(force)
-                self.store.save(n["path"], body, versioned=True, force=True, touch=False, ev="tags")
-                done += 1
-            except OSError:
-                pass
-        top.destroy()
-        dn = self.docs.rename_tags(tags, new)   # 가져온 파일의 태그
-        if self.tag in tags:
-            self.tag = new
-        self.after_tag_change(cur_path)
-        messagebox.showinfo(APP, f"노트 {done:,}개" + (f", 가져온 파일 {dn:,}개" if dn else "") + "의 태그를 " + ("바꿨습니다." if new else "지웠습니다."), parent=self.root)
-
-    def after_tag_change(self, cur_path):
-        """태그를 바꾼 뒤: 노트를 다시 읽고 사이드바·목록·열려 있던 노트를 갱신한다"""
-        self.reload_notes()
-        self.reload_tags()
-        n = next((x for x in self.notes if x["path"] == cur_path), None) if cur_path else None
-        if n:
-            self.open_note(n, record=False)   # 바뀐 글을 다시 읽어 와서 낡은 내용으로 덮어쓰지 않게
 
     def commit_title(self):
         if not self.cur or self.doc_open:
@@ -3420,154 +3167,6 @@ class App(DialogsMixin, SearchBoxMixin):
                 out.append((piece, tags + ("link",) if title else tags, ("link", "page", title) if title else None))
         return out
 
-    def wiki_on(self):
-        return st.wiki_enabled()
-
-    def wiki_index(self):
-        """제목(정규화) → 가장 최근 노트. 노트 목록이 바뀔 때만 다시 만든다"""
-        key = (id(self.all_notes), len(self.all_notes))
-        if getattr(self, "_wiki_key", None) != key:
-            self._wiki_key, self._wiki_idx = key, wikilinks.index(self.all_notes)
-        return self._wiki_idx
-
-    # ---- [[ 제목 자동완성
-    def wiki_typed(self, e=None):
-        if e is not None and e.keysym in ("Up", "Down", "Return", "Tab", "Escape", "Shift_L", "Shift_R", "Control_L", "Control_R"):
-            return
-        if not self.wiki_on() or self.doc_open or not self.cur:
-            return self.wiki_close()
-        t = self.text
-        tok = wikilinks.open_token(t.get("insert linestart", "insert") + ime.composing())
-        if tok is None:
-            return self.wiki_close()
-        items = wikilinks.suggest([n for n in self.all_notes if n["path"] != self.cur["path"]], tok[1])
-        if not items or (len(items) == 1 and wikilinks.norm(items[0]) == wikilinks.norm(tok[1])):
-            return self.wiki_close()
-        if self.wiki_pop is None:
-            lb = tk.Listbox(t, activestyle="none", exportselection=False, height=8, font=(self.ui, 10), relief="solid", bd=1,
-                            bg=C["bg"], fg=C["text"], selectbackground=C["accent"], selectforeground="#ffffff")
-            lb.bind("<ButtonRelease-1>", lambda ev: (self.wiki_pick(lb.nearest(ev.y)), "break")[1])
-            self.wiki_pop = lb
-        lb = self.wiki_pop
-        lb.delete(0, "end")
-        for x in items:
-            lb.insert("end", x)
-        lb.selection_set(0)
-        lb.config(height=len(items), width=max(14, min(48, max(len(x) for x in items) + 2)))
-        bb = t.bbox("insert")
-        if bb:
-            lb.place(x=max(0, min(bb[0], t.winfo_width() - 260)), y=bb[1] + bb[3] + 2)
-            lb.lift()
-
-    def wiki_close(self, escape=False):
-        if self.wiki_pop is None:
-            return None
-        self.wiki_pop.destroy()
-        self.wiki_pop = None
-        return "break" if escape else None
-
-    def wiki_move(self, d):
-        lb = self.wiki_pop
-        if lb is None:
-            return None
-        cur = (lb.curselection() or (0,))[0]
-        lb.selection_clear(0, "end")
-        lb.selection_set(max(0, min(lb.size() - 1, cur + d)))
-        lb.see(lb.curselection()[0])
-        return "break"
-
-    def wiki_pick(self, idx=None):
-        lb = self.wiki_pop
-        if lb is None:
-            return None
-        if idx is None:
-            idx = (lb.curselection() or (0,))[0]
-        title = lb.get(idx)
-        self.wiki_close()
-        t = self.text
-        tok = wikilinks.open_token(t.get("insert linestart", "insert"))
-        if tok:
-            line = t.index("insert").split(".")[0]
-            a = f"{line}.{tok[0]}"
-            t.edit_separator()
-            t.delete(a, "insert")
-            t.insert(a, title + ("" if t.get("insert", "insert +2c") == "]]" else "]]"))
-            t.mark_set("insert", t.search("]]", a, "end") + "+2c" if t.search("]]", a, "end") else "insert")
-            t.edit_separator()
-        t.focus_set()
-        return "break"
-
-    # ---- 연결된 노트
-    def show_links(self, n=None):
-        n = n or self.cur
-        if not n or isinstance(n, docidx.Doc):
-            return
-        self.flush()
-        top = tk.Toplevel(self.root)
-        top.title(f"연결된 노트 — {n['title']}")
-        top.configure(bg=C["bg"])
-        top.geometry("460x420")
-        top.transient(self.root)
-        info = tk.Label(top, text="찾는 중…", bg=C["bg"], fg=C["muted"], font=(self.ui, 9), anchor="w", padx=14, pady=6)
-        info.pack(fill="x")
-        lists = []
-        for head in ("이 노트를 가리키는 노트", "이 노트가 가리키는 노트"):
-            tk.Label(top, text=head, bg=C["bg"], fg=C["text"], font=(self.ui, 10, "bold"), anchor="w", padx=14).pack(fill="x", pady=(6, 2))
-            lb = tk.Listbox(top, activestyle="none", exportselection=False, font=(self.ui, 10), relief="flat", bd=0, bg=C["panel"], fg=C["text"],
-                            selectbackground=C["accent"], selectforeground="#ffffff", highlightthickness=0)
-            lb.pack(fill="both", expand=True, padx=14, pady=(0, 4))
-            lists.append(lb)
-        rows = [[], []]
-
-        def open_row(which):
-            sel = lists[which].curselection()
-            if not sel:
-                return
-            path = rows[which][sel[0]]
-            top.destroy()
-            self.follow_path(path)
-        for i, lb in enumerate(lists):
-            lb.bind("<Double-Button-1>", lambda e, i=i: open_row(i))
-            lb.bind("<Return>", lambda e, i=i: open_row(i))
-        top.bind("<Escape>", lambda e: top.destroy())
-        q = queue.Queue()
-        threading.Thread(target=lambda: q.put(self.store.wiki_links()), daemon=True).start()
-
-        def done(link_map):
-            if not top.winfo_exists():
-                return
-            idx = self.wiki_index()
-            by_key = {self.store.key_of(x["path"]): x for x in self.all_notes}
-            mine = self.store.key_of(n["path"])
-            back = [k for k in wikilinks.backlinks(link_map, n["title"]) if k != mine and k in by_key]
-            out = []
-            if self.cur and n["path"] == self.cur["path"]:
-                body = self.text.get("1.0", "end-1c")
-            else:
-                try:
-                    with open(n["path"], "rb") as fh:
-                        body = st.decode(fh.read())
-                except OSError:
-                    body = ""
-            for title, _, _ in wikilinks.links_in(body):
-                tgt = idx.get(wikilinks.norm(title))
-                if tgt and tgt["path"] != n["path"] and tgt["path"] not in out:
-                    out.append(tgt["path"])
-            for which, paths in ((0, [by_key[k]["path"] for k in back]), (1, out)):
-                rows[which] = paths
-                for p in paths:
-                    nn = next((x for x in self.all_notes if x["path"] == p), None)
-                    lists[which].insert("end", nn["title"] if nn else p)
-            info.config(text=f"가리키는 노트 {len(back)}개 · 가리킨 노트 {len(out)}개 (두 번 누르면 열림)")
-
-        def poll():
-            try:
-                done(q.get_nowait())
-            except queue.Empty:
-                if top.winfo_exists():
-                    top.after(80, poll)
-        poll()
-
     def follow_path(self, path):
         found = next((x for x in self.all_notes if x["path"] == path), None)
         if not found:
@@ -3806,11 +3405,12 @@ class App(DialogsMixin, SearchBoxMixin):
         if n:
             self.open_note(n, record=False)
 
-    def set_theme(self, name, accent="keep"):
-        old = st.read_config().get("theme", {})
-        acc = old.get("accent") if accent == "keep" else accent
-        st.write_config(theme={"name": name, "accent": acc})
-        apply_theme(name, acc)
+    def set_theme(self, name, custom="keep"):
+        """name 을 쓴다. 내 테마의 색(custom = {bg, accent})을 같이 바꿀 수 있다(주지 않으면 저장돼 있던 색)"""
+        old = migrate_theme(st.read_config().get("theme", {}))
+        cus = old["custom"] if custom == "keep" else custom
+        st.write_config(theme={"name": name, "custom": cus})
+        apply_theme(name, cus)
         self.rebuild_ui()
         self.show_options("theme")
 

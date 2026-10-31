@@ -1023,15 +1023,15 @@ class DialogsMixin:
             Btn(p, "이 노트의 버전 보기", lambda: (top.destroy(), self.show_versions()), padx=12, pady=4).pack(anchor="w", pady=(14, 0))
 
         def theme_tab(p):
-            title(p, "테마·색상", "자주 쓰는 5가지에서 고르거나, 아래에서 강조색을 직접 고릅니다. 누르면 바로 적용됩니다.")
-            cfg = st.read_config().get("theme", {})
-            cur_name = cfg.get("name", DEFAULT_THEME)
-            cur_acc = cfg.get("accent")
+            title(p, "테마·색상", "자주 쓰는 5가지에서 고르거나, 아래에서 배경색과 강조색을 골라 내 테마를 만듭니다. 누르면 바로 적용됩니다.")
+            cfg = migrate_theme(st.read_config().get("theme", {}))
+            cur_name = cfg["name"]
+            mine = cfg["custom"] or {"bg": C["bg"], "accent": C["accent"]}   # 내 테마를 처음 만들 때는 지금 쓰는 색에서 시작
             grid = tk.Frame(p, bg=C["bg"])
             grid.pack(fill="x")
 
             def card(i, tname):
-                t = compute_theme(tname, cur_acc if tname == cur_name else None)
+                t = compute_theme(tname, mine)
                 chosen = tname == cur_name
                 f = tk.Frame(grid, bg=C["accent"] if chosen else C["line"], padx=2, pady=2, cursor="hand2")
                 f.grid(row=i // 3, column=i % 3, padx=(0, 10), pady=(0, 10))
@@ -1048,23 +1048,26 @@ class DialogsMixin:
                     tk.Frame(chips, bg=col, width=w, height=9).pack(side="left", padx=(0, 4))
                 tk.Label(right, text="✓ 사용 중" if chosen else "", bg=t["bg"], fg=t["accent"], font=(self.ui, 8)).pack(anchor="w", padx=8, pady=(6, 0))
                 for w in (f, body, right, *right.winfo_children(), *chips.winfo_children()):
-                    w.bind("<Button-1>", lambda e, n=tname: self.root.after(20, lambda: self.set_theme(n)))
-            for i, tname in enumerate(THEMES):
+                    w.bind("<Button-1>", lambda e, n=tname: self.root.after(20, lambda: self.set_theme(n, mine if n == CUSTOM else "keep")))
+            for i, tname in enumerate((*THEMES, CUSTOM)):
                 card(i, tname)
             hr(p)
-            lab(p, "직접 고르기 (강조색)", font=(self.ui, 10, "bold")).pack(anchor="w")
-            row = tk.Frame(p, bg=C["bg"])
-            row.pack(fill="x", pady=8)
-            tk.Frame(row, bg=C["accent"], width=34, height=22, highlightthickness=1, highlightbackground=C["line"]).pack(side="left")
-            lab(row, cur_acc or "테마 기본색", fg=C["muted"], font=(self.ui, 9)).pack(side="left", padx=10)
+            lab(p, "내 테마 만들기", font=(self.ui, 10, "bold")).pack(anchor="w")
+            for key, label in (("bg", "배경색"), ("accent", "강조색 (선택한 글·버튼·링크·태그)")):
+                row = tk.Frame(p, bg=C["bg"])
+                row.pack(fill="x", pady=4)
+                sw = tk.Frame(row, bg=mine[key], width=34, height=22, highlightthickness=1, highlightbackground=C["line"], cursor="hand2")
+                sw.pack(side="left")
 
-            def choose():
-                rgb, hexa = colorchooser.askcolor(color=C["accent"], title="강조색 고르기", parent=top)
-                if hexa:
-                    self.root.after(20, lambda: self.set_theme(cur_name, hexa))
-            Btn(row, "색 고르기…", choose, padx=12, pady=4).pack(side="left")
-            Btn(row, "테마 기본색으로", lambda: self.root.after(20, lambda: self.set_theme(cur_name, None)), padx=12, pady=4).pack(side="left", padx=6)
-            lab(p, "강조색은 선택된 글, 버튼, 링크, 태그 등에 쓰이는 포인트 색입니다.", fg=C["muted"], font=(self.ui, 9)).pack(anchor="w")
+                def choose(k=key, lb=label):
+                    hexa = colorchooser.askcolor(color=mine[k], title=lb.split(" ")[0] + " 고르기", parent=top)[1]
+                    if hexa:
+                        self.root.after(20, lambda: self.set_theme(CUSTOM, {**mine, k: hexa}))
+                sw.bind("<Button-1>", lambda e, c=choose: c())
+                lb = lab(row, f"{label}   {mine[key]}", fg=C["muted"], font=(self.ui, 9), cursor="hand2")
+                lb.pack(side="left", padx=10)
+                lb.bind("<Button-1>", lambda e, c=choose: c())
+            lab(p, "색 상자를 누르면 색 고르는 창이 뜹니다. 배경색이 어두우면 글자는 밝게, 밝으면 어둡게 저절로 맞춥니다.", fg=C["muted"], font=(self.ui, 9)).pack(anchor="w")
 
             hr(p)
             lab(p, "유튜브 영상", font=(self.ui, 10, "bold")).pack(anchor="w")
@@ -1260,20 +1263,23 @@ class DialogsMixin:
 
         def planner_tab(p):
             title(p, "달력·할일", "달력과 할일, 그리고 일용직·건설직의 공수달력을 정합니다.")
+            entries = []
             on = tk.BooleanVar(value=self.feat["cal"])
             gs = tk.BooleanVar(value=bool(st.read_config().get("cal_gongsu", False)))
 
             def apply_cal():
                 self.feat["cal"] = on.get()
+                self.feat["gongsu"] = gs.get()
                 st.write_config(use_cal=on.get(), cal_gongsu=gs.get())
+                lock_entries()
+                if self.planner_view is not None:
+                    self.planner_view.refresh()
                 self.reload_notebooks()
                 if self.nb == CAL:
                     self.show_empty(True)
             tk.Checkbutton(p, text="달력·할일 사용 (노트북 목록의 '바로가기'에 나타납니다)", variable=on, command=apply_cal, bg=C["bg"],
                            activebackground=C["bg"], font=(self.ui, 10), selectcolor=C["bg"]).pack(anchor="w")
             hr(p)
-            tk.Checkbutton(p, text="공수달력 사용 (날을 누르면 공수 0.5·1·1.5·2 를 적고, 달마다 합계를 계산)", variable=gs, command=apply_cal, bg=C["bg"],
-                           activebackground=C["bg"], font=(self.ui, 10), selectcolor=C["bg"]).pack(anchor="w")
             gg = tk.BooleanVar(value=bool(st.read_config().get("cal_google", True)))
 
             def set_google():
@@ -1281,6 +1287,8 @@ class DialogsMixin:
                 if gg.get():
                     self.sync_holidays(force=True)
             tk.Checkbutton(p, text="구글 달력에서 대한민국 공휴일 가져오기 (로그인 없이 공개 달력을 한 달에 한 번 받음)", variable=gg, command=set_google, bg=C["bg"],
+                           activebackground=C["bg"], font=(self.ui, 10), selectcolor=C["bg"]).pack(anchor="w", pady=(6, 0))
+            tk.Checkbutton(p, text="공수달력 사용 (날을 누르면 공수 0.5·1·1.5·2 를 적고, 달마다 합계를 계산)", variable=gs, command=apply_cal, bg=C["bg"],
                            activebackground=C["bg"], font=(self.ui, 10), selectcolor=C["bg"]).pack(anchor="w", pady=(6, 0))
             cfg = st.read_config()
             for key, label in (("cal_wage", "단가 (1공수, 원)"), ("cal_meal", "일비 (하루, 원)")):
@@ -1291,6 +1299,7 @@ class DialogsMixin:
                 e = tk.Entry(row, textvariable=var, width=14, relief="flat", bd=0, bg=C["panel"], fg=C["text"], highlightthickness=1,
                              highlightbackground=C["line"], highlightcolor=C["accent"], font=(self.ui, 10))
                 e.pack(side="left", ipady=4)
+                entries.append(e)
 
                 def save(*_, k=key, v=var):
                     s = v.get().replace(",", "").strip()
@@ -1301,6 +1310,11 @@ class DialogsMixin:
                     if self.planner_view is not None:
                         self.planner_view.refresh()
                 var.trace_add("write", save)
+
+            def lock_entries():
+                for e in entries:
+                    e.config(state="normal" if gs.get() else "disabled")
+            lock_entries()
             lab(p, "공수 합계 × 단가 = 일당, 출근한 날 수 × 일비 = 일비. 공휴일은 구글 달력에서 받은 것을 쓰고, 못 받으면 내장 표(2024~2030년)로 표시합니다.", fg=C["muted"], font=(self.ui, 9),
                 wraplength=620).pack(anchor="w", pady=(10, 0))
 
