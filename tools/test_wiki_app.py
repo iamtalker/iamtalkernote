@@ -130,54 +130,42 @@ app.toggle_favorite(tgt)
 check("해제하면 목록에서 빠짐", app.notes == [] and not hasattr(app, "star_lbl"))
 app.nb = notes.ALL
 
-# --- 아웃라이너 바로 편집
-put("아웃.md", "- a\n- b\n", now)
-app.reload_notes()
-for _ in range(40):
-    app.root.update()
-    time.sleep(0.02)
+# --- 아웃라이너 폴더
+check("사이드바에 아웃라이너 폴더(즐겨찾기 바로 아래)", app.nb_keys[:3] == [notes.ALL, notes.FAVS, notes.OUTL])
+check("폴더는 볼트 안의 실제 폴더", os.path.isdir(os.path.join(vault, notes.OUTL)))
+os.makedirs(os.path.join(vault, notes.OUTL), exist_ok=True)
+put(notes.OUTL + "/할일.md", "---\ntags: [x]\n---\n- a\n- b\n    - b1\n", now)
 app.nb = notes.ALL
 app.reload_notes()
-for _ in range(40):
+for _ in range(60):
     app.root.update()
     time.sleep(0.02)
-app.open_note(next(x for x in app.all_notes if x["title"] == "아웃"))
-app.outline_var.set(True)
-app.set_mode("view")
-app.render()
+on = next(x for x in app.all_notes if x["title"] == "할일")
+app.open_note(on)
 for _ in range(10):
     app.root.update()
-
-
-def body():
-    return app.text.get("1.0", "end-1c")
-
-
-def ed():
-    return app.view_edit
-
-
-check("아웃라이너 보기가 그려짐", app.outline_drawn)
-check("점 뒤 글을 열 수 있음", app.outline_edit_at(2) and ed() is not None)
-ed().keys["enter"](ed())
-for _ in range(5):
+check("아웃라이너 폴더 노트는 아웃라이너 편집기로", app.is_outline_note() and app.ow.winfo_ismapped() and not app.box2.winfo_ismapped())
+ow = app.ow
+check("항목이 줄로 보임(머리말은 제외)", [ow.txt.get(f"{n}.1", f"{n}.end") for n in (1, 2, 3)] == ["a", "b", "b1"])
+ow.txt.mark_set("insert", "1.2")
+ow._enter()
+ow.txt.insert("insert", "새")
+ow._tab()
+for _ in range(10):
     app.root.update()
-check("Enter: 아래에 새 항목을 만들고 이어서 고침", body() == "- a\n- \n- b\n" and ed() is not None)
-ed().txt.insert("end", "x")
-ed().keys["tab"](ed())
-for _ in range(5):
+body_now = app.text.get("1.0", "end-1c")
+check("고치면 노트 원문에 마크다운 목록으로(머리말 보존)", body_now == "---\ntags: [x]\n---\n- a\n    - 새\n- b\n    - b1\n")
+app.flush()
+check("파일에도 저장됨", open(on["path"], encoding="utf-8").read() == body_now)
+app.text.edit_undo()
+for _ in range(10):
     app.root.update()
-check("Tab: 들여쓰기하고 계속 고침", body() == "- a\n    - x\n- b\n" and ed() is not None and ed().value() == "x")
-ed().keys["btab"](ed())
-for _ in range(5):
+check("노트 되돌리기가 아웃라이너에도 반영", app.text.get("1.0", "end-1c") != body_now)
+other = next(x for x in app.all_notes if x["title"] == "링크원")
+app.open_note(other)
+for _ in range(10):
     app.root.update()
-check("Shift+Tab: 내어쓰기", body() == "- a\n- x\n- b\n" and ed() is not None)
-ed().txt.delete("1.0", "end")
-ed().keys["back"](ed())
-for _ in range(5):
-    app.root.update()
-check("빈 항목 Backspace: 항목을 지우고 앞 항목 끝으로", body() == "- a\n- b\n" and ed() is not None and ed().value() == "a")
-ed().finish(False)
+check("일반 노트로 가면 평소 화면으로 돌아옴", not app.is_outline_note() and app.box2.winfo_manager() == "pack" and not app.ow.winfo_ismapped() and app.edit_frame.winfo_ismapped())
 app.nb = notes.ALL
 
 app.root.destroy()
