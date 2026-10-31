@@ -144,6 +144,7 @@ on = next(x for x in app.all_notes if x["title"] == "할일")
 app.open_note(on)
 for _ in range(10):
     app.root.update()
+check("보기 탭(분할·렌더링)은 숨김", not app.mode_seg.winfo_manager())
 check("아웃라이너 폴더 노트는 아웃라이너 편집기로", app.is_outline_note() and app.ow.winfo_ismapped() and not app.box2.winfo_ismapped())
 ow = app.ow
 check("항목이 줄로 보임(머리말은 제외)", [ow.txt.get(f"{n}.1", f"{n}.end") for n in (1, 2, 3)] == ["a", "b", "b1"])
@@ -165,7 +166,7 @@ other = next(x for x in app.all_notes if x["title"] == "링크원")
 app.open_note(other)
 for _ in range(10):
     app.root.update()
-check("일반 노트로 가면 평소 화면으로 돌아옴", not app.is_outline_note() and app.box2.winfo_manager() == "pack" and not app.ow.winfo_ismapped() and app.edit_frame.winfo_ismapped())
+check("일반 노트로 가면 평소 화면으로 돌아옴", not app.is_outline_note() and app.box2.winfo_manager() == "pack" and not app.ow.winfo_ismapped() and app.edit_frame.winfo_ismapped() and app.mode_seg.winfo_manager() == "pack")
 app.nb = notes.ALL
 
 app.root.destroy()

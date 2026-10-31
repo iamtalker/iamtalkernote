@@ -2143,6 +2143,8 @@ class App:
         # 보기 탭 (좌우 분할 / 렌더링만 / 원문만)
         seg = tk.Frame(head, bg=C["line"], padx=1, pady=1)
         seg.pack(side="right", padx=(8, 0))
+        self.mode_anchor = tk.Frame(head, width=0, height=0, bg=C["bg"])   # 아웃라이너 노트에서 보기 탭을 숨겼다가 같은 자리에 되돌리는 기준점
+        self.mode_anchor.pack(side="right", before=seg)
         self.mode_btns = {}
         for m, label, hint in (("split", "좌우 분할", "마크다운과 렌더링을 나란히"), ("view", "렌더링만", "렌더링 결과만 크게"),
                                ("edit", "원문만", "마크다운 원문만 크게(집중 편집)")):
@@ -3170,12 +3172,12 @@ class App:
                 self.find_run()
         if can:
             if not self.doc_toggle.winfo_ismapped():
-                self.doc_toggle.pack(side="right", padx=(8, 0), before=self.mode_seg)
+                self.doc_toggle.pack(side="right", padx=(8, 0), before=self.mode_seg if self.mode_seg.winfo_manager() else self.mode_anchor)
             self.doc_toggle.config(text="뽑은 글로 보기" if self.pv_active else "원본으로 보기")
         else:
             self.doc_toggle.pack_forget()
         if not self.memo_btn.winfo_ismapped():
-            self.memo_btn.pack(side="right", padx=(8, 0), before=self.doc_toggle if self.doc_toggle.winfo_ismapped() else self.mode_seg)
+            self.memo_btn.pack(side="right", padx=(8, 0), before=self.doc_toggle if self.doc_toggle.winfo_ismapped() else (self.mode_seg if self.mode_seg.winfo_manager() else self.mode_anchor))
         self.memo_btn.config(text="메모 ●" if n.get("memo") else "메모")
         self.update_status()
 
@@ -3781,6 +3783,7 @@ class App:
     def show_outline_layout(self, on):
         """아웃라이너 폴더의 노트는 편집 칸·렌더링 칸 대신 아웃라이너 편집기 한 칸을 쓴다"""
         if on:
+            self.mode_seg.pack_forget()                      # 아웃라이너 노트에는 원문·분할·렌더링 보기가 없다
             self.pv.unload()
             self.pv_active = False
             self.pv_frame.lower()
@@ -3793,6 +3796,7 @@ class App:
                 self.ow.pack(fill="both", expand=True, padx=8, pady=(0, 8))
         elif self._outl_on:
             self.ow.pack_forget()
+            self.mode_seg.pack(side="right", padx=(8, 0), after=self.mode_anchor)
             self.box2.pack(fill="both", expand=True, padx=8, pady=(0, 8))
         self._outl_on = on
 
