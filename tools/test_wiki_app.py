@@ -225,6 +225,44 @@ app.reload_notes()
 app.close_note()
 check("다른 항목을 고르면 달력이 사라짐", not pv.winfo_ismapped())
 
+# --- 휴지통(노트북 목록 맨 아래)
+put("지울노트.md", "지워질 본문입니다", now)
+app.nb = notes.ALL
+app.reload_notes()
+for _ in range(60):
+    app.root.update()
+    time.sleep(0.02)
+gone = next(x for x in app.all_notes if x["title"] == "지울노트")
+app.store.delete_note(gone["path"])
+check("노트북 목록 맨 아래에 휴지통", app.nb_keys[-1] == notes.TRASH)
+app.go_nb(notes.TRASH)
+for _ in range(60):
+    app.root.update()
+    time.sleep(0.02)
+tv_ = [w for w in app.trash_view.winfo_children()[2].winfo_children() if w.winfo_class() == "Treeview"][0] if False else None
+frames = app.trash_view.winfo_children()
+import tkinter.ttk as ttk_   # noqa: E402
+
+
+def find(w, cls):
+    for c in w.winfo_children():
+        if c.winfo_class() == cls:
+            return c
+        r = find(c, cls)
+        if r:
+            return r
+tv_ = find(app.trash_view, "Treeview")
+pv_ = find(app.trash_view, "Text")
+check("휴지통을 고르면 오른쪽에 지운 것 목록", app.trash_view.winfo_ismapped() and any("지울노트" in str(tv_.item(i, "values")) for i in tv_.get_children()))
+first = next(i for i in tv_.get_children() if "지울노트" in str(tv_.item(i, "values")))
+tv_.selection_set(first)
+for _ in range(10):
+    app.root.update()
+check("고르면 내용이 미리 보임", "지워질 본문" in pv_.get("1.0", "end"))
+check("휴지통은 검색에 안 잡힘", not any(n["title"] == "지울노트" for n in app.all_notes))
+app.go_nb(notes.ALL)
+check("다른 항목을 고르면 휴지통 화면이 사라짐", app.trash_view is None)
+
 app.root.destroy()
 print("실패 %d" % fails if fails else "전부 통과")
 sys.exit(1 if fails else 0)

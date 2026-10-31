@@ -89,6 +89,7 @@ MORE_MAX_SEARCH = 600  # 검색 중에는 노트마다 본문을 읽어 미리 �
 MORE_SCREENS = 4  # 목록 아래에 남은 글이 이만큼의 화면보다 적어지면 미리 다음 노트들을 이어 그린다
 ALL = "*"
 FAVS = "@favs"   # 노트북 목록의 즐겨찾기 항목
+TRASH = "@trash"  # 노트북 목록 맨 아래의 휴지통(누르면 오른쪽에 지운 것들과 내용 미리보기). 검색에는 잡히지 않는다
 CAL = "@cal"      # 노트북 목록의 달력·할일 항목(누르면 오른쪽에 달력과 할일이 뜬다)
 QUICK = "@quick"   # 노트북 목록의 '바로가기' 묶음 머리글(즐겨찾기·아웃라이너·달력)
 OUTL = "아웃라이너"   # 이 폴더(와 그 하위)의 노트는 WorkFlowy 식 아웃라이너 편집기로 연다(파일은 그냥 마크다운 목록 .md)
@@ -483,7 +484,7 @@ class App:
             pass
         cfg = st.read_config()
         self.planner = pm.Planner(self.store.root)
-        self.planner_view = None
+        self.planner_view = self.trash_view = None
         self.feat = {k: bool(cfg.get("use_" + k, d)) for k, d in (("favs", True), ("outl", True), ("cal", False))}   # 설정 → 일반 → 기능 체크
         self.nb = win.get("nb") if isinstance(win.get("nb"), str) and not win["nb"].startswith("@smart") else ALL   # '*' 모든 노트 · '' 기본 · 그 밖은 노트북 폴더 이름(없어졌으면 읽은 뒤 '*' 로)
         self.tag = None                # 태그로 거르는 중이면 그 태그
@@ -613,7 +614,7 @@ class App:
         m.add_command(label="지금의 검색 저장…", command=self.save_search)
         m.add_separator()
         m.add_command(label="복원 지점…", command=self.show_snapshots)
-        m.add_command(label="휴지통…", command=self.show_trash)
+        m.add_command(label="휴지통", command=lambda: self.go_nb(TRASH))
         m.add_separator()
         m.add_command(label="종료", accelerator="Alt+F4", command=self.quit)
         mb.add_cascade(label="파일", menu=m)
@@ -928,9 +929,19 @@ class App:
         self.reload_notes(keep_scroll=True)   # 지운 뒤에도 보던 자리를 유지
         return done
 
-    def show_trash(self):
-        """파일 > 휴지통: 지운 노트·노트북을 보관 기간(기본 30일) 동안 두고, 복원하거나 바로 지운다"""
-        top = self.tool_window("휴지통", "760x500")
+    def go_nb(self, key):
+        """노트북 목록의 항목(휴지통 등)으로 옮겨 간다"""
+        self.flush()
+        self.nb = key
+        self.close_note()
+        self.reload_notes()
+
+    def show_trash(self, parent=None):
+        """휴지통: 지운 노트·노트북을 보관 기간(기본 30일) 동안 두고, 고르면 내용을 미리 보여 주며, 복원하거나 바로 지운다.
+        parent 가 없으면 노트북 목록의 휴지통 항목으로 간다"""
+        if parent is None:
+            return self.go_nb(TRASH)
+        top = parent
         head = tk.Frame(top, bg=C["bg"])
         head.pack(fill="x", padx=16, pady=(12, 6))
         info = tk.Label(head, text="", bg=C["bg"], fg=C["muted"], font=(self.ui, 9), anchor="w", justify="left")
@@ -952,6 +963,11 @@ class App:
         tk.Label(head, text="보관 기간 (0 = 자동으로 지우지 않음)", bg=C["bg"], fg=C["muted"], font=(self.ui, 9)).pack(side="right")
         btns = tk.Frame(top, bg=C["bg"])
         btns.pack(side="bottom", fill="x", padx=16, pady=12)
+        pvw = tk.Frame(top, bg=C["bg"])
+        pvw.pack(side="bottom", fill="x", padx=16)
+        pv = tk.Text(pvw, height=11, wrap="word", font=self.fonts["base"], bg=C["panel"], fg=C["text"], relief="flat", bd=0, padx=10, pady=8,
+                     highlightthickness=0, state="disabled")
+        pv.pack(fill="x")
         wrap = tk.Frame(top, bg=C["bg"])
         wrap.pack(fill="both", expand=True, padx=16)
         tv = ttk.Treeview(wrap, columns=("kind", "where", "deleted", "left"), selectmode="extended", show="headings")
@@ -972,6 +988,29 @@ class App:
                 tv.insert("", "end", iid=it["id"], values=("저장 폴더" if it["root"] else "파일 묶음" if it["into"] else "노트북" if it["dir"] else "노트", it["rel"], time.strftime("%Y.%m.%d %H:%M", time.localtime(it["deleted"])), left))
             info.config(text=f"{len(items)}개 — 지운 지 {days}일이 지나면 완전히 지워집니다." if days else f"{len(items)}개 — 자동으로 지우지 않습니다.")
         refresh()
+
+        def show_content(e=None):
+            """고른 항목의 내용(노트면 본문, 노트북이면 안의 파일 이름들)을 아래에 보인다"""
+            sel = tv.selection()
+            it = next((x for x in self.store.trash_items() if sel and x["id"] == sel[0]), None)
+            text = ""
+            if it:
+                try:
+                    if it["dir"] or it["into"]:
+                        names = []
+                        for dp, _d, fn in os.walk(it["path"]):
+                            names += [os.path.relpath(os.path.join(dp, f), it["path"]) for f in fn]
+                        text = f"파일 {len(names):,}개\n" + "\n".join(names[:200])
+                    else:
+                        with open(it["path"], "rb") as fh:
+                            text = st.decode(fh.read(40000))
+                except OSError:
+                    text = "(내용을 읽지 못했습니다)"
+            pv.config(state="normal")
+            pv.delete("1.0", "end")
+            pv.insert("1.0", text)
+            pv.config(state="disabled")
+        tv.bind("<<TreeviewSelect>>", show_content)
 
         def restore():
             sel = tv.selection()
@@ -2282,7 +2321,17 @@ class App:
     def show_empty(self, on):
         if on:
             self.main.pack_forget()
-            if self.nb == CAL and self.feat["cal"]:          # 달력·할일을 골랐으면 노트 자리에 달력과 할일
+            if self.trash_view is not None:
+                self.trash_view.destroy()
+                self.trash_view = None
+            if self.nb == TRASH:                             # 휴지통을 골랐으면 노트 자리에 지운 것들과 내용 미리보기
+                self.empty.pack_forget()
+                if self.planner_view is not None:
+                    self.planner_view.pack_forget()
+                self.trash_view = tk.Frame(self.editf, bg=C["bg"])
+                self.trash_view.pack(fill="both", expand=True)
+                self.show_trash(self.trash_view)
+            elif self.nb == CAL and self.feat["cal"]:        # 달력·할일을 골랐으면 노트 자리에 달력과 할일
                 self.empty.pack_forget()
                 if self.planner_view is None:
                     self.planner_view = PlannerView(self.editf, C, self.ui, self.planner, self.planner_cfg)
@@ -2296,6 +2345,9 @@ class App:
             self.empty.pack_forget()
             if self.planner_view is not None:
                 self.planner_view.pack_forget()
+            if self.trash_view is not None:
+                self.trash_view.destroy()
+                self.trash_view = None
             self.main.pack(fill="both", expand=True)
 
     def planner_cfg(self):
@@ -2410,6 +2462,8 @@ class App:
         """노트북 경로 → 보여 줄 이름 (하위 노트북은 '업무 › 프로젝트')"""
         if key == QUICK:
             return "바로가기"
+        if key == TRASH:
+            return "휴지통"
         if key == CAL:
             return "달력·할일"
         if key == FAVS:
@@ -2512,7 +2566,7 @@ class App:
         """지금 고른 노트북에 속한 노트인가 (하위 노트북의 노트 포함)"""
         if self.nb == ALL:
             return True
-        if self.nb == CAL:
+        if self.nb in (CAL, TRASH):
             return False
         if self.nb == FAVS:
             return self.is_fav(n)
@@ -2532,7 +2586,7 @@ class App:
         doc_keys = (["@docs"] + ["@doc:" + f["id"] for f in dfolders]) if dfolders else []
         smarts = self.smart_list()
         smart_keys = (["@smarts"] + ["@smart:" + s["id"] for s in smarts]) if smarts else []
-        if self.nb not in (ALL, "", FAVS, QUICK, CAL) and self.nb not in names and self.nb not in doc_keys and self.nb not in smart_keys:
+        if self.nb not in (ALL, "", FAVS, QUICK, CAL, TRASH) and self.nb not in names and self.nb not in doc_keys and self.nb not in smart_keys:
             self.nb = ALL
         outl = [n for n in names if n == OUTL or n.startswith(OUTL + "/")] if self.feat["outl"] else []
         quick = ([FAVS] if self.feat["favs"] else []) + outl + ([CAL] if self.feat["cal"] else [])
@@ -2540,7 +2594,7 @@ class App:
             self.nb = ALL
         if self.nb == FAVS and not self.feat["favs"]:
             self.nb = ALL
-        self.nb_keys = [ALL] + ([QUICK] + quick if quick else []) + [""] + [n for n in names if n not in outl] + doc_keys + smart_keys
+        self.nb_keys = [ALL] + ([QUICK] + quick if quick else []) + [""] + [n for n in names if n not in outl] + doc_keys + smart_keys + [TRASH]
         dcounts = self.docs.counts() if dfolders else {}
         direct = {}
         for n in self.all_notes:
@@ -2556,6 +2610,12 @@ class App:
                 label, count, parent = "★ 즐겨찾기", sum(1 for n in self.all_notes if self.is_fav(n)), f"nb{idx[QUICK]}"
             elif key == OUTL:
                 label, count, parent = "아웃라이너", total(key), f"nb{idx[QUICK]}"
+            elif key == TRASH:
+                try:
+                    n_trash = len(os.listdir(self.store.trash_dir))
+                except OSError:
+                    n_trash = 0
+                label, count, parent = "🗑 휴지통", n_trash, ""
             elif key == CAL:
                 label, count, parent = "달력·할일", sum(1 for t in self.planner.todos if not t["done"]), f"nb{idx[QUICK]}"
             elif key == ALL:
@@ -2645,7 +2705,7 @@ class App:
         self.nb_menu_target = key
         m = self.nbmenu
         m.delete(0, "end")
-        if key in (FAVS, QUICK, CAL):
+        if key in (FAVS, QUICK, CAL, TRASH):
             return
         if key.startswith("@smart"):   # 저장된 검색
             if key == "@smarts":
