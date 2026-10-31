@@ -39,7 +39,8 @@ VIDEOS = {"youtube": ("유튜브", "https://www.youtube.com/watch?v={}"),
           "nicovideo": ("니코니코 동화", "https://www.nicovideo.jp/watch/{}"),
           "vimeo": ("비메오", "https://vimeo.com/{}"),
           "kakaotv": ("카카오TV", "https://tv.kakao.com/v/{}"),
-          "navertv": ("네이버TV", "https://tv.naver.com/v/{}")}
+          "navertv": ("네이버TV", "https://tv.naver.com/v/{}"),
+          "file": ("동영상 파일", "{}")}   # <video src="….mp4"> 처럼 주소가 곧 영상 파일
 
 
 def video_url(service, vid):
@@ -53,13 +54,25 @@ def youtube_id(url):
     return m.group(1) if m else None
 
 
+VIDEO_EXT = (".mp4", ".webm", ".mov", ".m4v", ".mkv", ".ogv")
+
+
+def is_video_file(url):
+    """주소가 영상 파일(.mp4 …)을 가리키는가(? 뒤의 값은 무시)"""
+    return url.strip().lower().split("?")[0].split("#")[0].endswith(VIDEO_EXT)
+
+
 def video_label(service):
-    return f"▶ {VIDEOS[service][0]}에서 보기"
+    return "▶ 동영상 재생" if service == "file" else f"▶ {VIDEOS[service][0]}에서 보기"
 
 
 def video_from_link(url, label):
     """['video', 서비스, ID] 를 링크로 쓴 것(주소와 '▶ …에서 보기' 글이 맞을 때)을 영상으로 되돌린다. 아니면 None."""
     for svc, (name, fmt) in VIDEOS.items():
+        if svc == "file":
+            if label == video_label(svc) and is_video_file(url):
+                return ["video", "file", url]
+            continue
         head, tail = fmt.split("{}")
         if label == video_label(svc) and url.startswith(head) and url.endswith(tail) and len(url) > len(head) + len(tail):
             return ["video", svc, url[len(head):len(url) - len(tail) if tail else None]]

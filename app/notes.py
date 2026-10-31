@@ -4603,7 +4603,8 @@ class App:
 
     def open_url(self, url):
         """주소를 연다. 유튜브 영상은 설정에 따라 작은 재생 창(Edge 앱 창, 주소창 없음)으로, 아니면 기본 브라우저로."""
-        if sys.platform == "win32" and st.read_config().get("video_open", "app") == "app" and wikiconv.tree.youtube_id(url):
+        # 유튜브와 영상 파일(.mp4 …)은 주소창 없는 Edge 앱 창으로 연다: 재생 단추·소리·전체 화면이 있는 깨끗한 재생 창이 된다
+        if sys.platform == "win32" and st.read_config().get("video_open", "app") == "app" and (wikiconv.tree.youtube_id(url) or wikiconv.tree.is_video_file(url)):
             for exe in (os.path.expandvars(r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe"),
                         os.path.expandvars(r"%ProgramFiles%\Microsoft\Edge\Application\msedge.exe")):
                 if os.path.isfile(exe):

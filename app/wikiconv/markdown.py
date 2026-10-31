@@ -343,6 +343,7 @@ class Reader:
                 (re.compile(r"<(https?://[^>\s]+)>"), lambda m: ["url", m.group(1), None]),
                 (re.compile(r"https?://[^\s<>]*[^\s<>.,;:!?)\]'\x22]"), lambda m: ["url", html.unescape(m.group(0)), None]),   # 문장 속 맨 주소도 링크로
                 (re.compile(r"\$([^$\n]+?)\$"), lambda m: ["math", m.group(1)]),
+                (re.compile(r'<video\b[^>]*?\bsrc="([^"]+)"[^>]*>(?:\s*</video>)?', re.I | re.S), lambda m: ["video", "file", html.unescape(m.group(1))]),
                 (re.compile(r"<br\s*/?>", re.I), lambda m: ["br"]),
                 (re.compile(r'<a\s[^>]*?href="([^"]*)"[^>]*>(.*?)</a>', re.I | re.S), self.html_link),
                 (re.compile(r"<img\b[^>]*>", re.I), lambda m: html_img(m.group(0))),
