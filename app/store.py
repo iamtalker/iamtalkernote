@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import threading
+from concurrent.futures import ThreadPoolExecutor
 import re
 import secrets
 import sqlite3
@@ -774,21 +775,29 @@ class Store:
                     else:
                         misses.append((key, name, path, stt))
                 batch = []
-                for i, (key, name, path, stt) in enumerate(misses, 1):
+
+                def read_bytes(m):
                     try:
-                        with open(path, "rb") as fh:
-                            body = decode(fh.read())
+                        with open(m[2], "rb") as fh:
+                            return fh.read()
                     except OSError:
-                        continue
-                    row = self._index_row(key, stt, body, md_title(name))
-                    batch.append(row)
-                    info[key] = (row[3], row[4], set(json.loads(row[5])))
-                    if len(batch) >= 200:
-                        conn.executemany("INSERT OR REPLACE INTO notes VALUES (?,?,?,?,?,?,?)", batch)
-                        conn.commit()
-                        batch = []
-                    if progress and (i % 50 == 0 or i == len(misses)):
-                        progress(i, len(misses))
+                        return None
+                # 파일 열기는 기다리는 시간이 대부분이라(윈도 백신 검사 등) 여러 개를 동시에 읽는다. 메모리를 아끼려고 400개씩 끊어서
+                with ThreadPoolExecutor(max_workers=8) as pool:
+                    for c0 in range(0, len(misses), 400):
+                        chunk = misses[c0:c0 + 400]
+                        for off, ((key, name, path, stt), data) in enumerate(zip(chunk, pool.map(read_bytes, chunk))):
+                            i = c0 + off + 1
+                            if data is not None:
+                                row = self._index_row(key, stt, decode(data), md_title(name))
+                                batch.append(row)
+                                info[key] = (row[3], row[4], set(json.loads(row[5])))
+                                if len(batch) >= 200:
+                                    conn.executemany("INSERT OR REPLACE INTO notes VALUES (?,?,?,?,?,?,?)", batch)
+                                    conn.commit()
+                                    batch = []
+                            if progress and (i % 50 == 0 or i == len(misses)):
+                                progress(i, len(misses))
                 if batch:
                     conn.executemany("INSERT OR REPLACE INTO notes VALUES (?,?,?,?,?,?,?)", batch)
                 stale = set(cached) - {x[0] for x in entries}
