@@ -1749,6 +1749,7 @@ class App:
         f = tkfont.Font(family=self.ui, size=10)
         w = max([f.measure(t) for t in texts] + [24]) + 28
         tree.column("n", width=w, minwidth=w, stretch=False)
+        tree.config(displaycolumns=())   # 숫자는 칸을 따로 두지 않고 이름 바로 뒤에 붙여 보인다(창을 늘려도 멀어지지 않게)
 
     def make_tree(self, parent):
         wrap = tk.Frame(parent, bg=C["bg"])
@@ -2686,7 +2687,7 @@ class App:
                 label, count = self.nb_short(key), total(key)
                 # 최상위 노트북은 저장 폴더 항목(scrapbook) 아래에 들여써서 보여 준다
                 parent = f"nb{idx[key.rsplit('/', 1)[0]]}" if "/" in key else f"nb{idx['']}"
-            self.nbtree.insert(parent, "end", iid=f"nb{i}", text="  " + label, values=("" if count is None else f"{count:,}",), open=True)
+            self.nbtree.insert(parent, "end", iid=f"nb{i}", text="  " + label + ("" if count is None else f"   {count:,}"), values=("" if count is None else f"{count:,}",), open=True)
         self.nbtree.selection_set(f"nb{idx[self.nb]}")
         texts = []
 
@@ -2712,7 +2713,7 @@ class App:
         self.quiet = True
         self.tagtree.delete(*self.tagtree.get_children())
         for i, t in enumerate(self.tag_keys):
-            self.tagtree.insert("", "end", iid=f"tg{i}", text="  # " + t, values=(f"{counts[t]:,}",))
+            self.tagtree.insert("", "end", iid=f"tg{i}", text="  # " + t + f"   {counts[t]:,}", values=(f"{counts[t]:,}",))
         if self.tag in self.tag_keys:
             self.tagtree.selection_set(f"tg{self.tag_keys.index(self.tag)}")
         self.fit_count(self.tagtree, [f"{c:,}" for c in list(counts.values())[:200]])
