@@ -520,7 +520,7 @@ def tab(app, p, kit):
         hr(body)
         ver = lab(body, "", fg=C["muted"], font=(app.ui, 9), wraplength=440)
         ver.pack(anchor="w")
-        prog = lab(body, "", fg=C["muted"], font=(app.ui, 9), wraplength=440, justify="left")
+        prog = lab(body, "", fg=C["muted"], font=(app.ui, 9), wraplength=440)
         prog.pack(anchor="w", pady=(2, 0))
         etas = {"e": syncprogress.Eta()}
 
@@ -552,7 +552,8 @@ def tab(app, p, kit):
                         stage = ""
                         if plan and stagesync.enabled(state["policy"]):
                             stage = "열린 단계 %d / %d\n" % (min(stagesync.released(), len(plan["tiers"])), len(plan["tiers"]))
-                        prog.config(text=stage + "폰 받기: " + syncprogress.line(pp[0], pp[1], pp[2], pp[3], etas["e"].update(pp[3])))
+                        all_n = sum(len(t["files"]) for t in plan["tiers"]) if plan else 0
+                        prog.config(text=stage + "폰 받기: " + syncprogress.line(pp[0], pp[1], pp[2], pp[3], etas["e"].update(pp[3]), all_n))
                     states = [s for s, _ in ov["folders"].values()]
                     busy = sum(1 for s in states if s not in ("idle", "?"))
                     status.config(text=f"실행 중 · 연결된 기기 {ov['connected']}/{ov['peers']}" + (f" · 맞추는 중 {busy}개" if busy else " · 모두 최신"), fg="#15803d")

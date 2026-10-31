@@ -26,5 +26,7 @@ check("용량 글자", spg.size(12 << 20) == "12MB" and spg.size(3 << 29) == "1.
 s = spg.line(1000, 250, 1 << 30, 1 << 28, 0)
 check("줄: 개수·퍼센트·용량", "전체 1000개" in s and "받음 750개" in s and "남음 250개" in s and "75%" in s and "속도" not in s)
 check("줄: 속도 있으면 시간도", "남은 시간" in spg.line(1000, 250, 1 << 30, 1 << 28, 1 << 20))
+s2 = spg.line(1000, 250, 1 << 30, 1 << 28, 0, 5000)
+check("전체 파일 수 기준: 5,000 중 750 받음 15%", "전체 5,000개" in s2 and "받음 750개" in s2 and "남음 4,250개" in s2 and "15%" in s2)
 print("통과" if not fails else "실패 %d" % fails)
 sys.exit(1 if fails else 0)

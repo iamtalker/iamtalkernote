@@ -45,9 +45,18 @@ def remaining(need_bytes, rate):
     return "약 %d일 %d시간" % (sec // 86400, sec % 86400 // 3600)
 
 
-def line(total_files, need_files, total_bytes, need_bytes, rate):
-    """'파일 전체 N개 · 받음 M개 · 남음 K개 · P% · 용량 a / b · 속도 · 남은 시간'"""
+def line(total_files, need_files, total_bytes, need_bytes, rate, all_files=0):
+    """'파일 전체 N개 · 받음 M개 · 남음 K개 · P% · 용량 a / b · 속도 · 남은 시간'.
+    all_files(숨긴 단계까지 합친 전체 파일 수)를 주면 전체·남음·퍼센트를 그 기준으로 센다(받음은 지금 열린 범위에서 센 값)"""
     got = max(total_files - need_files, 0)
+    if all_files > 0:
+        all_files = max(all_files, got)
+        s = "파일 전체 %s개 · 받음 %s개 · 남음 %s개 · %d%% · 이번 단계 용량 %s / %s" % (
+            format(all_files, ","), format(got, ","), format(all_files - got, ","), got * 100 // all_files,
+            size(max(total_bytes - need_bytes, 0)), size(total_bytes))
+        if need_bytes > 0 and rate > 0:
+            s += " · 속도 %s/초 · 이번 단계 남은 시간 %s" % (size(int(rate)), remaining(need_bytes, rate))
+        return s
     pct = int((total_bytes - need_bytes) * 100 / total_bytes) if total_bytes > 0 else 100
     s = "파일 전체 %d개 · 받음 %d개 · 남음 %d개 · %d%% · 용량 %s / %s" % (total_files, got, need_files, pct, size(max(total_bytes - need_bytes, 0)), size(total_bytes))
     if need_bytes > 0 and rate > 0:
