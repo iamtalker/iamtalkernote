@@ -1,5 +1,6 @@
-"""하단 태그 입력칸 자동완성: 치고 있는 낱말에 맞는 기존 태그를 입력칸 위 작은 목록으로 보여 주고, ↓↑ 로 고르고 Tab/Enter/클릭으로 넣는다.
-후보 계산(suggest 등)은 화면을 모르는 순수 함수라 따로 시험한다."""
+"""하단 태그 입력(조플린의 '태그 추가 및 제거' 같은 방식): 태그를 치고 Enter 하면 칩(태그 + ×)으로 쌓이고 입력칸은 다음 태그를 받는다.
+[확인] 을 눌러야 한꺼번에 노트에 들어가고 [취소] 는 아무것도 바꾸지 않는다. 치는 동안 기존 태그를 후보 목록으로 보여 주고(↓↑ Tab Enter 클릭),
+오른쪽 ▾ 를 누르면 모든 태그를 펼친다. 후보 계산(suggest 등)은 화면을 모르는 순수 함수라 따로 시험한다."""
 import re
 import tkinter as tk
 
@@ -11,7 +12,7 @@ def current_token(text):
 
 
 def suggest(counts, token, have=(), limit=8):
-    """counts {태그: 개수}, token 치는 중인 낱말, have 이미 입력칸에 있는 태그 → 후보 태그 목록.
+    """counts {태그: 개수}, token 치는 중인 낱말, have 이미 넣은 태그 → 후보 태그 목록.
     앞부분이 같은 것이 먼저, 그다음 글자가 들어 있는 것. 각각 많이 쓴 순. 낱말이 비었으면 많이 쓴 태그를 보여 준다"""
     key = token.lstrip("#").lower()
     have_l = {h.lower() for h in have}
@@ -29,16 +30,25 @@ def tags_in(text):
     return [t.lstrip("#") for t in re.split(r"[,\s]+", text) if t.lstrip("#")]
 
 
+def clean(tok):
+    """입력한 낱말을 태그 이름으로 정리한다(앞의 # 떼기). 쓸 수 없으면 ''"""
+    t = tok.strip().lstrip("#").strip()
+    if not t or len(t) > 30 or re.search(r"[\[\]()/<>]", t):
+        return ""
+    return t
+
+
 def complete(text, start, tag):
     """text 의 start 부터 끝까지(치던 낱말)를 '#태그 ' 로 바꾼다"""
     return text[:start] + "#" + tag + " "
 
 
 class TagComplete:
-    """tk.Entry 위에 띄우는 태그 후보 목록. get_counts() → {태그: 개수}, get_extra() → 한글 조합 중인 글자(없으면 빈 글)"""
+    """tk.Entry 위에 띄우는 태그 후보 목록. on_pick(tag) 를 주면 고른 태그를 입력칸 글이 아니라 그 함수로 넘긴다(칩 추가용)."""
 
-    def __init__(self, entry, get_counts, colors, font, get_extra=lambda: ""):
+    def __init__(self, entry, get_counts, colors, font, get_extra=lambda: "", get_have=lambda: (), on_pick=None):
         self.ent, self.get_counts, self.C, self.font, self.get_extra = entry, get_counts, colors, font, get_extra
+        self.get_have, self.on_pick = get_have, on_pick
         self.pop = None
         self.lb = None
         self.items = []
@@ -57,10 +67,10 @@ class TagComplete:
             return
         self.refresh()
 
-    def refresh(self):
+    def refresh(self, everything=False):
         text = self.ent.get() + self.get_extra()
         start, tok = current_token(text)
-        self.items = suggest(self.get_counts(), tok, tags_in(text[:start]))
+        self.items = suggest(self.get_counts(), tok, list(tags_in(text[:start])) + list(self.get_have()), limit=40 if everything else 8)
         if not self.items:
             return self.close()
         if self.pop is None:
@@ -70,19 +80,27 @@ class TagComplete:
             self.lb = tk.Listbox(self.pop, relief="flat", bd=0, highlightthickness=1, highlightbackground=self.C["line"], bg=self.C["panel"], fg=self.C["text"],
                                  selectbackground=self.C["soft"], selectforeground=self.C["text"], activestyle="none", exportselection=False,
                                  font=self.font, takefocus=0)
-            self.lb.pack()
+            self.lb.pack(fill="both", expand=True)
             self.lb.bind("<ButtonPress-1>", lambda e: setattr(self, "clicking", True))
             self.lb.bind("<ButtonRelease-1>", self._clicked)
         self.lb.delete(0, "end")
         counts = self.get_counts()
         for t in self.items:
             self.lb.insert("end", f"#{t}   ({counts.get(t, 0):,})")
-        self.lb.configure(height=len(self.items))
+        self.lb.configure(height=min(len(self.items), 12))
         self.lb.selection_clear(0, "end")
         self.pop.update_idletasks()
-        w = max(self.ent.winfo_width(), self.lb.winfo_reqwidth())
+        w = max(self.ent.winfo_width(), self.lb.winfo_reqwidth(), 220)
         h = self.lb.winfo_reqheight()
         self.pop.geometry(f"{w}x{h}+{self.ent.winfo_rootx()}+{self.ent.winfo_rooty() - h - 2}")   # 입력칸 바로 위(맨 아래 줄이라 아래는 화면 밖)
+
+    def toggle_all(self):
+        """▾ 버튼: 모든 태그 목록을 펼치거나 접는다"""
+        if self.visible():
+            self.close()
+        else:
+            self.ent.focus_set()
+            self.refresh(everything=True)
 
     def close(self):
         if self.pop is not None:
@@ -112,17 +130,21 @@ class TagComplete:
         return "break"
 
     def accept(self, tag=None):
-        """고른(또는 첫) 후보를 입력칸에 넣는다. 넣었으면 True"""
+        """고른(또는 첫) 후보를 넣는다. 넣었으면 True"""
         tag = tag or self._selected()
         if tag is None:
             return False
         text = self.ent.get()
         start, _tok = current_token(text)
-        self.ent.delete(0, "end")
-        self.ent.insert(0, complete(text, start, tag))
-        self.ent.icursor("end")
+        if self.on_pick:                     # 칩으로 추가: 치던 낱말은 지우고 태그만 넘긴다
+            self.ent.delete(start, "end")
+            self.on_pick(tag)
+        else:
+            self.ent.delete(0, "end")
+            self.ent.insert(0, complete(text, start, tag))
+            self.ent.icursor("end")
         self.ent.focus_set()
-        self.refresh()          # 이어서 다음 태그를 칠 수 있게 후보를 다시 계산
+        self.refresh()
         return True
 
     def _tab(self):
@@ -140,7 +162,141 @@ class TagComplete:
         return "break"
 
     def on_return(self):
-        """Enter: 목록에서 고른 것이 있으면 그것을 넣고 True(저장하지 않는다), 없으면 False(저장)"""
+        """Enter: 목록에서 고른 것이 있으면 그것을 넣고 True, 없으면 False"""
         if self.visible() and self._selected() is not None:
             return self.accept()
         return False
+
+
+class TagBox(tk.Frame):
+    """하단에 붙는 작은 박스: '태그 추가 및 제거:' [칩 칩 … 입력칸 ▾]  [확인] [취소].
+    initial 태그들이 칩으로 먼저 보이고(× 로 뺄 수 있다), 새 태그는 Enter(또는 공백·쉼표)로 칩이 된다.
+    [확인] → on_confirm(태그 목록), [취소]·Esc → on_cancel(). 빈 입력칸에서 Enter 도 확인이다."""
+
+    def __init__(self, parent, initial, get_counts, colors, font, on_confirm, on_cancel, make_button, get_extra=lambda: ""):
+        C = self.C = colors
+        super().__init__(parent, bg=C["bg"])
+        self.font = font
+        self.tags = []
+        self.on_confirm, self.on_cancel = on_confirm, on_cancel
+        self._chips = {}
+        tk.Frame(self, height=1, bg=C["line"]).pack(fill="x")
+        row = tk.Frame(self, bg=C["bg"])
+        row.pack(fill="x", padx=14, pady=(8, 2))
+        tk.Label(row, text="태그 추가 및 제거:", bg=C["bg"], fg=C["muted"], font=font).pack(side="left")
+        self.field = tk.Frame(row, bg=C["panel"], highlightthickness=1, highlightbackground=C["line"], highlightcolor=C["accent"])
+        self.field.pack(side="left", fill="x", expand=True, padx=(8, 0))
+        arrow = tk.Label(self.field, text="▾", bg=C["panel"], fg=C["muted"], font=font, cursor="hand2", padx=8)
+        arrow.pack(side="right", fill="y")
+        self.flow = tk.Frame(self.field, bg=C["panel"], height=28)
+        self.flow.pack(side="left", fill="x", expand=True)
+        self.flow.pack_propagate(False)
+        self.ent = tk.Entry(self.flow, relief="flat", bg=C["panel"], fg=C["text"], insertbackground=C["accent"], highlightthickness=0, font=font, width=14)
+        btns = tk.Frame(self, bg=C["bg"])
+        btns.pack(fill="x", padx=14, pady=(2, 8))
+        make_button(btns, "취소", self.cancel, padx=14, pady=3).pack(side="right")
+        make_button(btns, "확인", self.confirm, kind="primary", padx=14, pady=3).pack(side="right", padx=(0, 6))
+        tk.Label(btns, text="Enter: 태그 추가 · 빈 칸에서 Enter: 확인 · Esc: 취소", bg=C["bg"], fg=C["muted"], font=(font[0], max(font[1] - 1, 7))).pack(side="left")
+        self.ac = TagComplete(self.ent, get_counts, colors, font, get_extra, get_have=lambda: self.tags, on_pick=self.add)
+        arrow.bind("<Button-1>", lambda e: self.ac.toggle_all())
+        self.ent.bind("<Return>", lambda e: self._enter())
+        self.ent.bind("<KP_Enter>", lambda e: self._enter())
+        self.ent.bind("<Escape>", lambda e: self._escape())
+        self.ent.bind("<BackSpace>", lambda e: self._backspace())
+        self.ent.bind("<KeyRelease>", lambda e: self._split(), add="+")
+        self.flow.bind("<Configure>", lambda e: self.reflow())
+        self.flow.bind("<Button-1>", lambda e: self.ent.focus_set())
+        for t in initial:
+            self.add(t, refresh=False)
+        self.reflow()
+
+    # ---- 칩
+    def add(self, tag, refresh=True):
+        t = clean(tag)
+        if not t or t in self.tags:
+            return False
+        self.tags.append(t)
+        chip = tk.Frame(self.flow, bg=self.C["soft"], padx=6)
+        tk.Label(chip, text=t, bg=self.C["soft"], fg=self.C["text"], font=self.font).pack(side="left", pady=2)
+        x = tk.Label(chip, text="×", bg=self.C["soft"], fg=self.C["muted"], font=self.font, cursor="hand2", padx=2)
+        x.pack(side="left")
+        x.bind("<Button-1>", lambda e, t=t: self.remove(t))
+        x.bind("<Enter>", lambda e: x.config(fg="#d33"))
+        x.bind("<Leave>", lambda e: x.config(fg=self.C["muted"]))
+        self._chips[t] = chip
+        if refresh:
+            self.reflow()
+        return True
+
+    def remove(self, tag):
+        if tag in self.tags:
+            self.tags.remove(tag)
+            self._chips.pop(tag).destroy()
+            self.reflow()
+            self.ent.focus_set()
+
+    def reflow(self):
+        """칩과 입력칸을 한 줄씩 채워 가며 놓는다(넘치면 다음 줄)"""
+        width = max(self.flow.winfo_width(), 200)
+        x = y = 0
+        row_h = 26
+        for t in self.tags:
+            c = self._chips[t]
+            w = c.winfo_reqwidth()
+            if x and x + w > width:
+                x, y = 0, y + row_h
+            c.place(x=x, y=y)
+            x += w + 4
+        ew = 120
+        if x and x + ew > width:
+            x, y = 0, y + row_h
+        self.ent.place(x=x + 2, y=y, width=max(ew, width - x - 4), height=24)
+        self.flow.configure(height=y + row_h + 2)
+
+    # ---- 입력
+    def _split(self):
+        """공백·쉼표로 끝나면 그 낱말을 칩으로 만든다"""
+        text = self.ent.get()
+        if text and text[-1] in " ,":
+            for tok in re.split(r"[,\s]+", text):
+                self.add(tok)
+            self.ent.delete(0, "end")
+
+    def _enter(self):
+        if self.ac.on_return():
+            return "break"
+        text = self.ent.get().strip()
+        if text:
+            for tok in re.split(r"[,\s]+", text):
+                self.add(tok)
+            self.ent.delete(0, "end")
+            self.ac.close()
+        else:
+            self.confirm()
+        return "break"
+
+    def _backspace(self):
+        if not self.ent.get() and self.tags:       # 빈 칸에서 지우면 마지막 칩을 뺀다
+            self.remove(self.tags[-1])
+            return "break"
+        return None
+
+    def _escape(self):
+        if self.ac.visible():
+            self.ac.close()
+        else:
+            self.cancel()
+        return "break"
+
+    # ---- 끝내기
+    def confirm(self):
+        text = self.ent.get().strip()               # 치다 만 낱말도 버리지 않고 함께 넣는다
+        for tok in re.split(r"[,\s]+", text):
+            self.add(tok, refresh=False)
+        self.on_confirm(list(self.tags))
+
+    def cancel(self):
+        self.on_cancel()
+
+    def close(self):
+        self.ac.close()

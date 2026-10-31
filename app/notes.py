@@ -2122,8 +2122,9 @@ class App:
         self.tagbtn.bind("<Button-1>", self.edit_tags)
         self.tagbtn.bind("<Enter>", lambda e: self.tagbtn.config(font=(self.ui, 9, "underline")))
         self.tagbtn.bind("<Leave>", lambda e: self.tagbtn.config(font=(self.ui, 9)))
-        self.tag_edit = None   # 태그를 고치는 중이면 (입력칸, 안내 라벨)
-        tk.Frame(self.main, height=1, bg=C["line"]).pack(side="bottom", fill="x")
+        self.tag_edit = None   # 태그를 고치는 중이면 그 하단 박스(tagac.TagBox)
+        self.status_sep = tk.Frame(self.main, height=1, bg=C["line"])
+        self.status_sep.pack(side="bottom", fill="x")
         self.body = tk.Frame(self.main, bg=C["panel"])
         self.body.pack(fill="both", expand=True)
         self.body.grid_rowconfigure(0, weight=1)
@@ -3198,62 +3199,28 @@ class App:
                 self.tagbtn.config(text=shown or "# 태그 추가", fg=C["accent"] if tags else C["muted"])
 
     def edit_tags(self, e=None):
-        """맨 아래 줄의 태그를 누르면 그 자리에 입력칸이 열린다: 공백이나 쉼표로 나눠 쓰고 Enter 로 저장, Esc 로 취소"""
+        """맨 아래 줄의 태그를 누르면 하단에 작은 박스가 열린다(조플린의 '태그 추가 및 제거'): 태그를 치고 Enter 하면 칩으로 쌓이고 다음 태그를 받는다.
+        [확인] 을 눌러야 한꺼번에 들어가고 [취소](Esc)는 아무것도 바꾸지 않는다. 이미 있는 태그도 칩으로 보이며 × 로 뺀다."""
         if not self.cur or self.tag_edit:
             return
         self.flush()
-        tags = sorted(self.cur.get("tags", ()))
-        var = tk.StringVar(value=" ".join("#" + t for t in tags) + (" " if tags else "#"))
-        ent = tk.Entry(self.statusbar, textvariable=var, width=36, relief="flat", bg=C["panel"], fg=C["text"], insertbackground=C["accent"],
-                       highlightthickness=1, highlightbackground=C["line"], highlightcolor=C["accent"], font=(self.ui, 9))
-        hint = tk.Label(self.statusbar, text="Enter 저장 · Esc 취소", bg=C["bg"], fg=C["muted"], font=(self.ui, 8), padx=8)
+        box = tagac.TagBox(self.main, sorted(self.cur.get("tags", ())), self.ac_tags, C, (self.ui, 9),
+                           lambda tags: self.finish_tags(True, tags), lambda: self.finish_tags(False), Btn, ime.composing)
+        box.pack(side="bottom", fill="x", after=self.status_sep)   # 맨 아래 상태줄 바로 위
         self.tagbtn.pack_forget()
-        ent.pack(side="left", pady=2, ipady=1)
-        hint.pack(side="left")
-        self.tag_edit = (ent, hint)
-        ent.focus_set()
-        ent.icursor("end")
-        self.tag_ac = tagac.TagComplete(ent, self.ac_tags, C, (self.ui, 9), ime.composing)   # 치는 낱말에 맞는 기존 태그 목록(↓↑ Tab Enter 클릭)
-        ent.bind("<Return>", lambda e: self.tag_return())
-        ent.bind("<KP_Enter>", lambda e: self.tag_return())
-        ent.bind("<Escape>", lambda e: self.tag_escape())
-        ent.bind("<FocusOut>", lambda e: self.root.after(150, self.tag_focus_lost))
-        self.tag_ac.refresh()
+        self.tag_edit = box
+        box.ent.focus_set()
 
-    def tag_return(self):
-        """Enter: 후보 목록에서 고른 태그가 있으면 그것을 넣고, 없으면 저장한다"""
-        if not self.tag_ac.on_return():
-            self.finish_tags(True)
-        return "break"
-
-    def tag_escape(self):
-        """Esc: 후보 목록이 떠 있으면 목록만 닫고, 아니면 태그 고치기를 취소한다"""
-        if self.tag_ac.visible():
-            self.tag_ac.close()
-        else:
-            self.finish_tags(False)
-        return "break"
-
-    def tag_focus_lost(self):
-        """입력칸이 포커스를 잃으면 저장하되, 후보 목록을 누르는 중이거나 포커스가 돌아왔으면 그대로 둔다"""
-        if not self.tag_edit or self.tag_ac.clicking:
+    def finish_tags(self, save, tags=None):
+        box = self.tag_edit
+        if not box:
             return
-        if self.root.focus_get() is self.tag_edit[0]:
-            return
-        self.finish_tags(True)
-
-    def finish_tags(self, save):
-        if not self.tag_edit:
-            return
-        ent, hint = self.tag_edit
-        self.tag_edit = None          # FocusOut 이 되풀이로 불리지 않게 먼저 비운다
-        self.tag_ac.close()
-        value = ent.get()
-        ent.destroy()
-        hint.destroy()
+        self.tag_edit = None
+        box.close()
+        box.destroy()
         self.tagbtn.pack(side="left")
-        if save and self.cur:
-            self.apply_tags(value)
+        if save and self.cur and tags is not None:
+            self.apply_tags(" ".join("#" + t for t in tags))
         self.update_status()
         if self.cur:
             (self.text if self.mode != "view" else self.lst).focus_set()
