@@ -84,6 +84,38 @@ for _ in range(10):
     app.root.update()
 check("위키 꺼짐: [[ ]] 는 링크가 아님", not app.view.tag_ranges("link"))
 
+# --- 백링크·자동완성 (위키 다시 켬)
+st.write_config(wikiEnabled=True)
+put("링크원.md", "[[회의록]] 를 봄", now)
+app.reload_notes()
+for _ in range(60):
+    app.root.update()
+    time.sleep(0.03)
+lm = app.store.wiki_links()
+check("링크가 든 노트 모음", any("링크원" in k for k in lm))
+check("백링크 계산", any("링크원" in k for k in notes.wikilinks.backlinks(lm, "회의록")))
+bn = next(x for x in app.all_notes if x["title"] == "링크원")
+app.open_note(bn)
+app.mode = "edit"
+app.text.delete("1.0", "end")
+app.text.insert("1.0", "시작 [[회")
+app.text.mark_set("insert", "end-1c")
+app.wiki_typed()
+check("[[회 → 후보 목록이 뜸", app.wiki_pop is not None and app.wiki_pop.size() >= 1 and app.wiki_pop.get(0).startswith("회의록"))
+app.wiki_pick()
+got = app.text.get("1.0", "end-1c")
+check("고르면 제목과 ]] 가 들어감", got.startswith("시작 [[회의록") and got.endswith("]]") and got.count("]]") == 1)
+check("목록이 닫힘", app.wiki_pop is None)
+
+app.open_note(next(x for x in app.all_notes if x["title"] == "회의록" and x["path"].endswith(os.path.join("B", "회의록.md"))))
+app.show_links()
+for _ in range(40):
+    app.root.update()
+    time.sleep(0.03)
+tops = [w for w in app.root.winfo_children() if w.winfo_class() == "Toplevel"]
+lbs = [c for c in tops[-1].winfo_children() if c.winfo_class() == "Listbox"]
+check("연결 창: 이 노트를 가리키는 노트에 링크원이 뜸", lbs and "링크원" in lbs[0].get(0, "end"))
+
 app.root.destroy()
 print("실패 %d" % fails if fails else "전부 통과")
 sys.exit(1 if fails else 0)

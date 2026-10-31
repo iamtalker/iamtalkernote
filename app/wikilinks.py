@@ -59,3 +59,29 @@ def free_title(base, titles, own=None):
         name = f"{base} ({i})"
         i += 1
     return name
+
+
+def open_token(before):
+    """커서 앞의 글(그 줄)에서 아직 닫히지 않은 '[[' 뒤에 치던 글 → (시작 위치, 치던 글). 없으면 None"""
+    i = before.rfind("[[")
+    if i < 0:
+        return None
+    rest = before[i + 2:]
+    if any(c in rest for c in "[]|#"):
+        return None
+    return i + 2, rest
+
+
+def suggest(notes, prefix, limit=8):
+    """제목 후보: 앞부분이 같은 것 → 글자가 들어 있는 것, 각각 최근 노트 순. 제목마다 하나만"""
+    key = norm(prefix)
+    pool = sorted(index(notes).values(), key=lambda n: -(n.get("mtime") or 0))
+    first = [n["title"] for n in pool if norm(n["title"]).startswith(key)]
+    rest = [n["title"] for n in pool if key in norm(n["title"]) and not norm(n["title"]).startswith(key)]
+    return (first + rest)[:limit]
+
+
+def backlinks(link_map, title):
+    """link_map {경로: [링크 제목들]} 에서 title 을 가리키는 경로들"""
+    k = norm(title)
+    return sorted(p for p, ts in link_map.items() if any(norm(t) == k for t in ts))

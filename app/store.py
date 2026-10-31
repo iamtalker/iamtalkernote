@@ -847,6 +847,21 @@ class Store:
         finally:
             conn.close()
 
+    def wiki_links(self):
+        """[[ ]] 링크가 든 노트의 {경로키: [링크 제목들]} (색인에 둔 본문을 훑음. 화면을 막지 않게 쓰레드에서 부른다)"""
+        out = {}
+        conn = self._db()
+        try:
+            for k, hay in conn.execute("SELECT path, hay FROM notes WHERE instr(hay, x'5b5b') > 0"):
+                ts = [t for t, _, _ in wikilinks.links_in(bytes(hay).decode("utf-8", "ignore"))]
+                if ts:
+                    out[k] = ts
+        except sqlite3.Error:
+            pass
+        finally:
+            conn.close()
+        return out
+
     def create_note(self, nb, title="제목 없음", body=""):
         d = self.nb_dir(nb)
         os.makedirs(d, exist_ok=True)

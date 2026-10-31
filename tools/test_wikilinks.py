@@ -37,5 +37,11 @@ check("겹침 판정", wl.taken("회의록", titles) and wl.taken("  회의록",
 check("자기 자신은 겹침 아님", not wl.taken("회의록", titles, own="a.md"))
 check("겹치지 않는 제목 만들기", wl.free_title("회의록", titles) == "회의록 (3)" and wl.free_title("새", titles) == "새")
 
+check("[[ 뒤 치는 글", wl.open_token("앞 [[회의") == (4, "회의") and wl.open_token("[[") == (2, ""))
+check("닫혔거나 [[ 가 없으면 None", wl.open_token("[[a]] 뒤") is None and wl.open_token("그냥") is None and wl.open_token("[[a|b") is None)
+check("후보: 앞부분 먼저, 최근 순, 제목당 하나", wl.suggest(notes, "회") == ["회의록"] and wl.suggest(notes + [{"title": "오늘 회의", "mtime": 400, "path": "z"}], "회") == ["회의록", "오늘 회의"])
+check("빈 글이면 최근 순", wl.suggest(notes, "")[0] == "회의록")
+check("백링크 찾기", wl.backlinks({"a": ["회의록", "x"], "b": ["Y"], "c": [" 회의록"]}, "회의록") == ["a", "c"])
+
 print("실패 %d" % fails if fails else "전부 통과")
 sys.exit(1 if fails else 0)
