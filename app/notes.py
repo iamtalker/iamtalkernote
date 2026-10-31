@@ -1838,8 +1838,11 @@ class App:
         self.count = tk.Label(f, text="", anchor="w", bg=C["bg"], fg=C["muted"], font=(self.ui, 9), padx=16)
         self.count.pack(fill="x", pady=(6, 4))
         self.update_content_check()
-        tk.Frame(f, height=1, bg=C["line"]).pack(fill="x")
-        body = tk.Frame(f, bg=C["bg"])
+        self.list_sep = tk.Frame(f, height=1, bg=C["line"])
+        self.list_sep.pack(fill="x")
+        self.folder_box = tk.Frame(f, bg=C["bg"])   # 노트북을 고르면 그 안의 하위 노트북(폴더)이 노트 목록 맨 위에 뜬다(누르면 그 노트북으로)
+        self.nb_direct = {}
+        body = self.list_body = tk.Frame(f, bg=C["bg"])
         body.pack(fill="both", expand=True)
         self.lst = tk.Text(body, wrap="word", cursor="arrow", relief="flat", bd=0, highlightthickness=0, bg=C["bg"],
                            fg=C["text"], font=self.fonts["base"], padx=0, pady=0, state="disabled", exportselection=False)
@@ -2600,6 +2603,7 @@ class App:
         direct = {}
         for n in self.all_notes:
             direct[n["nb"]] = direct.get(n["nb"], 0) + 1
+        self.nb_direct = direct
         total = lambda key: sum(c for k, c in direct.items() if k == key or k.startswith(key + "/"))  # noqa: E731
         self.quiet = True
         self.nbtree.delete(*self.nbtree.get_children())
@@ -2941,7 +2945,37 @@ class App:
                                            docidx.Combined(self.store, self.docs) if self.scope_all() else self.store)
         self.draw_list(keep_scroll=keep_page)
 
+    def update_folder_rows(self):
+        """고른 노트북 바로 아래의 하위 노트북을 노트 목록 맨 위에 폴더 줄로 보인다(저장 폴더를 고르면 ScrapBook 같은 노트북들)"""
+        box = self.folder_box
+        kids = []
+        if self.nb == "" or (self.nb and not self.nb.startswith("@") and self.nb != ALL):
+            depth = self.nb.count("/") + 1 if self.nb else 0
+            kids = [k for k in self.nb_keys if k and not k.startswith("@") and k != ALL and k.count("/") == depth
+                    and (not self.nb or k.startswith(self.nb + "/")) and not (self.feat["outl"] and (k == OUTL or k.startswith(OUTL + "/")))]
+        sig = (self.nb, tuple(kids), tuple(self.nb_direct.get(k, 0) for k in kids))
+        if getattr(self, "_folder_sig", None) == sig:
+            return
+        self._folder_sig = sig
+        for w in box.winfo_children():
+            w.destroy()
+        if not kids:
+            box.pack_forget()
+            return
+        box.pack(fill="x", before=self.list_body, pady=(4, 2))
+        for k in kids[:12]:
+            n = sum(c for kk, c in self.nb_direct.items() if kk == k or kk.startswith(k + "/"))
+            lb = tk.Label(box, text=f"📁  {self.nb_short(k)}", anchor="w", bg=C["bg"], fg=C["accent"], font=(self.ui, 10), padx=18, pady=3, cursor="hand2")
+            lb.pack(fill="x", side="top")
+            tk.Label(lb, text=f"{n:,}", bg=C["bg"], fg=C["muted"], font=(self.ui, 9)).pack(side="right", padx=14)
+            lb.bind("<Button-1>", lambda e, k=k: self.go_nb(k))
+            lb.bind("<Enter>", lambda e, lb=lb: lb.config(bg=C["soft"]))
+            lb.bind("<Leave>", lambda e, lb=lb: lb.config(bg=C["bg"]))
+        if len(kids) > 12:
+            tk.Label(box, text=f"… 외 폴더 {len(kids) - 12}개 (왼쪽 노트북 목록에서 고르세요)", anchor="w", bg=C["bg"], fg=C["muted"], font=(self.ui, 9), padx=18).pack(fill="x")
+
     def draw_list(self, keep_scroll=False):
+        self.update_folder_rows()
         total = len(self.results)
         searching = self.q.get().strip() or self.d_from.get().strip() or self.d_to.get().strip() or self.tag or self.fav_only
         unit = "파일" if self.scope_all() or self.nb.startswith("@doc") else "노트"

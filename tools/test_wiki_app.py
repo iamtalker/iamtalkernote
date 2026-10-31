@@ -263,6 +263,33 @@ check("휴지통은 검색에 안 잡힘", not any(n["title"] == "지울노트" 
 app.go_nb(notes.ALL)
 check("다른 항목을 고르면 휴지통 화면이 사라짐", app.trash_view is None)
 
+# --- 노트북을 고르면 하위 노트북이 노트 목록에 폴더 줄로 뜸
+os.makedirs(os.path.join(vault, "A", "하위"), exist_ok=True)
+app.go_nb("")
+for _ in range(60):
+    app.root.update()
+    time.sleep(0.02)
+rows = [w for w in app.folder_box.winfo_children() if w.winfo_class() == "Label"]
+names_ = [w.cget("text") for w in rows]
+check("저장 폴더를 고르면 안의 노트북(A·B…)이 목록 맨 위에 폴더 줄로", app.folder_box.winfo_ismapped() and any("A" in t for t in names_) and not any("아웃라이너" in t for t in names_))
+a_row = next(w for w in rows if w.cget("text").strip().endswith("A"))
+a_row.event_generate("<Button-1>")
+for _ in range(60):
+    app.root.update()
+    time.sleep(0.02)
+check("폴더 줄을 누르면 그 노트북으로 이동", app.nb == "A")
+app.go_nb("A")
+for _ in range(30):
+    app.root.update()
+    time.sleep(0.02)
+check("하위 노트북이 또 있으면 거기서도 폴더 줄", any("하위" in w.cget("text") for w in app.folder_box.winfo_children() if w.winfo_class() == "Label"))
+app.go_nb("B")
+for _ in range(30):
+    app.root.update()
+    time.sleep(0.02)
+check("하위가 없는 노트북은 폴더 줄이 없음", not app.folder_box.winfo_ismapped())
+app.go_nb(notes.ALL)
+
 app.root.destroy()
 print("실패 %d" % fails if fails else "전부 통과")
 sys.exit(1 if fails else 0)
