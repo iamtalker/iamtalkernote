@@ -315,4 +315,5 @@ EN_DIALOGS = {
     "> ⚠ 서로 포함함(순환): ": "> ⚠ Circular include: ",
     "> ⚠ 없는 절: ": "> ⚠ Section not found: ",
     "> ⚠ 너무 깊이 포함됨: ": "> ⚠ Included too deeply: ",
+    "글자만 붙여넣기": "Paste as plain text",
 }

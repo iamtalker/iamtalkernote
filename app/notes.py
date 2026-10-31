@@ -217,6 +217,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         m.add_command(label=tr("잘라내기"), accelerator="Ctrl+X", command=lambda: self.text.event_generate("<<Cut>>"))
         m.add_command(label=tr("복사"), accelerator="Ctrl+C", command=lambda: self.text.event_generate("<<Copy>>"))
         m.add_command(label=tr("붙여넣기"), accelerator="Ctrl+V", command=lambda: self.text.event_generate("<<Paste>>"))
+        m.add_command(label=tr("글자만 붙여넣기"), accelerator="Ctrl+Shift+V", command=self.plain_paste)
         m.add_command(label=tr("모두 선택"), accelerator="Ctrl+A", command=lambda: (self.text.tag_add("sel", "1.0", "end-1c"), self.text.focus_set()))
         m.add_separator()
         m.add_command(label=tr("굵게"), accelerator="Ctrl+B", command=act(("wrap", "b")))
@@ -1121,6 +1122,9 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         self.view.bind("<Button-1>", self.on_view_click)
         box2.bind("<Configure>", self.on_view_resize)
         self.view.bind("<Button-3>", self.on_view_menu)
+        self.view.bind("<<Copy>>", self.view_copy)                       # 표·서식을 HTML 로도 복사(웹 에디터에 표로 붙음)
+        self.text.bind("<<Paste>>", self.text_paste)                     # 웹에서 복사한 표(HTML)는 마크다운 표로
+        self.text.bind("<Control-Shift-V>", self.plain_paste)            # 언제나 글자만 붙인다
         self._pair_side = "edit"
         for w in (self.text, self.view):
             w.tag_configure("pair", background=C["soft"])          # 좌우 분할에서 반대쪽 칸의 같은 블록 강조
@@ -2754,6 +2758,45 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         cands.append(os.path.normpath(os.path.join(base, src.split("?")[0].replace("/", os.sep))))
         cands.append(os.path.join(self.store.media_dir, os.path.basename(src.split("?")[0])))   # 노트가 옮겨져 링크가 어긋났을 때
         return next((c for c in cands if os.path.isfile(c)), None)
+
+    def view_copy(self, e=None):
+        """렌더링 화면에서 복사: 글자(표는 칸을 탭으로 이은 줄)와 HTML 을 함께 클립보드에 넣는다. 안 되면 기본 복사로"""
+        v = self.view
+        if not v.tag_ranges("sel"):
+            return None
+        try:
+            def link_of(tag):
+                lk = self.links.get(tag)
+                return lk[1] if lk and lk[0] == "url" else None
+            plain, html = copyhtml.selection(v, v.index("sel.first"), v.index("sel.last"), link_of)
+            if not plain.strip() or not winclip.set_text_html(plain, html):
+                return None
+        except Exception:  # noqa: BLE001
+            return None
+        return "break"
+
+    def text_paste(self, e=None):
+        """편집 칸 붙여넣기: 클립보드에 표가 든 HTML 이 있으면(웹에서 복사한 표) 마크다운 표로 바꿔 넣는다. 그 밖에는 기본 붙여넣기"""
+        if getattr(self, "_plain_paste", False):
+            self._plain_paste = False
+            return None
+        md = pastehtml.markdown_from_clipboard()
+        if not md:
+            return None
+        t = self.text
+        a, b = (t.index("sel.first"), t.index("sel.last")) if t.tag_ranges("sel") else (t.index("insert"), t.index("insert"))
+        new = pastehtml.around(t.get(f"{a} linestart", a), t.get(b, f"{b} lineend"), md)
+        self.replace(a, b, new, len(new), len(new))
+        return "break"
+
+    def plain_paste(self, e=None):
+        """글자만 붙여넣기(Ctrl+Shift+V)"""
+        self._plain_paste = True
+        try:
+            self.text.event_generate("<<Paste>>")
+        finally:
+            self._plain_paste = False
+        return "break"
 
     def table_kw(self):
         """표를 렌더링 칸 폭에 맞추는 데 필요한 값(preview.layout 의 avail·measure). 칸 폭은 20 픽셀 단위로 내려서 조금 변해도 같은 값

@@ -32,6 +32,9 @@ import docs as docidx  # noqa: E402   (노트 폴더 밖의 pdf·txt·mp3 … �
 import editor as ed # noqa: E402   (위키나루: 서식 도구·그림 불러오기)
 import ime  # noqa: E402   (한글 입력기가 조합 중인 글자를 자동완성에서 보려고)
 import preview  # noqa: E402
+import copyhtml  # noqa: E402   (렌더링 화면에서 복사할 때 HTML 도 함께: 표를 웹에 표로 붙이기)
+import pastehtml  # noqa: E402   (웹의 표를 붙여넣으면 마크다운 표로)
+import winclip  # noqa: E402
 import search  # noqa: E402
 import similar  # noqa: E402   (비슷한 노트 찾기)
 import snapshots as sn  # noqa: E402
