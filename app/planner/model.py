@@ -286,6 +286,20 @@ class Planner:
                 out.append(t)
         return out
 
+    def span_on(self, date, today=None):
+        """그 날짜 칸에 걸쳐 보일 할일 [(할일, 시작날인가)]: 할일은 쓴 날에 시작해서, 끝내기 전까지는 오늘까지 날마다 이어지고(달이 바뀌어도),
+        끝내면 끝낸 날까지만 보인다. 앞으로 올 날에는 쓴 날이 아니면 보이지 않는다"""
+        today = today or iso(datetime.date.today())
+        out = []
+        for t in self.todos:
+            d = t.get("date")
+            if not d or d > date:
+                continue
+            end = (t.get("done_on") or d) if t["done"] else max(today, d)
+            if date <= end:
+                out.append((t, d == date))
+        return out
+
     def shown_on(self, date):
         """달력 칸에 보일 그날의 할일: 그날 것 + (그 달 1일이면) 지난달에서 넘어온 것"""
         d = parse(date)

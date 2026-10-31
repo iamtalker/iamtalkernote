@@ -69,7 +69,9 @@ class PlannerView(tk.Frame):
                               highlightthickness=1, highlightbackground=C["line"], highlightcolor=C["accent"])
         self.entry.pack(side="left", fill="x", expand=True, ipady=5)
         self.entry.bind("<Return>", lambda e: self.add_undated())
-        for text, fn in (("추가", self.add_undated), ("선택한 날짜로", self.give_date), ("날짜 없애기", self.clear_date), ("삭제", self.delete)):
+        self.target = tk.Label(bar, text="", bg=C["bg"], fg=C["muted"], font=(ui, 9), padx=8)   # 할일은 달력에서 고른 날에 시작한다
+        self.target.pack(side="left", before=self.entry)
+        for text, fn in (("추가", self.add_undated), ("삭제", self.delete)):
             b = tk.Label(bar, text=text, bg=C["panel"], fg=C["text"], font=(ui, 9), cursor="hand2", padx=8, pady=5)
             b.bind("<Button-1>", lambda e, fn=fn: fn())
             b.pack(side="left", padx=(6, 0))
@@ -107,6 +109,7 @@ class PlannerView(tk.Frame):
         self.pl.sync()                                     # 밖(다른 편집기·폰 동기화)에서 고친 달력 파일을 반영
         C, cfg = self.C, self.get_cfg()
         self.title.config(text=f"{self.year}년 {self.month}월")
+        self.target.config(text=f"{self.sel[5:]} 에 할일")
         hol = {**self.pl.holidays_for(self.year - 1), **self.pl.holidays_for(self.year), **self.pl.holidays_for(self.year + 1)}
         today = M.iso(datetime.date.today())
         days = M.month_grid(self.year, self.month)
@@ -118,9 +121,11 @@ class PlannerView(tk.Frame):
             if d.month != self.month:
                 fg = C["muted"]
             lines = [str(d.day) + (" " + hol[s] if s in hol else "")]
-            todos = [t for t in self.pl.shown_on(s) if not t["done"]]
-            if todos:
-                lines.append(("↪ " if todos[0].get("date") != s else "● ") + (todos[0]["text"][:6] + ("…" if len(todos[0]["text"]) > 6 or len(todos) > 1 else "")))
+            for t, start in self.pl.span_on(s)[:2]:        # 쓴 날은 ●, 끝내기 전까지 이어지는 날은 ┆
+                if not t["done"] or start:
+                    lines.append(("● " if start else "┆ ") + t["text"][:8] + ("…" if len(t["text"]) > 8 else ""))
+            if len(self.pl.span_on(s)) > 2:
+                lines.append(f"  +{len(self.pl.span_on(s)) - 2}")
             if cfg["gongsu"] and s in self.pl.gongsu:
                 lines.append("공수 " + M.fmt_gongsu(self.pl.gongsu[s]))
             lb.config(text="\n".join(lines), fg=fg, bg=C["soft"] if s == self.sel else C["bg"],
@@ -210,20 +215,8 @@ class PlannerView(tk.Frame):
 
     def add_undated(self):
         text = self.entry.get()
-        if self.pl.add(text):
+        if self.pl.add(text, self.sel):                   # 할일은 항상 달력의 날짜에 쓴다(그 날부터 끝내기 전까지 이어진다)
             self.entry.delete(0, "end")
-            self.changed()
-
-    def give_date(self):
-        tid = self.selected()
-        if tid:
-            self.pl.update(tid, date=self.sel)
-            self.changed()
-
-    def clear_date(self):
-        tid = self.selected()
-        if tid:
-            self.pl.update(tid, date=None)
             self.changed()
 
     def delete(self):

@@ -105,5 +105,24 @@ with tempfile.TemporaryDirectory() as d5:
     p = M.Planner(d5)
     check("예전 방식(.planner/data.json)의 자료를 마크다운으로 옮김", p.todos[0]["text"] == "옛 방식 할일" and os.path.exists(os.path.join(d5, "달력", "2026년 11월.md")) and p.gongsu == {"2026-11-02": 1.0})
 
+# --- 할일은 쓴 날에 시작해서 끝내기 전까지 이어짐
+with tempfile.TemporaryDirectory() as d6:
+    p = M.Planner(d6)
+    t = p.add("xx병원 가기", "2026-10-31")
+    names = lambda day, today: [(x["text"], s) for x, s in p.span_on(day, today)]  # noqa: E731
+    check("쓴 날에는 시작으로 보임", names("2026-10-31", "2026-11-03") == [("xx병원 가기", True)])
+    check("끝내기 전까지 날마다 이어지고 달이 바뀌어도 이어짐", names("2026-11-01", "2026-11-03") == [("xx병원 가기", False)] and names("2026-11-03", "2026-11-03") == [("xx병원 가기", False)])
+    check("오늘 이후와 쓴 날 이전에는 안 보임", names("2026-11-04", "2026-11-03") == [] and names("2026-10-30", "2026-11-03") == [])
+    p.update(t["id"], done=True)
+    p.todos[0]["done_on"] = "2026-11-02"
+    check("끝내면 끝낸 날까지만 이어짐(12월에는 안 나옴)", names("2026-11-02", "2026-12-05") == [("xx병원 가기", False)] and names("2026-11-03", "2026-12-05") == [] and names("2026-12-01", "2026-12-05") == [])
+
+with tempfile.TemporaryDirectory() as d7:
+    p = M.Planner(d7)
+    p.add("어디 가기", "2027-01-01")
+    nm = lambda day, today: [(x["text"], s) for x, s in p.span_on(day, today)]  # noqa: E731
+    check("미래에 쓴 할일은 그날에만 보이고 그 전에는 이어지지 않음", nm("2027-01-01", "2026-11-03") == [("어디 가기", True)] and nm("2026-12-15", "2026-11-03") == [] and nm("2027-01-02", "2026-11-03") == [])
+    check("그날이 되어서야 시작해서 끝내기 전까지 이어짐", nm("2027-01-01", "2027-01-05") == [("어디 가기", True)] and nm("2027-01-04", "2027-01-05") == [("어디 가기", False)] and p.due("2027-01-01") != [] and p.due("2026-12-31") == [])
+
 print("실패 %d" % fails if fails else "전부 통과")
 sys.exit(1 if fails else 0)
