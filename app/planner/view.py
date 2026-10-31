@@ -86,7 +86,7 @@ class PlannerView(tk.Frame):
     def refresh(self):
         C, cfg = self.C, self.get_cfg()
         self.title.config(text=f"{self.year}년 {self.month}월")
-        hol = {**M.holidays(self.year - 1), **M.holidays(self.year), **M.holidays(self.year + 1)}
+        hol = {**self.pl.holidays_for(self.year - 1), **self.pl.holidays_for(self.year), **self.pl.holidays_for(self.year + 1)}
         today = M.iso(datetime.date.today())
         days = M.month_grid(self.year, self.month)
         self.days = days

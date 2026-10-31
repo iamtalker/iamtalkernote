@@ -51,5 +51,16 @@ with tempfile.TemporaryDirectory() as d:
     q.remove(q.todos[0]["id"])
     check("삭제", len(q.todos) == 1)
 
+ics = ("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nDTSTART;VALUE=DATE:20261001\r\nDTEND;VALUE=DATE:20261003\r\nDESCRIPTION:공휴일\r\nSUMMARY:임시 연휴\r\nEND:VEVENT\r\n"
+       "BEGIN:VEVENT\r\nDTSTART;VALUE=DATE:20261008\r\nDTEND;VALUE=DATE:20261009\r\nDESCRIPTION:기념일\r\nSUMMARY:어버이날\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+g = M.parse_ics(ics)
+check("구글 달력(iCal) 읽기: 공휴일만, 여러 날은 날마다", g == {"2026-10-01": "임시 연휴", "2026-10-02": "임시 연휴"})
+with tempfile.TemporaryDirectory() as d2:
+    q = M.Planner(d2)
+    check("처음엔 받아 둔 것이 없어 오래된 것으로 봄", q.google_stale("2026-11-01"))
+    q.set_google(g, "2026-11-01")
+    check("받은 공휴일이 내장 표보다 우선하고 저장됨", q.holidays_for(2026)["2026-10-01"] == "임시 연휴" and M.Planner(d2).google == g)
+    check("한 달 안에는 다시 안 받음, 지나면 받음", not q.google_stale("2026-11-20") and q.google_stale("2026-12-05"))
+
 print("실패 %d" % fails if fails else "전부 통과")
 sys.exit(1 if fails else 0)

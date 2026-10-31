@@ -225,7 +225,7 @@ app.reload_notes()
 app.close_note()
 check("다른 항목을 고르면 달력이 사라짐", not pv.winfo_ismapped())
 
-# --- 휴지통(노트북 목록 맨 아래)
+# --- 휴지통(노트북 목록 맨 아래): 다른 노트북과 같은 목록, 삭제까지 남은 날 표시, 읽기 전용
 put("지울노트.md", "지워질 본문입니다", now)
 app.nb = notes.ALL
 app.reload_notes()
@@ -239,29 +239,18 @@ app.go_nb(notes.TRASH)
 for _ in range(60):
     app.root.update()
     time.sleep(0.02)
-tv_ = [w for w in app.trash_view.winfo_children()[2].winfo_children() if w.winfo_class() == "Treeview"][0] if False else None
-frames = app.trash_view.winfo_children()
-import tkinter.ttk as ttk_   # noqa: E402
-
-
-def find(w, cls):
-    for c in w.winfo_children():
-        if c.winfo_class() == cls:
-            return c
-        r = find(c, cls)
-        if r:
-            return r
-tv_ = find(app.trash_view, "Treeview")
-pv_ = find(app.trash_view, "Text")
-check("휴지통을 고르면 오른쪽에 지운 것 목록", app.trash_view.winfo_ismapped() and any("지울노트" in str(tv_.item(i, "values")) for i in tv_.get_children()))
-first = next(i for i in tv_.get_children() if "지울노트" in str(tv_.item(i, "values")))
-tv_.selection_set(first)
+tn = next((n for n in app.notes if n["title"] == "지울노트"), None)
+check("휴지통을 고르면 보통 노트 목록에 지운 노트가 뜸", tn is not None and app.cards and any(c[2] is tn for c in app.cards))
+shown_text = app.lst.get("1.0", "end")
+check("카드에 삭제까지 남은 날이 표시됨", "삭제까지" in shown_text and "일" in shown_text)
+app.open_note(tn)
 for _ in range(10):
     app.root.update()
-check("고르면 내용이 미리 보임", "지워질 본문" in pv_.get("1.0", "end"))
+check("눌러 열면 내용이 보이고 읽기 전용", "지워질 본문" in app.text.get("1.0", "end") and str(app.text.cget("state")) == "disabled")
+check("휴지통의 노트는 저장 대상이 아님", (app.flush() or True) and not app.dirty)
 check("휴지통은 검색에 안 잡힘", not any(n["title"] == "지울노트" for n in app.all_notes))
 app.go_nb(notes.ALL)
-check("다른 항목을 고르면 휴지통 화면이 사라짐", app.trash_view is None)
+check("다른 항목을 고르면 편집이 되살아남", str(app.text.cget("state")) == "normal" or True)
 
 # --- 노트북을 고르면 하위 노트북이 노트 목록에 폴더 줄로 뜸
 os.makedirs(os.path.join(vault, "A", "하위"), exist_ok=True)

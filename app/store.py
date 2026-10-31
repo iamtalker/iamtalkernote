@@ -3,6 +3,7 @@ import base64
 import calendar
 import hashlib
 import json
+import math
 import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -578,6 +579,21 @@ class Store:
             except (OSError, ValueError, KeyError):
                 continue
         out.sort(key=lambda x: -x["deleted"])
+        return out
+
+    def trash_notes(self):
+        """휴지통의 것들을 노트 목록과 같은 모양(Note)으로: 제목·지운 때·원래 위치·삭제까지 남은 날. 노트북·파일 묶음은 안의 파일 이름들이 본문"""
+        out, days = [], self.trash_days
+        for it in self.trash_items():
+            left = None if not days else max(0, math.ceil(days - (time.time() - it["deleted"]) / 86400))
+            n = Note(nb="", key=it["id"], title=("📁 " if it["dir"] or it["into"] else "") + it["name"], path=it["path"], size=0, file_mtime=it["deleted"],
+                     mtime=it["deleted"], ctime=it["deleted"], tags=set(), trash=it["id"], left=left, orig=it["rel"])
+            if it["dir"] or it["into"]:
+                names = []
+                for dp, _d, fn in os.walk(it["path"]):
+                    names += [os.path.relpath(os.path.join(dp, f), it["path"]) for f in fn]
+                n["body"] = f"원래 위치: {it['rel']}\n파일 {len(names):,}개\n\n" + "\n".join(names[:300])
+            out.append(n)
         return out
 
     def restore_trash(self, tid):

@@ -470,7 +470,6 @@ class App:
         self.mode = view.get("mode") if view.get("mode") in ("edit", "split", "view") else "split"
         self.store = st.Store()
         self.fav = favorites.Favorites(syncsettings.control_dir())   # 즐겨찾기(설정 폴더의 작은 파일, 폰과 맞춤)
-        self.fav_only = False
         self.store.tagger = note_tags   # 색인에 태그도 함께 기억
         self.docs = docidx.DocIndex()  # 가져온 폴더의 문서 색인
         self.doc_open = False          # 가져온 문서(읽기 전용)를 열어 둔 중인가
@@ -486,7 +485,8 @@ class App:
         cfg = st.read_config()
         self.planner = pm.Planner(self.store.root)
         self.planner_view = self.trash_view = None
-        self.feat = {k: bool(cfg.get("use_" + k, d)) for k, d in (("favs", True), ("outl", True), ("cal", False))}   # 설정 → 일반 → 기능 체크
+        self.feat = {k: bool(cfg.get("use_" + k, d)) for k, d in (("favs", True), ("outl", True), ("cal", True))}   # 설정 → 일반 → 기능 체크
+        self.feat["gongsu"] = bool(cfg.get("cal_gongsu", False))   # 공수달력은 기본으로 꺼져 있고 체크해서 켠다
         self.nb = win.get("nb") if isinstance(win.get("nb"), str) and not win["nb"].startswith("@smart") else ALL   # '*' 모든 노트 · '' 기본 · 그 밖은 노트북 폴더 이름(없어졌으면 읽은 뒤 '*' 로)
         self.tag = None                # 태그로 거르는 중이면 그 태그
         self.nb_keys, self.tag_keys = [], []
@@ -532,6 +532,7 @@ class App:
         self.relayout()
         self.reload_notes(background=True)
         self.root.after(3000, self.check_due)
+        self.root.after(6000, self.sync_holidays)
         self.root.after(300, self.fit_panes)
         self.root.after(400, self.poll_single)
         self.root.after(20000, self.auto_scan_docs)   # 가져온 폴더에서 바뀐 파일만 뒤에서 다시 읽기
@@ -1731,10 +1732,15 @@ class App:
             pass
 
     # -- 1단: 노트북 + 태그
-    def section_head(self, parent, title, action=None):
+    def section_head(self, parent, title, action=None, clear=None):
         h = tk.Frame(parent, bg=C["bg"])
         h.pack(fill="x", padx=14, pady=(14, 4))
-        tk.Label(h, text=title, bg=C["bg"], fg=C["muted"], font=(self.ui, 9, "bold")).pack(side="left")
+        lb = tk.Label(h, text=title, bg=C["bg"], fg=C["muted"], font=(self.ui, 9, "bold"))
+        lb.pack(side="left")
+        if clear:   # 머리글을 누르면 고른 것이 풀린다
+            lb.config(cursor="hand2")
+            lb.bind("<Button-1>", lambda e: clear())
+            self.tip(lb, "누르면 고른 태그가 풀립니다")
         if action:
             Btn(h, "＋", action, kind="ghost", bg=C["bg"], padx=6, pady=0).pack(side="right")
 
@@ -1767,7 +1773,7 @@ class App:
         self.nbtree.bind("<Button-3>", self.on_nb_menu)
         self.nbmenu = tk.Menu(self.root, tearoff=0)
         self.tag_sec = tk.Frame(self.left_pane, bg=C["bg"])
-        self.section_head(self.tag_sec, "태그")
+        self.section_head(self.tag_sec, "태그", clear=self.clear_tag)
         self.tagtree = self.make_tree(self.tag_sec)
         self.tagtree.config(selectmode="extended")   # Ctrl/Shift+클릭으로 태그 여러 개를 골라 한꺼번에 이름 변경·삭제
         self.tagtree.bind("<ButtonRelease-1>", self.on_tag_click)
@@ -1805,10 +1811,7 @@ class App:
         self.sort_names = {"relevance": "관련도순", "time": "수정순", "ctime": "생성순", "title": "제목순"}
         self.sort_btns = {k: Btn(bar, v, lambda k=k: self.sort_by(k), padx=6, pady=3) for k, v in self.sort_names.items()}
         self.b_date = Btn(bar, "기간", self.toggle_date, padx=6, pady=3)
-        self.b_fav = Btn(bar, "★", self.toggle_fav_filter, padx=6, pady=3)   # 즐겨찾기만 보기
-        self.b_fav.set_on(self.fav_only)
-        self.tip(self.b_fav, "즐겨찾기한 노트만 보기(노트 우클릭 → 즐겨찾기, 또는 Ctrl+D)")
-        for b in (*self.sort_btns.values(), self.b_date, self.b_fav):
+        for b in (*self.sort_btns.values(), self.b_date):
             b.pack(side="left", padx=1)
         # 가져온 파일의 '문서 안 글'까지 찾을지(끄면 이름·경로·태그·메모만 찾아서 빠르고 결과가 짧다). 가져온 폴더가 있을 때만 보인다
         self.v_content = tk.BooleanVar(value=self.docs.content_search)
@@ -2311,7 +2314,10 @@ class App:
         self.view = tk.Text(box2, wrap="word", state="disabled", font=self.fonts["base"], padx=18, pady=12, cursor="arrow",
                             bg=C["bg"], fg=C["text"], selectbackground=C["sel"], selectforeground=C["text"], spacing2=3, **ring)
         sb2 = ttk.Scrollbar(box2, orient="vertical", command=self.view.yview)
-        self.view.config(yscrollcommand=autohide(sb2, self.view))
+        hide2 = autohide(sb2, self.view)
+        self.view_sb_frozen = False
+        self.view_scroll = lambda lo, hi: None if self.view_sb_frozen else hide2(lo, hi)
+        self.view.config(yscrollcommand=self.view_scroll)
         self.view.pack(side="left", fill="both", expand=True)
         self.configure_tags()
         self.view.bind("<Button-1>", self.on_view_click)
@@ -2342,14 +2348,7 @@ class App:
             if self.trash_view is not None:
                 self.trash_view.destroy()
                 self.trash_view = None
-            if self.nb == TRASH:                             # 휴지통을 골랐으면 노트 자리에 지운 것들과 내용 미리보기
-                self.empty.pack_forget()
-                if self.planner_view is not None:
-                    self.planner_view.pack_forget()
-                self.trash_view = tk.Frame(self.editf, bg=C["bg"])
-                self.trash_view.pack(fill="both", expand=True)
-                self.show_trash(self.trash_view)
-            elif self.nb == CAL and self.feat["cal"]:        # 달력·할일을 골랐으면 노트 자리에 달력과 할일
+            if self.nb == CAL and self.feat["cal"]:        # 달력·할일을 골랐으면 노트 자리에 달력과 할일
                 self.empty.pack_forget()
                 if self.planner_view is None:
                     self.planner_view = PlannerView(self.editf, C, self.ui, self.planner, self.planner_cfg)
@@ -2375,6 +2374,33 @@ class App:
             return {"gongsu": bool(c.get("cal_gongsu", False)), "wage": num("cal_wage"), "meal": num("cal_meal")}
         except (TypeError, ValueError):
             return {"gongsu": bool(c.get("cal_gongsu", False)), "wage": 0, "meal": 0}
+
+    def sync_holidays(self, force=False):
+        """구글 달력의 공개 '대한민국의 휴일'(로그인 필요 없음)을 뒤에서 받아 달력에 쓴다. 한 달에 한 번, 못 받으면 내장 표를 쓴다"""
+        if not self.feat["cal"] or not st.read_config().get("cal_google", True):
+            return
+        today = pm.iso(__import__("datetime").date.today())
+        if not force and not self.planner.google_stale(today):
+            return
+        q = queue.Queue()
+
+        def work():
+            try:
+                q.put(pm.fetch_google())
+            except Exception:  # noqa: BLE001  (오프라인 등: 내장 표로 계속)
+                q.put(None)
+        threading.Thread(target=work, daemon=True).start()
+
+        def poll():
+            try:
+                days = q.get_nowait()
+            except queue.Empty:
+                return self.root.after(400, poll)
+            if days:
+                self.planner.set_google(days, today)
+                if self.planner_view is not None:
+                    self.planner_view.refresh()
+        poll()
 
     def check_due(self):
         """달력의 할일이 그날(또는 지난 날짜)이 되면 알린다: 앱 안에 잠깐 뜨는 알림(하루에 한 번). 10분마다 확인"""
@@ -2685,6 +2711,12 @@ class App:
         self.fit_count(self.tagtree, [f"{c:,}" for c in list(counts.values())[:200]])
         self.quiet = False
 
+    def clear_tag(self):
+        if self.tag:
+            self.tag = None
+            self.tagtree.selection_remove(*self.tagtree.selection())
+            self.refresh()
+
     def on_tag_click(self, e):
         row = self.tagtree.identify_row(e.y)
         if not row or e.state & 0x5:   # Ctrl/Shift+클릭은 여러 개 고르기라서 노트를 거르지 않는다
@@ -2925,6 +2957,8 @@ class App:
         self.all_notes = loaded
         if self.nb.startswith("@doc"):   # 가져온 폴더를 골랐으면 목록은 노트가 아니라 가져온 문서
             self.notes = self.docs.list_docs(self.nb[5:] if self.nb.startswith("@doc:") else None)
+        elif self.nb == TRASH:           # 휴지통: 지운 노트를 다른 노트북과 같은 목록으로(삭제까지 남은 날 표시)
+            self.notes = self.store.trash_notes()
         elif self.scope_all():           # 모든 파일(저장된 검색 포함) = 내 노트 + 가져온 문서
             self.notes = list(self.all_notes) + self.docs.list_docs()
         else:
@@ -2952,14 +2986,12 @@ class App:
         """검색·정렬을 다시 하고 목록을 그린다. keep_page=True 는 자동 저장 때처럼 보던 자리를 유지"""
         self.search_job = None
         pool = [n for n in self.notes if self.tag in n["tags"]] if self.tag else self.notes
-        if self.fav_only:
-            pool = [n for n in pool if self.is_fav(n)]
         self.bad_dates = search.bad_dates(self.q.get(), self.d_from.get(), self.d_to.get())
         if self.bad_dates:   # 날짜를 읽을 수 없으면 기간 없이 찾지 말고 비워서 알린다
             self.results, self.words = [], []
         else:
             self.results, self.words = search.run(pool, self.q.get(), self.sort, self.asc, self.d_from.get(), self.d_to.get(),
-                                                  index=self.docs if self.nb.startswith("@doc") else
+                                                  index=None if self.nb == TRASH else self.docs if self.nb.startswith("@doc") else
                                                   docidx.Combined(self.store, self.docs) if self.scope_all() else self.store)
         self.draw_list(keep_scroll=keep_page)
 
@@ -2995,15 +3027,13 @@ class App:
     def draw_list(self, keep_scroll=False):
         self.update_folder_rows()
         total = len(self.results)
-        searching = self.q.get().strip() or self.d_from.get().strip() or self.d_to.get().strip() or self.tag or self.fav_only
+        searching = self.q.get().strip() or self.d_from.get().strip() or self.d_to.get().strip() or self.tag
         unit = "파일" if self.scope_all() or self.nb.startswith("@doc") else "노트"
         text = f"{len(self.notes):,}개 중 {total:,}개 찾음" if searching else f"{total:,}개의 {unit}"
         if getattr(self, "bad_dates", None):
             text = "날짜를 읽을 수 없습니다: " + ", ".join(self.bad_dates) + "  (예: date:20200202-20221231)"
         if self.tag:
             text += f"  ·  # {self.tag}"
-        if self.fav_only:
-            text += "  ·  ★ 즐겨찾기"
         self.count.config(text=text)
         L = self.lst
         if not keep_scroll:
@@ -3046,7 +3076,9 @@ class App:
             L.insert("end", n["title"] + "\n", "title")
             shown_t = n.get("ctime", n["mtime"]) if self.sort == "ctime" else n["mtime"]   # 생성순이면 생성 시각을 보여 준다
             meta = time.strftime("%Y.%m.%d %H:%M", time.localtime(shown_t))
-            if self.scope_all() or n["nb"] != self.nb:   # 모든 노트이거나 하위 노트북의 노트면 어느 노트북인지 보여 준다
+            if n.get("trash"):
+                meta += "   " + ("삭제까지 %d일" % n["left"] if n["left"] is not None else "자동 삭제 안 함") + "   ← " + n["orig"]
+            elif self.scope_all() or n["nb"] != self.nb:   # 모든 노트이거나 하위 노트북의 노트면 어느 노트북인지 보여 준다
                 meta += "   " + self.nb_label(n["nb"])
             if self.words:   # 검색 중일 때만 일치한 부분을 보여 준다
                 L.insert("end", meta + "\n", "meta")
@@ -3235,16 +3267,39 @@ class App:
         if self.nb == FAVS:   # 즐겨찾기 목록을 보는 중이면 빠진 노트는 목록에서도 빠진다
             self.notes = [x for x in self.all_notes if self.is_fav(x)]
         self.reload_notebooks()
-        if self.fav_only or self.nb == FAVS:
+        if self.nb == FAVS:
             self.refresh(keep_page=True)
         else:
             self.draw_list(keep_scroll=True)
         return "break"
 
-    def toggle_fav_filter(self):
-        self.fav_only = not self.fav_only
-        self.b_fav.set_on(self.fav_only)
-        self.refresh()
+    def trash_menu(self, e, n):
+        m = tk.Menu(self.root, tearoff=0)
+
+        def restore():
+            try:
+                self.store.restore_trash(n["trash"])
+            except OSError as ex:
+                return messagebox.showerror(APP, f"복원하지 못했습니다.\n{ex}", parent=self.root)
+            self.close_note()
+            self.reload_notes()
+
+        def remove():
+            if messagebox.askyesno(APP, f"「{n['title']}」을(를) 완전히 지울까요? 되돌릴 수 없습니다.", parent=self.root):
+                self.store.delete_trash(n["trash"])
+                self.close_note()
+                self.reload_notes()
+
+        def empty():
+            if messagebox.askyesno(APP, f"휴지통의 {len(self.notes):,}개를 모두 완전히 지울까요? 되돌릴 수 없습니다.", parent=self.root):
+                self.store.empty_trash()
+                self.close_note()
+                self.reload_notes()
+        m.add_command(label="복원", command=restore)
+        m.add_command(label="완전히 삭제", command=remove)
+        m.add_separator()
+        m.add_command(label="휴지통 비우기", command=empty)
+        m.tk_popup(e.x_root, e.y_root)
 
     def on_list_menu(self, e):
         """노트 우클릭 메뉴 (조플린: 삭제 · 노트북으로 이동 · 링크 복사 …)"""
@@ -3253,6 +3308,9 @@ class App:
             return
         if isinstance(n, docidx.Doc):
             return self.doc_menu(e, n)
+        if n.get("trash"):
+            self.open_note(n)
+            return self.trash_menu(e, n)
         if self.multi and n["path"] in self.multi:   # 여러 개를 고른 채 그 안에서 우클릭
             return self.multi_menu(e)
         self.clear_multi()
@@ -3435,10 +3493,16 @@ class App:
         # 한 줄이 아주 긴 글(base64 그림 등)은 줄바꿈 계산이 수십 초 걸려서 줄바꿈을 끈다
         longest = max((len(x) for x in n["body"].split("\n")), default=0)
         self.text.config(wrap="none" if longest > 20000 else "word")
+        self.text.config(state="normal")
+        self.title_entry.config(state="normal")
         self.set_text(n["body"])
         self.text.yview_moveto(0)
         self.dirty = False
         self.update_status()
+        if n.get("trash"):               # 휴지통의 노트: 읽기 전용(우클릭 → 복원 · 완전히 삭제)
+            self.text.config(state="disabled")
+            self.title_entry.config(state="readonly")
+            self.status.config(text="휴지통의 노트 — 읽기 전용입니다. 목록에서 우클릭 → 복원 · 완전히 삭제")
         if self.is_outline_note() or self._outl_on:
             self._outl_path = None
             self.apply_layout(self.mode)
@@ -3504,6 +3568,9 @@ class App:
             self.render_job = self.root.after(200 if len(self.text.get("1.0", "end")) < 40000 else 700, self.render)
 
     def flush(self):
+        if self.cur and self.cur.get("trash"):
+            self.dirty = False
+            return
         if self._outl_on and self.cur and self.is_outline_note():
             self.ow.flush()                       # 아웃라이너에서 막 고친 글(0.35초 뒤에 넘기려던 것)을 노트에 먼저 넣는다
         if self.save_job:
@@ -4103,6 +4170,15 @@ class App:
             self.render()
 
     def draw_view(self, segs):
+        v = self.view
+        self.view_sb_frozen = True
+        try:
+            self.draw_view_body(segs)
+        finally:
+            self.view_sb_frozen = False
+            self.view_scroll(*v.yview())
+
+    def draw_view_body(self, segs):
         v = self.view
         self.img_w_used = self.img_avail()
         self.has_imgs = any(extra and extra[0] == "img" for _, _, extra in segs)
@@ -5197,12 +5273,14 @@ class App:
                 fg=C["muted"], font=(self.ui, 9), wraplength=620).pack(anchor="w", pady=(2, 0))
             hr(p)
             lab(p, "기능 (쓰지 않으면 끕니다)", font=(self.ui, 10, "bold")).pack(anchor="w")
-            for key, label in (("favs", "즐겨찾기"), ("outl", "아웃라이너 폴더"), ("cal", "달력·할일")):
+            for key, label in (("favs", "즐겨찾기"), ("outl", "아웃라이너 폴더"), ("cal", "달력·할일"), ("gongsu", "공수달력 (달력·할일 안에서 공수·일당·일비 계산, 건설·일용직용)")):
                 var = tk.BooleanVar(value=self.feat[key])
 
                 def set_feat(k=key, v=var):
                     self.feat[k] = v.get()
-                    st.write_config(**{"use_" + k: v.get()})
+                    st.write_config(**({"cal_gongsu": v.get()} if k == "gongsu" else {"use_" + k: v.get()}))
+                    if k == "gongsu" and self.planner_view is not None:
+                        self.planner_view.refresh()
                     self.reload_notebooks()
                     if self.cur:
                         self.open_note(self.cur, record=False)
@@ -5666,6 +5744,14 @@ class App:
             hr(p)
             tk.Checkbutton(p, text="공수달력 사용 (날을 누르면 공수 0.5·1·1.5·2 를 적고, 달마다 합계를 계산)", variable=gs, command=apply_cal, bg=C["bg"],
                            activebackground=C["bg"], font=(self.ui, 10), selectcolor=C["bg"]).pack(anchor="w")
+            gg = tk.BooleanVar(value=bool(st.read_config().get("cal_google", True)))
+
+            def set_google():
+                st.write_config(cal_google=gg.get())
+                if gg.get():
+                    self.sync_holidays(force=True)
+            tk.Checkbutton(p, text="구글 달력에서 대한민국 공휴일 가져오기 (로그인 없이 공개 달력을 한 달에 한 번 받음)", variable=gg, command=set_google, bg=C["bg"],
+                           activebackground=C["bg"], font=(self.ui, 10), selectcolor=C["bg"]).pack(anchor="w", pady=(6, 0))
             cfg = st.read_config()
             for key, label in (("cal_wage", "단가 (1공수, 원)"), ("cal_meal", "일비 (하루, 원)")):
                 row = tk.Frame(p, bg=C["bg"])
@@ -5685,7 +5771,7 @@ class App:
                     if self.planner_view is not None:
                         self.planner_view.refresh()
                 var.trace_add("write", save)
-            lab(p, "공수 합계 × 단가 = 일당, 출근한 날 수 × 일비 = 일비. 공휴일은 내장 표(2024~2030년)로 표시합니다.", fg=C["muted"], font=(self.ui, 9),
+            lab(p, "공수 합계 × 단가 = 일당, 출근한 날 수 × 일비 = 일비. 공휴일은 구글 달력에서 받은 것을 쓰고, 못 받으면 내장 표(2024~2030년)로 표시합니다.", fg=C["muted"], font=(self.ui, 9),
                 wraplength=620).pack(anchor="w", pady=(10, 0))
 
         pages = (("general", "일반", general), ("planner", "달력·할일", planner_tab), ("index", "색인", index_tab), ("folders", "폴더", folders_tab), ("imports", "가져오기", imports_tab), ("fonts", "글꼴", fonts_tab), ("theme", "테마·색상", theme_tab), ("versions", "노트 버전", versions_tab), ("sync", "동기화", sync_tab), ("clipper", "웹 클리퍼", clipper))

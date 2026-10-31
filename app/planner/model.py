@@ -72,6 +72,7 @@ class Planner:
     def __init__(self, root):
         self.path = os.path.join(root, DIR, FILE)
         self.todos, self.gongsu = [], {}
+        self.google, self.google_at = {}, ""        # 구글 달력에서 받아 둔 공휴일 {날짜: 이름}, 받은 날
         self.load()
 
     def load(self):
@@ -82,13 +83,28 @@ class Planner:
             d = {}
         self.todos = [t for t in d.get("todos", []) if isinstance(t, dict) and t.get("text")]
         self.gongsu = {k: float(v) for k, v in d.get("gongsu", {}).items() if parse(k) and isinstance(v, (int, float)) and v > 0}
+        self.google = {k: v for k, v in d.get("google", {}).items() if parse(k)}
+        self.google_at = d.get("google_at", "")
 
     def save(self):
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
         tmp = self.path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump({"todos": self.todos, "gongsu": self.gongsu}, fh, ensure_ascii=False, indent=1)
+            json.dump({"todos": self.todos, "gongsu": self.gongsu, "google": self.google, "google_at": self.google_at}, fh, ensure_ascii=False, indent=1)
         os.replace(tmp, self.path)
+
+    # ---- 공휴일(내장 표 + 구글 달력에서 받은 것: 구글 것이 우선)
+    def holidays_for(self, year):
+        return {**holidays(year), **{k: v for k, v in self.google.items() if k.startswith(f"{year:04d}-")}}
+
+    def google_stale(self, today):
+        a, b = parse(self.google_at), parse(today)
+        return not self.google or a is None or b is None or (b - a).days >= STALE_DAYS
+
+    def set_google(self, days, today):
+        if days:
+            self.google, self.google_at = days, today
+            self.save()
 
     # ---- 할일
     def add(self, text, date=None):
@@ -151,3 +167,35 @@ class Planner:
 
 def fmt_gongsu(v):
     return ("%g" % v)
+
+
+# ---- 구글 달력의 공개 한국 공휴일(로그인 필요 없는 iCal 주소). 받아 두었다가 쓰고, 못 받으면 위의 내장 표를 쓴다
+GOOGLE_ICS = "https://calendar.google.com/calendar/ical/ko.south_korea%23holiday%40group.v.calendar.google.com/public/basic.ics"
+STALE_DAYS = 30
+
+
+def parse_ics(text):
+    """iCal 글 → {YYYY-MM-DD: 이름}. 설명이 '공휴일'인 것만(어버이날 같은 기념일은 뺀다). 하루짜리·여러 날짜 일정을 날마다 펼친다"""
+    out = {}
+    text = text.replace("\r\n ", "").replace("\r\n", "\n").replace("\n ", "")
+    for block in text.split("BEGIN:VEVENT")[1:]:
+        f = {}
+        for line in block.split("\n"):
+            key, _, val = line.partition(":")
+            f[key.split(";")[0]] = val.strip()
+        start, end, name = f.get("DTSTART", ""), f.get("DTEND", ""), f.get("SUMMARY", "")
+        if "공휴일" not in f.get("DESCRIPTION", "") or len(start) != 8 or not name:
+            continue
+        a = datetime.date(int(start[:4]), int(start[4:6]), int(start[6:]))
+        b = datetime.date(int(end[:4]), int(end[4:6]), int(end[6:])) if len(end) == 8 else a + datetime.timedelta(1)
+        d = a
+        while d < b:
+            out[iso(d)] = name
+            d += datetime.timedelta(1)
+    return out
+
+
+def fetch_google(url=GOOGLE_ICS, timeout=20):
+    import urllib.request
+    with urllib.request.urlopen(url, timeout=timeout) as r:
+        return parse_ics(r.read().decode("utf-8", "replace"))
