@@ -65,6 +65,17 @@ def holidays(year):
     return out
 
 
+def parse_loose(s):
+    """사람이 친 날짜(20260914 · 2026-9-14 · 2026.09.14 · 2026/9/14) → 'YYYY-MM-DD'. 안 읽히면 None"""
+    m = re.match(r"^\s*(\d{4})[.\-/]?(\d{1,2})[.\-/]?(\d{1,2})\s*$", s or "")
+    if not m:
+        return None
+    try:
+        return iso(datetime.date(int(m.group(1)), int(m.group(2)), int(m.group(3))))
+    except ValueError:
+        return None
+
+
 def month_grid(year, month):
     """달력 칸: 일요일 시작 6주 × 7일의 날짜(date) 목록"""
     first = datetime.date(year, month, 1)
@@ -264,6 +275,14 @@ class Planner:
                     t["done_on"] = iso(datetime.date.today())
                 else:
                     t.pop("done_on", None)
+            self.save()
+
+    def set_done_on(self, tid, date):
+        """완료한 날을 직접 정한다(그날 끝낸 것으로 표시)"""
+        t = self.find(tid)
+        if t:
+            t["done"], t["done_on"] = True, date
+            t.pop("notified", None)
             self.save()
 
     def remove(self, tid):

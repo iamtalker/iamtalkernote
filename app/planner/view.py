@@ -79,6 +79,7 @@ class PlannerView(tk.Frame):
         self.tree.pack(side="left", fill="both", expand=True)
         self.tree.tag_configure("done", foreground=C["muted"])
         self.tree.bind("<ButtonRelease-1>", self.on_tree_click)
+        self.tree.bind("<Button-3>", self.on_tree_menu)
         self.refresh()
 
     # ---- 달력
@@ -204,6 +205,40 @@ class PlannerView(tk.Frame):
             self.tree.insert("", "end", iid=t["id"], text=("☑  " if t["done"] else "☐  ") + t["text"],
                              values=((t["date"] + (f"  {age}일째" if age > 0 else f"  D-{-diff}" if diff < 0 else "  D-day")) if t.get("date") else "", t.get("done_on") or ""),
                              tags=("done",) if t["done"] else ())
+
+    def on_tree_menu(self, e):
+        """할일 목록에서 오른쪽 클릭: '추가한 날'이나 '완료한 날' 칸이면 그 날짜를 바꾼다(실제로 날짜를 잘못 적거나 늦게 끝낸 일이 있으므로)"""
+        row, col = self.tree.identify_row(e.y), self.tree.identify_column(e.x)
+        t = self.pl.find(row) if row else None
+        if not t or col not in ("#1", "#2"):
+            return
+        self.tree.selection_set(row)
+        m = tk.Menu(self, tearoff=0)
+        if col == "#1":
+            m.add_command(label="추가한 날 바꾸기…", command=lambda: self.ask_date(t, "date"))
+        else:
+            m.add_command(label="완료한 날 바꾸기…" if t["done"] else "완료한 날을 정해 완료로…", command=lambda: self.ask_date(t, "done_on"))
+            if t["done"]:
+                m.add_command(label="완료 취소", command=lambda: (self.pl.update(t["id"], done=False), self.changed()))
+        m.tk_popup(e.x_root, e.y_root)
+
+    def ask_date(self, t, field):
+        cur = t.get("date") if field == "date" else (t.get("done_on") or M.iso(datetime.date.today()))
+        s = simpledialog.askstring("날짜 바꾸기", ("추가한 날" if field == "date" else "완료한 날") + "  (예: 2026-09-14, 20260914)", initialvalue=cur or "", parent=self)
+        if not s:
+            return
+        d = M.parse_loose(s)
+        if not d:
+            return messagebox.showinfo("날짜 바꾸기", "날짜를 읽을 수 없습니다. 예: 2026-09-14 또는 20260914", parent=self)
+        if field == "date":
+            if t["done"] and t.get("done_on") and d > t["done_on"]:
+                return messagebox.showinfo("날짜 바꾸기", "추가한 날이 완료한 날보다 늦을 수 없습니다.", parent=self)
+            self.pl.update(t["id"], date=d)
+        else:
+            if t.get("date") and d < t["date"]:
+                return messagebox.showinfo("날짜 바꾸기", "완료한 날이 추가한 날보다 빠를 수 없습니다.", parent=self)
+            self.pl.set_done_on(t["id"], d)
+        self.changed()
 
     def toggle_hide_done(self):
         if self.set_cfg:

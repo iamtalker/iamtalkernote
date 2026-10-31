@@ -124,5 +124,15 @@ with tempfile.TemporaryDirectory() as d7:
     check("미래에 쓴 할일은 그날에만 보이고 그 전에는 이어지지 않음", nm("2027-01-01", "2026-11-03") == [("어디 가기", True)] and nm("2026-12-15", "2026-11-03") == [] and nm("2027-01-02", "2026-11-03") == [])
     check("그날이 되어서야 시작해서 끝내기 전까지 이어짐", nm("2027-01-01", "2027-01-05") == [("어디 가기", True)] and nm("2027-01-04", "2027-01-05") == [("어디 가기", False)] and p.due("2027-01-01") != [] and p.due("2026-12-31") == [])
 
+check("날짜 읽기: 여러 모양", M.parse_loose("20260914") == "2026-09-14" and M.parse_loose("2026.9.4") == "2026-09-04" and M.parse_loose("2026-02-30") is None and M.parse_loose("abc") is None)
+with tempfile.TemporaryDirectory() as d8:
+    p = M.Planner(d8)
+    t = p.add("병원", "2026-09-14")
+    p.update(t["id"], date="2026-09-10")
+    check("추가한 날을 바꾸면 그 달 파일로 옮겨 저장", "병원" in open(os.path.join(d8, "달력", "2026년 09월.md"), encoding="utf-8").read() and p.on("2026-09-10")[0]["text"] == "병원")
+    p.set_done_on(t["id"], "2026-09-20")
+    q = M.Planner(d8)
+    check("완료한 날을 정하면 완료로 되고 파일에 ✓날짜로 남음", q.todos[0]["done"] and q.todos[0]["done_on"] == "2026-09-20" and "✓2026-09-20" in open(os.path.join(d8, "달력", "2026년 09월.md"), encoding="utf-8").read())
+
 print("실패 %d" % fails if fails else "전부 통과")
 sys.exit(1 if fails else 0)
