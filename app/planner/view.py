@@ -201,9 +201,8 @@ class PlannerView(tk.Frame):
                 continue
             d = M.parse(t.get("date"))
             diff = (datetime.date.today() - d).days if d and not t["done"] else 0     # 양수 = 며칠째 밀림, 음수 = 앞으로 며칠 남음(D-n)
-            age = max(diff, 0)
             self.tree.insert("", "end", iid=t["id"], text=("☑  " if t["done"] else "☐  ") + t["text"],
-                             values=((t["date"] + (f"  {age}일째" if age > 0 else f"  D-{-diff}" if diff < 0 else "  D-day")) if t.get("date") else "", t.get("done_on") or ""),
+                             values=((t["date"] + (f"  D-{-diff}" if diff < 0 else "  D-day" if diff == 0 else "")) if t.get("date") else "", t.get("done_on") or ""),
                              tags=("done",) if t["done"] else ())
 
     def on_tree_menu(self, e):
