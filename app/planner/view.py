@@ -93,6 +93,12 @@ class PlannerView(tk.Frame):
         self.month = (m - 1) % 12 + 1
         self.refresh()
 
+    def goto_month(self, year, month):
+        """노트 목록에서 달력 파일을 고르면 달력이 그 달로 간다(달력 화면은 그대로)"""
+        self.year, self.month = year, month
+        self.sel = f"{year:04d}-{month:02d}-01"
+        self.refresh()
+
     def goto(self, d):
         self.year, self.month, self.sel = d.year, d.month, M.iso(d)
         self.refresh()

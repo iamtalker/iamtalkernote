@@ -1771,7 +1771,6 @@ class App:
         self.nbtree.bind("<<TreeviewSelect>>", self.on_nb_select)
         self.nbtree.bind("<Delete>", lambda e: self.delete_notebook())
         self.nbtree.bind("<Button-3>", self.on_nb_menu)
-        self.nbtree.bind("<ButtonRelease-1>", self.on_nb_click, add="+")
         self.nbmenu = tk.Menu(self.root, tearoff=0)
         self.tag_sec = tk.Frame(self.left_pane, bg=C["bg"])
         self.section_head(self.tag_sec, "태그", clear=self.clear_tag)
@@ -2660,7 +2659,7 @@ class App:
             if key == QUICK:
                 label, count, parent = "바로가기", None, ""
             elif key == FAVS:
-                label, count, parent = "★ 즐겨찾기", sum(1 for n in self.all_notes if self.is_fav(n)), f"nb{idx[QUICK]}"
+                label, count, parent = "즐겨찾기", sum(1 for n in self.all_notes if self.is_fav(n)), f"nb{idx[QUICK]}"
             elif key == OUTL:
                 label, count, parent = "아웃라이너", total(key), f"nb{idx[QUICK]}"
             elif key == TRASH:
@@ -2734,13 +2733,6 @@ class App:
         if self.tag is None:
             self.tagtree.selection_remove(*self.tagtree.selection())
         self.refresh()
-
-    def on_nb_click(self, e):
-        """이미 고른 '달력·할일'을 다시 누르면(달력 파일을 열어 달력이 닫힌 뒤) 달력 화면으로 돌아온다. 같은 줄을 다시 눌러도 선택 이벤트는 오지 않아서 따로 본다"""
-        row = self.nbtree.identify_row(e.y)
-        if row and self.nb == CAL and self.cur and self.nb_keys[int(row[2:])] == CAL:
-            self.flush()
-            self.close_note()
 
     def on_nb_select(self, e=None):
         if self.quiet:
@@ -3221,6 +3213,11 @@ class App:
 
     def on_list_click(self, e):
         n = self.card_at(e)
+        if n and self.nb == CAL and self.feat["cal"] and not self.cur and self.planner_view is not None:
+            m = pm.MONTH_RE.match(os.path.basename(n["path"]))
+            if m:                                   # 달력·할일에는 마크다운·좌우 분할 보기가 없다: 달력만 그 달로 간다
+                self.planner_view.goto_month(int(m.group(1)), int(m.group(2)))
+            return "break"
         if isinstance(n, docidx.Doc):   # 가져온 파일은 여러 개 고르기·이동·삭제가 없다: 그냥 연다
             self.anchor = n["path"]
             self.clear_multi()
@@ -3516,8 +3513,6 @@ class App:
         self.text.yview_moveto(0)
         self.dirty = False
         self.update_status()
-        if self.nb == CAL:
-            self.status.config(text=self.status.cget("text") + "   ·   왼쪽 '달력·할일'을 다시 누르면 달력으로 돌아갑니다")
         if n.get("trash"):               # 휴지통의 노트: 읽기 전용(우클릭 → 복원 · 완전히 삭제)
             self.text.config(state="disabled")
             self.title_entry.config(state="readonly")

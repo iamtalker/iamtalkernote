@@ -226,17 +226,14 @@ for _ in range(60):
     app.root.update()
     time.sleep(0.02)
 check("달력·할일을 고르면 노트 목록에 달력 파일들이 뜸", any(n["title"] == "2026년 11월" for n in app.notes) and app.cards)
-app.open_note(next(n for n in app.notes if n["title"] == "2026년 11월"))
+n_ = next(n for n in app.notes if n["title"] == "2026년 11월")
+app.card_at = lambda e: n_
+pv.goto_month(2026, 10)
+app.on_list_click(type("E", (), {"x": 1, "y": 1, "state": 0})())
 for _ in range(10):
     app.root.update()
-check("달력 파일을 열면 달력 화면이 닫힘", not pv.winfo_ismapped() and app.cur is not None)
-iid_ = f"nb{app.nb_keys.index(notes.CAL)}"
-bb_ = app.nbtree.bbox(iid_)
-ev_ = type("E", (), {"x": 10, "y": (bb_[1] + 5) if bb_ else 5})()
-app.on_nb_click(ev_)
-for _ in range(10):
-    app.root.update()
-check("'달력·할일'을 다시 누르면 달력으로 돌아옴", pv.winfo_ismapped() and app.cur is None)
+check("목록에서 달력 파일을 눌러도 마크다운으로 안 바뀌고 달력이 그 달로 감", pv.winfo_ismapped() and app.cur is None and (pv.year, pv.month) == (2026, 11))
+del app.card_at
 app.nb = notes.ALL
 app.reload_notes()
 app.close_note()
@@ -250,6 +247,7 @@ for _ in range(20):
     app.root.update()
     time.sleep(0.02)
 pv = app.planner_view
+pv.goto(__import__("datetime").date.today())
 check("공수달력을 켜면 달력 위에 단가·일비 칸이 보임", pv.rate.winfo_ismapped() and pv.rate_vars["wage"].get() == "150,000")
 pv.rate_vars["wage"].set("200,000")
 pv.rate_vars["meal"].set("30000")
