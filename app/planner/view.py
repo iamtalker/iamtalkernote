@@ -9,10 +9,10 @@ WEEK = "일월화수목금토"
 
 
 class PlannerView(tk.Frame):
-    def __init__(self, master, colors, ui, planner, get_cfg, set_cfg=None):
+    def __init__(self, master, colors, ui, planner, get_cfg, set_cfg=None, on_change=None):
         """get_cfg() → {'gongsu': bool, 'wage': 원, 'meal': 원} (설정에서 읽는다). set_cfg(키, 값) 은 달력 위의 단가·일비 칸에서 고친 값을 설정에 적는다"""
         super().__init__(master, bg=colors["bg"])
-        self.C, self.ui, self.pl, self.get_cfg, self.set_cfg = colors, ui, planner, get_cfg, set_cfg
+        self.C, self.ui, self.pl, self.get_cfg, self.set_cfg, self.on_change = colors, ui, planner, get_cfg, set_cfg, on_change
         today = datetime.date.today()
         self.year, self.month, self.sel = today.year, today.month, M.iso(today)
         self.only_sel = tk.BooleanVar(value=False)
@@ -160,9 +160,15 @@ class PlannerView(tk.Frame):
         m.add_command(label="이 날 할일 추가…", command=self.add_dated)
         m.tk_popup(e.x_root, e.y_root)
 
+    def changed(self):
+        """자료를 고쳤을 때: 화면을 새로 그리고, 앱에 알려 노트 목록의 달력 파일 목록도 새로 읽게 한다"""
+        self.refresh()
+        if self.on_change:
+            self.on_change()
+
     def set_gongsu(self, v):
         self.pl.set_gongsu(self.sel, v)
-        self.refresh()
+        self.changed()
 
     def ask_gongsu(self):
         s = simpledialog.askstring("공수", f"{self.sel} 공수(예: 1, 1.5, 2)", parent=self)
@@ -175,7 +181,7 @@ class PlannerView(tk.Frame):
     def add_dated(self):
         s = simpledialog.askstring("할일", f"{self.sel} 할일", parent=self)
         if s and self.pl.add(s, self.sel):
-            self.refresh()
+            self.changed()
 
     # ---- 할일
     def draw_todos(self):
@@ -190,7 +196,7 @@ class PlannerView(tk.Frame):
             t = self.pl.find(row)
             if t:
                 self.pl.update(row, done=not t["done"])
-                self.refresh()
+                self.changed()
 
     def selected(self):
         sel = self.tree.selection()
@@ -200,22 +206,22 @@ class PlannerView(tk.Frame):
         text = self.entry.get()
         if self.pl.add(text):
             self.entry.delete(0, "end")
-            self.refresh()
+            self.changed()
 
     def give_date(self):
         tid = self.selected()
         if tid:
             self.pl.update(tid, date=self.sel)
-            self.refresh()
+            self.changed()
 
     def clear_date(self):
         tid = self.selected()
         if tid:
             self.pl.update(tid, date=None)
-            self.refresh()
+            self.changed()
 
     def delete(self):
         tid = self.selected()
         if tid:
             self.pl.remove(tid)
-            self.refresh()
+            self.changed()

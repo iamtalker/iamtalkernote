@@ -2352,7 +2352,7 @@ class App:
                 self.empty.pack_forget()
                 if self.planner_view is None:
                     self.planner_view = PlannerView(self.editf, C, self.ui, self.planner, self.planner_cfg,
-                                                   lambda k, v: st.write_config(**{"cal_" + k: v}))
+                                                   lambda k, v: st.write_config(**{"cal_" + k: v}), self.planner_changed)
                 self.planner_view.refresh()
                 self.planner_view.pack(fill="both", expand=True)
             else:
@@ -2367,6 +2367,12 @@ class App:
                 self.trash_view.destroy()
                 self.trash_view = None
             self.main.pack(fill="both", expand=True)
+
+    def planner_changed(self):
+        """달력·할일을 고친 뒤: 새로 생기거나 바뀐 달력 파일이 노트 목록에 보이게 잠시 뒤 목록을 다시 읽는다(연달아 고치면 한 번만)"""
+        if getattr(self, "_pl_job", None):
+            self.root.after_cancel(self._pl_job)
+        self._pl_job = self.root.after(1200, lambda: self.nb == CAL and self.reload_notes(keep_scroll=True))
 
     def planner_cfg(self):
         c = st.read_config()
@@ -2958,6 +2964,8 @@ class App:
         self.all_notes = loaded
         if self.nb.startswith("@doc"):   # 가져온 폴더를 골랐으면 목록은 노트가 아니라 가져온 문서
             self.notes = self.docs.list_docs(self.nb[5:] if self.nb.startswith("@doc:") else None)
+        elif self.nb == CAL:             # 달력·할일: 노트 목록에는 달력 마크다운 파일들(달마다 한 개, 눌러서 열 수 있다)
+            self.notes = [n for n in self.all_notes if n["nb"] == pm.MD_DIR]
         elif self.nb == TRASH:           # 휴지통: 지운 노트를 다른 노트북과 같은 목록으로(삭제까지 남은 날 표시)
             self.notes = self.store.trash_notes()
         elif self.scope_all():           # 모든 파일(저장된 검색 포함) = 내 노트 + 가져온 문서

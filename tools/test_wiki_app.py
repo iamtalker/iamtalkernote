@@ -220,6 +220,12 @@ pv.pl.set_gongsu(pv.sel, 1.5)
 pv.refresh()
 check("공수 요약이 보임", "공수 합계 1.5" in pv.sumlab.cget("text") and "225,000" not in "" and "일비 20,000원" in pv.sumlab.cget("text"))
 check("아래 할일 목록에 표시", len(pv.tree.get_children()) == 1)
+pv.pl.add("파일로 남는 할일", "2026-11-05")
+app.reload_notes()
+for _ in range(60):
+    app.root.update()
+    time.sleep(0.02)
+check("달력·할일을 고르면 노트 목록에 달력 파일들이 뜸", any(n["title"] == "2026년 11월" for n in app.notes) and app.cards)
 app.nb = notes.ALL
 app.reload_notes()
 app.close_note()
