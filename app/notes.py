@@ -1866,7 +1866,6 @@ class App:
         self.lst.pack(side="left", fill="both", expand=True)
         L = self.lst
         L.tag_configure("title", font=self.fonts["card"], lmargin1=18, lmargin2=18, spacing1=10, rmargin=14)
-        L.tag_configure("star", foreground="#e0a020")   # 즐겨찾기 노트 제목 앞의 별
         L.tag_configure("meta", font=self.fonts["meta"], foreground=C["muted"], lmargin1=18, lmargin2=18, rmargin=14, spacing1=1)
         L.tag_configure("snip", font=self.fonts["meta"], foreground=C["sub"], lmargin1=18, lmargin2=18, rmargin=14, spacing1=3, spacing3=10)
         L.tag_configure("pad", spacing3=10)
@@ -3081,8 +3080,6 @@ class App:
         L.config(state="normal")
         for n in chunk:
             a = self.next_line
-            if self.is_fav(n):
-                L.insert("end", "★ ", ("title", "star"))
             L.insert("end", n["title"] + "\n", "title")
             shown_t = n.get("ctime", n["mtime"]) if self.sort == "ctime" else n["mtime"]   # 생성순이면 생성 시각을 보여 준다
             meta = time.strftime("%Y.%m.%d %H:%M", time.localtime(shown_t))
@@ -3278,7 +3275,7 @@ class App:
         if not n or isinstance(n, docidx.Doc):
             return
         on = self.fav.toggle(self.fav_rel(n))
-        self.status.config(text=("★ 즐겨찾기에 넣었습니다: " if on else "☆ 즐겨찾기에서 뺐습니다: ") + n["title"])
+        self.status.config(text=("즐겨찾기에 넣었습니다: " if on else "즐겨찾기에서 뺐습니다: ") + n["title"])
         if self.nb == FAVS:   # 즐겨찾기 목록을 보는 중이면 빠진 노트는 목록에서도 빠진다
             self.notes = [x for x in self.all_notes if self.is_fav(x)]
         self.reload_notebooks()
