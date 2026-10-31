@@ -10,6 +10,7 @@ import store as st
 import syncengine as se
 import stages
 import stagesync
+import syncprogress
 import syncsettings
 import syncpolicy as sp
 
@@ -519,6 +520,9 @@ def tab(app, p, kit):
         hr(body)
         ver = lab(body, "", fg=C["muted"], font=(app.ui, 9), wraplength=440)
         ver.pack(anchor="w")
+        prog = lab(body, "", fg=C["muted"], font=(app.ui, 9), wraplength=440, justify="left")
+        prog.pack(anchor="w", pady=(2, 0))
+        etas = {"e": syncprogress.Eta()}
 
         # ---- 주기적으로 상태 보기
         def poll():
@@ -529,7 +533,9 @@ def tab(app, p, kit):
                 if not eng.running():
                     return None
                 ids = [x["id"] for x in current_plans(app, state["policy"])]
-                return eng.overview(ids), eng.pending_devices(), eng.upgrade_info()
+                pol = state["policy"]
+                pp = eng.peer_progress(sp.folder_id(pol, "markdown")) if sp.is_simple(pol) else None
+                return eng.overview(ids), eng.pending_devices(), eng.upgrade_info(), pp
 
             def done(r, err):
                 if not alive["on"]:
@@ -538,7 +544,15 @@ def tab(app, p, kit):
                     status.config(text="꺼져 있음" if not eng.enabled() else "시작하지 못했거나 아직 시작 중입니다", fg=C["muted"])
                     show_pending([])
                 else:
-                    ov, pending, up = r
+                    ov, pending, up, pp = r
+                    if pp is None:
+                        prog.config(text="")
+                    else:
+                        plan = stagesync.load_plan(app.store.root)
+                        stage = ""
+                        if plan and stagesync.enabled(state["policy"]):
+                            stage = "열린 단계 %d / %d\n" % (min(stagesync.released(), len(plan["tiers"])), len(plan["tiers"]))
+                        prog.config(text=stage + "폰 받기: " + syncprogress.line(pp[0], pp[1], pp[2], pp[3], etas["e"].update(pp[3])))
                     states = [s for s, _ in ov["folders"].values()]
                     busy = sum(1 for s in states if s not in ("idle", "?"))
                     status.config(text=f"실행 중 · 연결된 기기 {ov['connected']}/{ov['peers']}" + (f" · 맞추는 중 {busy}개" if busy else " · 모두 최신"), fg="#15803d")

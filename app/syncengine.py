@@ -273,6 +273,20 @@ class Engine:
         except OSError:
             pass
 
+    def peer_progress(self, folder_id):
+        """연결된 기기들이 이 폴더를 얼마나 받았는지 합친 값: (전체 파일, 남은 파일, 전체 바이트, 남은 바이트). 연결된 기기가 없으면 None"""
+        conns = (self.api("/rest/system/connections") or {}).get("connections", {})
+        me = self.my_id()
+        out = None
+        for d in self.api("/rest/config")["devices"]:
+            i = d["deviceID"]
+            if i == me or not conns.get(i, {}).get("connected"):
+                continue
+            x = self.api("/rest/db/completion?folder=%s&device=%s" % (urllib.parse.quote(folder_id), i), timeout=8) or {}
+            v = (int(x.get("globalItems", 0)), int(x.get("needItems", 0)), int(x.get("globalBytes", 0)), int(x.get("needBytes", 0)))
+            out = v if out is None or v[3] > out[3] else out   # 가장 덜 받은 기기 기준
+        return out
+
     # ---- 상태
     def overview(self, folder_ids):
         """{'connected': 연결된 기기 수, 'peers': 등록된 기기 수, 'folders': {id: (상태, 남은바이트)}}"""

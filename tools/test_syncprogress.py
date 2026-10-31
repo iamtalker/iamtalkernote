@@ -1,0 +1,30 @@
+"""진행 상황 계산(syncprogress.py) 시험"""
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "app"))
+import syncprogress as spg
+
+fails = 0
+
+
+def check(name, ok):
+    global fails
+    print(("  ✔ " if ok else "  ✘ ") + name)
+    fails += 0 if ok else 1
+
+
+e = spg.Eta()
+check("처음엔 속도를 모름", e.update(1000, 0) == 0 and e.update(900, 10) == 0)
+r = e.update(800, 20)
+check("20초에 200바이트 → 초당 10", abs(r - 10) < 1e-9)
+check("남은 시간 80초 → 약 1분", spg.remaining(800, r) == "약 1분")
+check("남은 시간 글자", spg.remaining(3000, 10) == "약 5분" and spg.remaining(100, 10) == "1분 미만" and spg.remaining(0, 10) == "" and spg.remaining(50, 0) == "")
+check("시간·일 단위", spg.remaining(73800, 10) == "약 2시간 3분" and spg.remaining(936000, 10) == "약 1일 2시간")
+check("남은 용량이 늘면 다시 셈", e.update(5000, 25) == 0)
+check("용량 글자", spg.size(12 << 20) == "12MB" and spg.size(3 << 29) == "1.5GB")
+s = spg.line(1000, 250, 1 << 30, 1 << 28, 0)
+check("줄: 개수·퍼센트·용량", "전체 1000개" in s and "받음 750개" in s and "남음 250개" in s and "75%" in s and "속도" not in s)
+check("줄: 속도 있으면 시간도", "남은 시간" in spg.line(1000, 250, 1 << 30, 1 << 28, 1 << 20))
+print("통과" if not fails else "실패 %d" % fails)
+sys.exit(1 if fails else 0)
