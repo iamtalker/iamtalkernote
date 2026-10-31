@@ -85,3 +85,25 @@ def reconcile(policy, directory):
     elif what == "push":
         write(directory, snapshot(policy))
     return what
+
+
+TOTALS_FILE = "totals.json"
+
+
+def write_totals(directory, plan):
+    """폰이 '전체 N개 중 M개'를 보이도록 글·그림 총수를 설정 폴더에 적는다(내용이 같으면 다시 쓰지 않는다). 적었으면 True"""
+    notes = sum(1 for t in plan["tiers"] for f in t["files"] if f.endswith(".md"))
+    media = sum(1 for t in plan["tiers"] for f in t["files"] if not f.endswith(".md"))
+    new = {"notesAll": notes, "mediaAll": media}
+    try:
+        with open(os.path.join(directory, TOTALS_FILE), encoding="utf-8") as fh:
+            if json.load(fh) == new:
+                return False
+    except (OSError, ValueError):
+        pass
+    os.makedirs(directory, exist_ok=True)
+    tmp = os.path.join(directory, TOTALS_FILE + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(new, fh)
+    os.replace(tmp, os.path.join(directory, TOTALS_FILE))
+    return True

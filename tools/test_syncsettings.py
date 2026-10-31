@@ -1,4 +1,5 @@
 """설정 양방향 맞추기(syncsettings.py) 시험: py -3 -I -X utf8 tools/test_syncsettings.py"""
+import json
 import os
 import sys
 import tempfile
@@ -47,5 +48,8 @@ with tempfile.TemporaryDirectory() as d:
     check("설정 폴더는 항상 양방향", len(cfg) == 1 and cfg[0]["type"] == "sendreceive" and "-cfg-" in cfg[0]["id"])
     check("설정 폴더 ID 규칙(폰과 같음)", cfg[0]["id"] == ss.control_id(pol))
     check("경로를 안 주면 만들지 않음", not [p for p in sp.plan(pol, d, "pc", {}) if p["module"] == "control"])
-print("통과 %d / %d" % (14 - fails, 14) if fails == 0 else "실패 %d" % fails)
+    plan = {"tiers": [{"files": ["a.md", ".resources/x.png"]}, {"files": ["b.md", ".resources/y.png", ".resources/z.png"]}]}
+    check("총수를 적음(글 2·그림 3)", ss.write_totals(d, plan) and json.load(open(os.path.join(d, ss.TOTALS_FILE))) == {"notesAll": 2, "mediaAll": 3})
+    check("같으면 다시 쓰지 않음", ss.write_totals(d, plan) is False)
+print("통과 %d / %d" % (16 - fails, 16) if fails == 0 else "실패 %d" % fails)
 sys.exit(1 if fails else 0)

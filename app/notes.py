@@ -46,6 +46,7 @@ import tray  # noqa: E402   (닫기 버튼을 누르면 앱을 끄지 않고 알
 import updater  # noqa: E402
 import wikiconv  # noqa: E402
 import viewdelete  # noqa: E402
+import tagac  # noqa: E402
 import winpreview  # noqa: E402   (윈도 미리보기 처리기를 노트 화면 안에: pdf·mp3 …)
 from version import VERSION  # noqa: E402
 
@@ -3212,16 +3213,41 @@ class App:
         self.tag_edit = (ent, hint)
         ent.focus_set()
         ent.icursor("end")
-        ent.bind("<Return>", lambda e: self.finish_tags(True))
-        ent.bind("<KP_Enter>", lambda e: self.finish_tags(True))
-        ent.bind("<Escape>", lambda e: self.finish_tags(False))
-        ent.bind("<FocusOut>", lambda e: self.finish_tags(True))
+        self.tag_ac = tagac.TagComplete(ent, self.ac_tags, C, (self.ui, 9), ime.composing)   # 치는 낱말에 맞는 기존 태그 목록(↓↑ Tab Enter 클릭)
+        ent.bind("<Return>", lambda e: self.tag_return())
+        ent.bind("<KP_Enter>", lambda e: self.tag_return())
+        ent.bind("<Escape>", lambda e: self.tag_escape())
+        ent.bind("<FocusOut>", lambda e: self.root.after(150, self.tag_focus_lost))
+        self.tag_ac.refresh()
+
+    def tag_return(self):
+        """Enter: 후보 목록에서 고른 태그가 있으면 그것을 넣고, 없으면 저장한다"""
+        if not self.tag_ac.on_return():
+            self.finish_tags(True)
+        return "break"
+
+    def tag_escape(self):
+        """Esc: 후보 목록이 떠 있으면 목록만 닫고, 아니면 태그 고치기를 취소한다"""
+        if self.tag_ac.visible():
+            self.tag_ac.close()
+        else:
+            self.finish_tags(False)
+        return "break"
+
+    def tag_focus_lost(self):
+        """입력칸이 포커스를 잃으면 저장하되, 후보 목록을 누르는 중이거나 포커스가 돌아왔으면 그대로 둔다"""
+        if not self.tag_edit or self.tag_ac.clicking:
+            return
+        if self.root.focus_get() is self.tag_edit[0]:
+            return
+        self.finish_tags(True)
 
     def finish_tags(self, save):
         if not self.tag_edit:
             return
         ent, hint = self.tag_edit
         self.tag_edit = None          # FocusOut 이 되풀이로 불리지 않게 먼저 비운다
+        self.tag_ac.close()
         value = ent.get()
         ent.destroy()
         hint.destroy()

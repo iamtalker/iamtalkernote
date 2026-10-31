@@ -84,6 +84,9 @@ def start_stage_watcher(app):
                 if app.sync.running() and sp.exists(app.store.root):
                     pol = sp.load(app.store.root)
                     stagesync.tick(app.sync, app.store.root, pol, lambda: current_plans(app, pol))
+                    plan_ = stagesync.load_plan(app.store.root)
+                    if plan_:
+                        syncsettings.write_totals(syncsettings.control_dir(), plan_)   # 폰이 전체 개수를 알 수 있게
                     if syncsettings.reconcile(pol, syncsettings.control_dir()) == "pull":   # 폰에서 더 최근에 바꿨다 → 정책에 받아들이고 적용
                         sp.save(app.store.root, pol)
                         app.sync.apply(current_plans(app, pol))
@@ -108,9 +111,58 @@ def resume(app):
     threading.Thread(target=work, daemon=True).start()
 
 
+class SelText(tk.Text):
+    """마우스로 드래그해 고르고 Ctrl+C 로 복사할 수 있는 읽기 전용 글자(tk.Label 대신). tk.Label 처럼 .config(text=…, fg=…) 로 바꾼다.
+    줄바꿈에 맞춰 높이를 스스로 맞춘다."""
+
+    def __init__(self, parent, text="", fg="#111111", bg="#ffffff", font=None, wraplength=None, width=None, **_ignored):
+        chars = width or (max(8, int(wraplength / 7)) if wraplength else max(2, len(str(text).split(chr(10))[0]) + 2))
+        super().__init__(parent, wrap="word", height=1, width=chars, borderwidth=0, highlightthickness=0, relief="flat", bg=bg, fg=fg,
+                         font=font, cursor="xterm", padx=0, pady=0, insertwidth=0, takefocus=0, state="disabled", spacing1=0, spacing3=0)
+        self._auto = not width and not wraplength   # 폭을 정하지 않은 글은 가장 긴 줄에 폭을 맞춘다(나중에 글이 바뀌어도)
+        self.bind("<Button-1>", lambda e: self.focus_set())
+        self.bind("<Control-a>", lambda e: (self.tag_add("sel", "1.0", "end-1c"), "break")[1])
+        self.bind("<Configure>", lambda e: self._fit())
+        self._set(text)
+
+    def _set(self, text):
+        self.configure(state="normal")
+        self.delete("1.0", "end")
+        self.insert("1.0", str(text))
+        self.configure(state="disabled")
+        if self._auto:
+            tk.Text.configure(self, width=max(2, max(len(x) for x in str(text).split(chr(10))) + 2))
+        self._fit()
+
+    def _fit(self):
+        try:
+            n = self.count("1.0", "end-1c", "displaylines")
+            n = (n[0] if n else 1) or 1
+            if int(self.cget("height")) != n:
+                tk.Text.configure(self, height=n)
+        except tk.TclError:
+            pass
+
+    def configure(self, cnf=None, **kw):   # noqa: D102
+        if "text" in kw:
+            self._set(kw.pop("text"))
+        if "fg" in kw:
+            kw["foreground"] = kw.pop("fg")
+        kw.pop("wraplength", None)
+        kw.pop("justify", None)
+        kw.pop("anchor", None)
+        return super().configure(cnf, **kw) if (cnf or kw) else None
+
+    config = configure
+
+
 def tab(app, p, kit):
     """kit: lab, title, hr, copy, Btn, C, top, ui — 옵션 창이 쓰는 도우미들"""
     lab, title, hr, copy, Btn, C, top, ui = (kit[k] for k in ("lab", "title", "hr", "copy", "Btn", "C", "top", "ui"))
+    lab_plain = lab
+
+    def lab(parent, text, **k):   # noqa: F811  (이 탭의 글자는 마우스로 골라 복사할 수 있게 한다)
+        return SelText(parent, text, fg=k.pop("fg", C["text"]), bg=C["bg"], font=k.pop("font", (app.ui, 10)), wraplength=k.pop("wraplength", None), width=k.pop("width", None))
     eng = app.sync
     root = app.store.root
     title(p, "동기화", "폰과 컴퓨터의 노트를 서버 없이 직접 맞춥니다(Syncthing 사용).")
