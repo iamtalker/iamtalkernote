@@ -140,7 +140,7 @@ class Planner:
 
     def signature(self):
         try:
-            return tuple(sorted((e.name, e.stat().st_mtime_ns) for e in os.scandir(self.dir) if e.name.endswith(".md")))
+            return tuple(sorted((e.name, e.stat().st_mtime_ns, e.stat().st_size) for e in os.scandir(self.dir) if e.name.endswith(".md")))   # 수정 시각이 같은 틱이어도 크기가 달라지면 알아챈다
         except OSError:
             return ()
 
