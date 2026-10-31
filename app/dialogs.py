@@ -813,6 +813,16 @@ class DialogsMixin:
                     self.render()
             tk.Checkbutton(p, text=tr("괄호 없이 제목과 같은 낱말도 연결  (톰보이 방식)"), variable=wa, command=set_auto,
                            bg=C["bg"], activebackground=C["bg"], font=(self.ui, 10), selectcolor=C["bg"]).pack(anchor="w")
+            ws = tk.BooleanVar(value=st.wiki_scoped())
+
+            def set_scope():
+                st.write_config(wikiScope=ws.get())
+                if self.cur:
+                    self.render()
+            tk.Checkbutton(p, text=tr("위키 링크를 같은 노트북 안으로 제한  (최상위 노트북 하나가 위키 하나)"), variable=ws, command=set_scope,
+                           bg=C["bg"], activebackground=C["bg"], font=(self.ui, 10), selectcolor=C["bg"]).pack(anchor="w")
+            lab(p, tr("켜면 [[제목]]·![[제목]](다른 노트 내용 포함)·자동완성·연결된 노트·제목 중복 검사가 그 노트가 있는 최상위 노트북 안에서만 일어납니다. 같은 제목도 노트북이 다르면 만들 수 있고, 같은 폴더의 노트가 먼저 연결됩니다."),
+                fg=C["muted"], font=(self.ui, 9), wraplength=620).pack(anchor="w", pady=(2, 0))
             lab(p, tr("켜 두면 같은 제목의 노트는 만들 수 없고, [[제목]] 은 가장 최근에 고친 노트로 연결됩니다. 없는 제목의 링크는 붉게 보이고 누르면 새로 만들 수 있습니다. 끄면 [[ ]] 는 그냥 글자입니다."),
                 fg=C["muted"], font=(self.ui, 9), wraplength=620).pack(anchor="w", pady=(2, 0))
             hr(p)
@@ -1087,7 +1097,7 @@ class DialogsMixin:
             lab(p, tr("유튜브 영상"), font=(self.ui, 10, "bold")).pack(anchor="w")
             lab(p, tr("노트 안의 유튜브 영상은 썸네일로 보이고, 누르면 재생 창이 열립니다."), fg=C["muted"], font=(self.ui, 9)).pack(anchor="w", pady=(0, 4))
             vo = tk.StringVar(value=st.read_config().get("video_open", "app"))
-            for key, label in (("app", tr("작은 재생 창 (Edge 앱 창, 주소창 없음)")), ("browser", tr("기본 브라우저"))):
+            for key, label in (("app", tr("작은 재생 창 (Brave 앱 창, 없으면 Edge · 주소창 없음)")), ("browser", tr("기본 브라우저"))):
                 tk.Radiobutton(p, text=label, value=key, variable=vo, command=lambda: st.write_config(video_open=vo.get()),
                                bg=C["bg"], activebackground=C["bg"], font=(self.ui, 10)).pack(anchor="w")
 
@@ -1200,8 +1210,22 @@ class DialogsMixin:
                 move_btn.pack_forget()
 
         def fonts_tab(p):
-            title(p, tr("글꼴"), tr("노트 목록과 노트의 글자 크기·굵기를 정합니다. 적용을 누르면 바로 바뀝니다."))
+            title(p, tr("글꼴"), tr("글꼴 종류와 노트 목록·노트의 글자 크기·굵기를 정합니다. 적용을 누르면 바로 바뀝니다."))
             fc = self.font_cfg()
+            fams = sorted({f for f in tkfont.families() if not f.startswith("@")}, key=str.casefold)
+            first = [f for f in ("맑은 고딕", "나눔고딕", "NanumGothic", "Segoe UI", "D2Coding", "Consolas") if f in fams]
+            choices = first + [f for f in fams if f not in first]
+            fam_ui, fam_mono = tk.StringVar(value=self.ui), tk.StringVar(value=self.mono)
+
+            def family_row(name, var, hint):
+                row = tk.Frame(p, bg=C["bg"])
+                row.pack(fill="x", pady=(6, 0))
+                lab(row, name, width=14).pack(side="left")
+                ttk.Combobox(row, textvariable=var, values=choices, width=28, state="readonly").pack(side="left", ipady=2)
+                lab(row, hint, fg=C["muted"], font=(self.ui, 9)).pack(side="left", padx=10)
+            family_row(tr("화면 글꼴"), fam_ui, tr("목록·렌더링·표·메뉴"))
+            family_row(tr("고정폭 글꼴"), fam_mono, tr("마크다운 편집·코드"))
+            hr(p)
             ls, lb = tk.StringVar(value=str(fc["list_size"])), tk.BooleanVar(value=fc["list_bold"])
             ns, nb = tk.StringVar(value=str(fc["note_size"])), tk.BooleanVar(value=fc["note_bold"])
 
@@ -1229,16 +1253,16 @@ class DialogsMixin:
                     a, b = int(float(ls.get())), int(float(ns.get()))
                 except ValueError:
                     return
-                prev1.config(font=(self.ui, max(8, min(20, a)), "bold" if lb.get() else "normal"))
-                prev2.config(font=(self.ui, max(8, min(28, b)), "bold" if nb.get() else "normal"))
-            for v in (ls, lb, ns, nb):
+                prev1.config(font=(fam_ui.get() or self.ui, max(8, min(20, a)), "bold" if lb.get() else "normal"))
+                prev2.config(font=(fam_ui.get() or self.ui, max(8, min(28, b)), "bold" if nb.get() else "normal"))
+            for v in (ls, lb, ns, nb, fam_ui):
                 v.trace_add("write", preview)
             preview()
             row = tk.Frame(p, bg=C["bg"])
             row.pack(anchor="w", pady=(22, 0))
-            Btn(row, tr("적용"), lambda: self.root.after(20, lambda: self.set_fonts(ls.get(), lb.get(), ns.get(), nb.get())),
+            Btn(row, tr("적용"), lambda: self.root.after(20, lambda: self.set_fonts(ls.get(), lb.get(), ns.get(), nb.get(), fam_ui.get(), fam_mono.get())),
                 kind="primary", bold=True, padx=22, pady=5).pack(side="left")
-            Btn(row, tr("기본값으로"), lambda: self.root.after(20, lambda: self.set_fonts(10, False, 11, False)), padx=14, pady=5).pack(side="left", padx=8)
+            Btn(row, tr("기본값으로"), lambda: self.root.after(20, lambda: self.set_fonts(10, False, 11, False, "", "")), padx=14, pady=5).pack(side="left", padx=8)
 
         def sync_tab(p):
             syncui.tab(self, p, dict(lab=lab, title=title, hr=hr, copy=copy, Btn=Btn, C=C, top=top, ui=self.ui))

@@ -27,12 +27,116 @@ def width(s):
     return sum(2 if unicodedata.east_asian_width(c) in "WF" else 1 for c in s)
 
 
-def pad(s, n):
-    return s + " " * max(0, n - width(s))
+def pad(s, n, al=""):
+    """칸 너비 n 에 맞춰 채운다. al: 'right' 는 오른쪽 맞춤, 'center' 는 가운데, 그 밖은 왼쪽"""
+    gap = max(0, n - width(s))
+    if al == "right":
+        return " " * gap + s
+    if al == "center":
+        return " " * (gap // 2) + s + " " * (gap - gap // 2)
+    return s + " " * gap
+
+
+def wrap_cell(s, w):
+    """표 칸의 글을 표시 너비 w 안에서 줄바꿈한 줄들(영문은 낱말 경계, 낱말이 w 보다 길거나 한글은 글자 단위). 빈 글은 ['']"""
+    lines, cur = [], ""
+    for word in s.split(" "):
+        sep = " " if cur else ""
+        if width(cur) + len(sep) + width(word) <= w:
+            cur += sep + word
+            continue
+        if cur:
+            lines.append(cur)
+            cur = ""
+        while width(word) > w:          # 낱말 하나가 칸보다 길면 글자 단위로 자른다
+            head, k = "", 0
+            while k < len(word) and width(head + word[k]) <= w:
+                head += word[k]
+                k += 1
+            head = head or word[0]
+            lines.append(head)
+            word = word[len(head):]
+        cur = word
+    lines.append(cur)
+    return lines
+
+
+def fit_columns(w, avail):
+    """열 너비 w 의 합이 avail 보다 크면, 좁은 열은 그대로 두고 남은 칸을 넓은 열이 똑같이 나눠 갖게 줄인다(열마다 최소 2칸)"""
+    if sum(w) <= avail:
+        return list(w)
+    out = [0] * len(w)
+    free = list(range(len(w)))
+    rest = max(avail, 2 * len(w))
+    while free:
+        share = max(2, rest // len(free))
+        small = [i for i in free if w[i] <= share]
+        if not small:
+            for i in free:
+                out[i] = share
+            break
+        for i in small:
+            out[i] = w[i]
+            rest -= w[i]
+            free.remove(i)
+    return out
+
+
+def wrap_px(s, w, ms):
+    """wrap_cell 의 픽셀판: 칸 너비 w(픽셀) 안에서 줄바꿈한 줄들. ms(글) = 글꼴에서 차지하는 픽셀 너비. 영문은 낱말 경계, 긴 낱말·한글은 글자 단위"""
+    lines, cur = [], ""
+    for word in s.split(" "):
+        sep = " " if cur else ""
+        if ms(cur + sep + word) <= w:
+            cur += sep + word
+            continue
+        if cur:
+            lines.append(cur)
+            cur = ""
+        while ms(word) > w:
+            head = ""
+            for ch in word:
+                if ms(head + ch) > w and head:
+                    break
+                head += ch
+            lines.append(head)
+            word = word[len(head):]
+        cur = word
+    lines.append(cur)
+    return lines
+
+
+def fit_px(w, avail, minw):
+    """열 너비(픽셀) w 의 합이 avail 보다 크면 fit_columns 처럼 줄인다(열마다 최소 minw)"""
+    if sum(w) <= avail:
+        return list(w)
+    out = [0] * len(w)
+    free = list(range(len(w)))
+    rest = max(avail, minw * len(w))
+    while free:
+        share = max(minw, rest // len(free))
+        small = [i for i in free if w[i] <= share]
+        if not small:
+            for i in free:
+                out[i] = share
+            break
+        for i in small:
+            out[i] = w[i]
+            rest -= w[i]
+            free.remove(i)
+    return out
+
+
+def tab_tag(stops):
+    """표의 탭 정지점 [(픽셀, 'l'|'r'|'c')] → 태그 이름('T:14l;150r;…'). 화면(notes.py)이 이 이름을 읽어 Text 태그의 tabs 로 만든다"""
+    return "T:" + ";".join("%d%s" % (x, s) for x, s in stops)
 
 
 class Layout:
-    def __init__(self):
+    def __init__(self, cols=None, avail=None, measure=None):
+        self.cols = cols            # 렌더링 칸에 들어가는 고정폭 글자 수(None 이면 줄이지 않는다). avail·measure 가 있으면 쓰지 않는다
+        self.avail = avail          # 렌더링 칸에 들어가는 픽셀 너비
+        self.measure = measure      # 표 글꼴로 글의 픽셀 너비를 재는 함수. avail·measure 가 있으면 표를 탭 정지점으로 맞춘다(한글·영문 폭이 달라도 열이 어긋나지 않음)
         self.out = []
         self.notes = []
         self.heads = []
@@ -211,10 +315,12 @@ class Layout:
             return self.table_single_column(b, m)
         if any(has_image(cell_inline(c)) for r in b[1] for c in r):
             return self.table_with_images(b, m)
-        rows = []
+        rows, aligns = [], {}
         for r in b[1]:
             row = []
             for c in r:
+                if c.get("al") and len(row) not in aligns:
+                    aligns[len(row)] = c["al"]      # 칸 정렬(:--  --:  :-:)은 그 열의 첫 지정을 따른다
                 row.append(text_of(cell_inline(c)).replace("\n", " "))
                 row.extend([""] * (c.get("cs", 1) - 1))
             rows.append(row)
@@ -222,19 +328,81 @@ class Layout:
             self.emit(text_of(b[2]) + "\n", m + ("b",))
         if not rows:
             return
+        if self.avail and self.measure:
+            return self.table_px(rows, aligns, m)
         cols = max(len(r) for r in rows)
         w = [max([width(r[i]) for r in rows if i < len(r)] + [1]) for i in range(cols)]
+        wrapped = False
+        if self.cols and len(rows) > 1 and self.cols - (3 * cols + 1) < 4 * cols:
+            # 칸이 너무 좁아 열마다 4칸도 못 쓰면 상자 대신 행마다 '머리글: 값' 으로 풀어 보여 준다
+            for r in rows[1:]:
+                for i, c in enumerate(r):
+                    if not c.strip():
+                        continue
+                    label = rows[0][i].strip() if i < len(rows[0]) else ""
+                    if label:
+                        self.emit(label + ": ", m + ("b",))
+                    self.emit(c + "\n", m)
+                self.emit("\n", m)
+            return
+        if self.cols:       # 칸이 좁으면 열 너비를 줄이고 칸 안의 글을 줄바꿈한다(안 그러면 줄이 꺾여 상자가 깨진다)
+            fit = fit_columns(w, self.cols - (3 * cols + 1))
+            wrapped, w = fit != w, fit
         for ri, r in enumerate(rows):
-            cells = [pad(r[i] if i < len(r) else "", w[i]) for i in range(cols)]
-            self.emit("│ " + " │ ".join(cells) + " │\n", m + ("code",))
+            cells = [r[i] if i < len(r) else "" for i in range(cols)]
+            pieces = [wrap_cell(c, w[i]) if wrapped else [c] for i, c in enumerate(cells)]
+            for li in range(max(len(p) for p in pieces)):
+                line = [pad(p[li] if li < len(p) else "", w[i], aligns.get(i, "") if ri else "left") for i, p in enumerate(pieces)]   # 머리행은 왼쪽 맞춤
+                self.emit("│ " + " │ ".join(line) + " │\n", m + ("code",))
             if ri == 0:
                 self.emit("├─" + "─┼─".join("─" * x for x in w) + "─┤\n", m + ("code",))
         self.emit("\n", m)
 
+    def table_px(self, rows, aligns, m):
+        """표를 픽셀 단위로 그린다. 줄마다 '<탭>글<탭>글<탭>…' 이고 탭 정지점(왼쪽·오른쪽·가운데)이 열 위치와 정렬을 맡으므로
+        글꼴이 고정폭이 아니어도(한글·영문 폭이 달라도) 열이 정확히 맞는다. 머리행은 굵게 + 아래 가로줄 하나(세로줄 없음).
+        칸이 좁으면 열을 줄이고 글을 줄바꿈하며, 열마다 4글자도 못 쓰면 행마다 '머리글: 값' 카드."""
+        ms = self.measure
+        cw = max(1, ms("0"))
+        n = max(len(r) for r in rows)
+        rows = [r + [""] * (n - len(r)) for r in rows]
+        W = [max([ms(r[i]) for r in rows] + [cw]) for i in range(n)]
+        room = self.avail - 3 * cw * n                       # 칸마다 왼쪽 여백 1글자 + 오른쪽 여백 2글자를 뺀, 글이 쓸 수 있는 너비
+        if sum(W) > room:
+            if len(rows) > 1 and room < 4 * cw * n:
+                for r in rows[1:]:      # 표 대신 행마다 '머리글: 값'
+                    for i, c in enumerate(r):
+                        if not c.strip():
+                            continue
+                        if rows[0][i].strip():
+                            self.emit(rows[0][i].strip() + ": ", m + ("b",))
+                        self.emit(c + "\n", m)
+                    self.emit("\n", m)
+                return
+            W = fit_px(W, room, 2 * cw)
+        wrapped = [[wrap_px(r[i], W[i], ms) if ms(r[i]) > W[i] else [r[i]] for i in range(n)] for r in rows]
+        body, x = [], 0
+        for j in range(n):
+            left = x + cw                                    # 이 열의 글이 시작하는 곳
+            al = aligns.get(j, "")
+            body.append((left + W[j], "r") if al == "right" else (left + W[j] // 2, "c") if al == "center" else (left, "l"))
+            x += 3 * cw + W[j]
+            body.append((x, "l"))
+        tb = tab_tag(body)                                   # 머리행도 그 열의 정렬을 따른다(GFM 과 같음)
+        # 칸마다 태그를 달아 Text 의 태그 테두리로 격자선을 그린다. 같은 태그가 이어지면 바깥 테두리 하나만 생기므로
+        # 이웃한 칸의 태그 이름을 달리한다(행·열 홀짝 4종: tb00 tb01 tb10 tb11, 머리행 th0 th1). 한 칸의 줄바꿈된 줄들은 같은 태그라 한 칸으로 묶인다.
+        for ri, r in enumerate(wrapped):
+            for li in range(max(len(p) for p in r)):
+                for j, p in enumerate(r):
+                    cell = ("th%d" % (j % 2)) if ri == 0 else ("tb%d%d" % ((ri - 1) % 2, j % 2))
+                    self.emit("\t" + (p[li] if li < len(p) else "") + "\t", m + (cell, tb))
+                self.emit("\n", m + (tb,))
+        self.emit("\n", m)
 
-def layout(doc, title=""):
-    """Doc → [(글, 태그들, 덧붙임)]. 목차와 각주를 채워 돌려준다."""
-    lay = Layout()
+
+def layout(doc, title="", cols=None, avail=None, measure=None):
+    """Doc → [(글, 태그들, 덧붙임)]. 목차와 각주를 채워 돌려준다. 표를 칸 폭에 맞추려면 avail(픽셀)+measure(글→픽셀) 또는 cols(글자 수)"""
+    lay = Layout(cols, avail, measure)
     # 목차를 위해 제목을 먼저 모은다
     def collect(bs):
         for b in bs:

@@ -84,6 +84,7 @@ PREVIEW_EXT = ("pdf", *docidx.AUDIO_EXT, *docidx.OFFICE_EXT)   # 윈도 미리�
 MORE_MAX = 4000      # 목록을 이어 그릴 때 한 번에 붙이는 노트 수의 상한(이미 그린 만큼을 붙이되 이 이상은 안 붙인다)
 MORE_MAX_SEARCH = 600  # 검색 중에는 노트마다 본문을 읽어 미리 보기를 만들어서 더 적게
 MORE_SCREENS = 4  # 목록 아래에 남은 글이 이만큼의 화면보다 적어지면 미리 다음 노트들을 이어 그린다
+TABLE_TAGS = ("tb00", "tb01", "tb10", "tb11", "th0", "th1")   # 표 칸 태그(preview.table_px 가 칸마다 달고, 화면이 태그 테두리로 격자선을 그린다)
 ALL = "*"
 FAVS = "@favs"   # 노트북 목록의 즐겨찾기 항목
 TRASH = "@trash"  # 노트북 목록 맨 아래의 휴지통(누르면 오른쪽에 지운 것들과 내용 미리보기). 검색에는 잡히지 않는다

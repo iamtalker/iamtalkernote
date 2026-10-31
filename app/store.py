@@ -40,6 +40,11 @@ def wiki_enabled():
     return bool(read_config().get("wikiEnabled", True))
 
 
+def wiki_scoped():
+    """위키 링크를 같은 노트북(최상위 노트북 하나가 위키 공간 하나) 안으로 제한(기본 꺼짐). 켜면 같은 제목도 노트북이 다르면 만들 수 있다"""
+    return bool(read_config().get("wikiScope", False))
+
+
 def read_config():
     """파일이 없으면 빈 설정. 다른 쓰레드가 바꿔치기하는 찰나에 잠겨 있으면 잠깐 기다렸다 다시 읽는다(빈 설정으로 잘못 읽고 그 위에 덮어쓰지 않게)"""
     for i in range(8):
@@ -877,11 +882,12 @@ class Store:
         finally:
             conn.close()
 
-    def titles(self):
-        """색인에 있는 모든 노트의 [(제목, 경로키)] (위키: 같은 제목 막기)"""
+    def titles(self, space=None):
+        """색인에 있는 모든 노트의 [(제목, 경로키)] (위키: 같은 제목 막기). space 가 있으면 그 위키 공간(최상위 노트북, 밖이면 '')의 노트만"""
         conn = self._db()
         try:
-            return [(md_title(os.path.basename(k)), k) for (k,) in conn.execute("SELECT path FROM notes")]
+            return [(md_title(os.path.basename(k)), k) for (k,) in conn.execute("SELECT path FROM notes")
+                    if space is None or wikilinks.space(os.path.dirname(k)) == space]
         except sqlite3.Error:
             return []
         finally:
@@ -906,7 +912,7 @@ class Store:
         d = self.nb_dir(nb)
         os.makedirs(d, exist_ok=True)
         if wiki_enabled():   # 노트북이 달라도 같은 제목이 없게
-            title = wikilinks.free_title(title, self.titles())
+            title = wikilinks.free_title(title, self.titles(wikilinks.space(nb) if wiki_scoped() else None))
         name, i = title, 2
         while os.path.exists(os.path.join(d, md_name(name))):
             name = f"{title} ({i})"
@@ -962,7 +968,8 @@ class Store:
         if os.path.normcase(target) == os.path.normcase(path):
             return md_title(os.path.basename(path)), path
         if wiki_enabled():
-            base = wikilinks.free_title(base, self.titles(), own=self.key_of(path))
+            own = self.key_of(path)
+            base = wikilinks.free_title(base, self.titles(wikilinks.space(os.path.dirname(own)) if wiki_scoped() else None), own=own)
         n, i = base, 2
         while os.path.exists(os.path.join(d, md_name(n))):
             n = f"{base} ({i})"

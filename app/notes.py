@@ -34,10 +34,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             self.root.iconbitmap(default=os.path.join(HERE, "assets", "icon.ico"))   # 옵션·대화상자 등 이후에 열리는 모든 창도 같은 아이콘
         except tk.TclError:
             pass
-        fams = set(tkfont.families())
-        UI = self.ui = next((f for f in ("맑은 고딕", "Malgun Gothic", "Segoe UI") if f in fams), "TkDefaultFont")
-        _shared.UI = UI   # notes_shared 의 납작한 버튼 등도 같은 글꼴을 쓰게
-        self.mono = next((f for f in ("D2Coding", "Consolas", "Courier New") if f in fams), "TkFixedFont")
+        self.pick_families()
         self.size = 11
         self.style_ttk()
 
@@ -126,16 +123,34 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             except (TypeError, ValueError):
                 return default
         return {"list_size": num("list_size", 10, 8, 20), "list_bold": bool(c.get("list_bold", False)),
-                "note_size": num("note_size", 11, 8, 28), "note_bold": bool(c.get("note_bold", False))}
+                "note_size": num("note_size", 11, 8, 28), "note_bold": bool(c.get("note_bold", False)),
+                "family": str(c.get("family", "") or ""), "mono_family": str(c.get("mono_family", "") or "")}
 
-    def set_fonts(self, ls, lb, ns, nb):
+    UI_FONTS = ("맑은 고딕", "Malgun Gothic", "Segoe UI")
+    MONO_FONTS = ("D2Coding", "Consolas", "Courier New")
+
+    def pick_families(self):
+        """화면 글꼴(self.ui)과 고정폭 글꼴(self.mono)을 정한다: 옵션 → 글꼴에서 고른 것(설치되어 있을 때)이 먼저, 없으면 기본 순서.
+        (이 PC 에 나눔고딕 같은 글꼴이 있으면 옵션에서 고를 수 있다)"""
+        fams = set(tkfont.families())
+        c = st.read_config().get("fonts", {})
+        want = lambda key, default: c.get(key) if c.get(key) in fams else next((f for f in default if f in fams), None)  # noqa: E731
+        UI = self.ui = want("family", self.UI_FONTS) or "TkDefaultFont"
+        _shared.UI = UI   # notes_shared 의 납작한 버튼 등도 같은 글꼴을 쓰게
+        self.mono = want("mono_family", self.MONO_FONTS) or "TkFixedFont"
+
+    def set_fonts(self, ls, lb, ns, nb, family=None, mono=None):
         def num(v, d, lo, hi):
             try:
                 return max(lo, min(hi, int(float(v))))
             except (TypeError, ValueError):
                 return d
+        old = st.read_config().get("fonts", {})
         st.write_config(fonts={"list_size": num(ls, 10, 8, 20), "list_bold": bool(lb),
-                               "note_size": num(ns, 11, 8, 28), "note_bold": bool(nb)})
+                               "note_size": num(ns, 11, 8, 28), "note_bold": bool(nb),
+                               "family": old.get("family", "") if family is None else family,
+                               "mono_family": old.get("mono_family", "") if mono is None else mono})
+        self.pick_families()
         self.rebuild_ui()
         self.show_options("fonts")
 
@@ -146,7 +161,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         fam = self.ui
         F = lambda **kw: tkfont.Font(family=kw.pop("family", fam), size=kw.pop("size", sz), **kw)  # noqa: E731
         self.fonts = {"base": F(weight="bold" if fc["note_bold"] else "normal"), "b": F(weight="bold"), "i": F(slant="italic"), "bi": F(weight="bold", slant="italic"),
-                      "mono": F(family=self.mono, size=max(sz - 1, 8)), "small": F(size=max(sz - 3, 7)),
+                      "mono": F(family=self.mono, size=max(sz - 1, 8)), "table": F(size=max(sz - 1, 8)), "tableb": F(size=max(sz - 1, 8), weight="bold"), "small": F(size=max(sz - 3, 7)),
                       "title": F(size=sz + 6, weight="bold"), "meta": F(size=max(fc["list_size"] - 2, 7)),
                       "card": F(size=fc["list_size"], weight="bold" if fc["list_bold"] else "normal"), "tb_b": F(size=sz - 1, weight="bold"),
                       "tb_i": F(size=sz - 1, slant="italic"), "tb_s": F(size=sz - 1, overstrike=True)}
@@ -1228,6 +1243,16 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         v.tag_configure("sup", offset=5, font=f["small"])
         v.tag_configure("sub", offset=-3, font=f["small"])
         v.tag_configure("code", font=f["mono"], background=C["code"])
+        # 표(탭 정지점으로 열을 맞추므로 고정폭이 아니어도 된다): 칸마다 태그 테두리가 격자선. 이웃한 칸은 이름이 달라야 선이 그려진다(preview.table_px)
+        # Tk 는 태그 이름이 아니라 속성(배경·테두리)이 같으면 이웃한 글을 한 상자로 합치므로, 이웃한 칸의 배경을 눈에 안 띄게 1단계씩 달리한다
+        def near(color, k):
+            ch = [int(color[i:i + 2], 16) for i in (1, 3, 5)]
+            return "#%02x%02x%02x" % tuple(c - k if c >= 128 else c + k for c in ch)
+        for rp in (0, 1):
+            for cp in (0, 1):
+                v.tag_configure("tb%d%d" % (rp, cp), font=f["table"], background=near(C["bg"], rp * 2 + cp), relief="groove", borderwidth=1)
+        for cp in (0, 1):
+            v.tag_configure("th%d" % cp, font=f["tableb"], background=near(C["code"], cp), relief="groove", borderwidth=1)   # 머리행(굵게)
         v.tag_configure("codeblock", font=f["mono"], background=C["code"], lmargin1=8, lmargin2=8)
         v.tag_configure("math", font=f["mono"])
         v.tag_configure("raw", font=f["mono"], foreground=C["muted"], background="#fef3c7")
@@ -1246,6 +1271,8 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         v.tag_raise("link")
         v.tag_raise("linkmiss")
         v.tag_raise("code")
+        for nm in TABLE_TAGS:
+            v.tag_raise(nm)
         v.tag_bind("link", "<Enter>", lambda e: v.config(cursor="hand2"))
         v.tag_bind("link", "<Leave>", lambda e: v.config(cursor="arrow"))
 
@@ -2440,7 +2467,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             return
         if not new and getattr(self, "fresh", None) == self.cur["path"]:
             return                                  # 새 노트는 제목을 비워 둘 수 있다(나갈 때 본문 첫 줄이 제목이 된다)
-        if self.wiki_on() and new and wikilinks.taken(new, self.store.titles(), own=self.store.key_of(self.cur["path"])):
+        if self.wiki_on() and new and wikilinks.taken(new, self.store.titles(wikilinks.space(self.cur["nb"]) if st.wiki_scoped() else None), own=self.store.key_of(self.cur["path"])):
             self.title_var.set(self.cur["title"])
             return messagebox.showinfo(APP, tr('"{0}" 제목의 노트가 이미 있습니다.\n위키 링크([[제목]])를 쓰는 동안은 같은 제목을 만들 수 없어서 제목을 바꾸지 않았습니다.\n(옵션 → 일반에서 위키 링크를 끄면 같은 제목도 쓸 수 있습니다)').format(new), parent=self.root)
         self.flush()
@@ -2601,8 +2628,8 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         try:
             # 클리퍼가 맨 위에 적는 '원본: <주소>' 줄은 렌더링 화면에서만 숨긴다(문서 정보의 URL 은 이 줄에서 읽는다)
             src = SOURCE_LINE.sub("", self.text.get("1.0", "end-1c"), count=1)
-            doc = wikiconv.parse(src, bulk.SYNTAX[FMT], title)
-            segs = preview.layout(doc)
+            doc = wikiconv.parse(self.expand_embeds(src), bulk.SYNTAX[FMT], title)
+            segs = preview.layout(doc, **self.table_kw())
         except Exception as ex:  # noqa: BLE001  (읽기 도구가 못 읽은 글도 편집은 계속할 수 있게)
             return self.status.config(text=tr("렌더링 오류: ") + str(ex))
         self.draw_view(segs)
@@ -2645,6 +2672,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             segs = self.auto_link_segs(segs)
         for t, tags, extra in segs:
             tg = list(tags)
+            self.tab_tags(tg)
             if "b" in tg and "i" in tg:
                 tg.append("bi")
             if extra and extra[0] == "link" and extra[1] == "page":
@@ -2652,8 +2680,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
                     tg = [x for x in tg if x != "link"]
                     extra = None
                 else:
-                    widx = widx or self.wiki_index()
-                    if wikilinks.norm(wikilinks.split_target(extra[2])[0]) not in widx:
+                    if self.wiki_find(wikilinks.split_target(extra[2])[0]) is None:
                         tg.append("linkmiss")
             if extra and extra[0] == "link":
                 key = "L%d" % len(self.links)
@@ -2727,6 +2754,27 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         cands.append(os.path.normpath(os.path.join(base, src.split("?")[0].replace("/", os.sep))))
         cands.append(os.path.join(self.store.media_dir, os.path.basename(src.split("?")[0])))   # 노트가 옮겨져 링크가 어긋났을 때
         return next((c for c in cands if os.path.isfile(c)), None)
+
+    def table_kw(self):
+        """표를 렌더링 칸 폭에 맞추는 데 필요한 값(preview.layout 의 avail·measure). 칸 폭은 20 픽셀 단위로 내려서 조금 변해도 같은 값
+        (렌더링과 블록 맞추기가 같은 값을 써야 하므로 둘 다 이 함수를 쓴다). 아직 화면에 안 나왔으면 {}"""
+        box = self.view.master
+        box.update_idletasks()
+        w = box.winfo_width()
+        if w < 80:      # 아직 화면에 안 나왔다
+            return {}
+        return {"avail": max(120, (w - 2 * 18 - 4 - 20 - 16) // 20 * 20), "measure": self.fonts["table"].measure}
+
+    def tab_tags(self, names):
+        """preview 가 낸 표 탭 태그('T:14l;150r;…')를 Text 태그의 tabs 로 만든다(처음 보는 이름만)"""
+        seen = self.__dict__.setdefault("_tab_tags", set())
+        for nm in names:
+            if nm.startswith("T:") and nm not in seen:
+                seen.add(nm)
+                stops = []
+                for part in nm[2:].split(";"):
+                    stops += [int(part[:-1]), {"l": "left", "r": "right", "c": "center"}[part[-1]]]
+                self.view.tag_configure(nm, tabs=tuple(stops))
 
     def img_avail(self):
         """렌더링 화면에서 그림이 쓸 수 있는 너비(픽셀): 렌더링 칸 너비 - 여백(스크롤바 포함). 50 단위로 내려서 변환 캐시가 늘지 않게.
@@ -2857,7 +2905,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
     # ---- 렌더링 화면 ↔ 원문 맞추기(블록 단위): 우클릭 삭제와 좌우 분할 짝 강조가 함께 쓴다
     def render_flat(self, src):
         """원문을 그려 본 렌더링 글(화면에 그릴 글자들을 이어 붙인 것)"""
-        return "".join(t for t, _, _ in preview.layout(wikiconv.parse(src, bulk.SYNTAX[FMT], self.title_var.get())))
+        return "".join(t for t, _, _ in preview.layout(wikiconv.parse(self.expand_embeds(src), bulk.SYNTAX[FMT], self.title_var.get()), **self.table_kw()))
 
     def view_source(self):
         """렌더링에 실제로 쓰인 원문('원본: 주소' 줄을 뺀 것)과 그 줄의 길이"""
@@ -3089,10 +3137,14 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
                 return self.follow(kind, target)
 
     def open_url(self, url):
-        """주소를 연다. 유튜브 영상은 설정에 따라 작은 재생 창(Edge 앱 창, 주소창 없음)으로, 아니면 기본 브라우저로."""
-        # 유튜브와 영상 파일(.mp4 …)은 주소창 없는 Edge 앱 창으로 연다: 재생 단추·소리·전체 화면이 있는 깨끗한 재생 창이 된다
+        """주소를 연다. 유튜브 영상은 설정에 따라 작은 재생 창(Brave 앱 창, 없으면 Edge, 주소창 없음)으로, 아니면 기본 브라우저로."""
+        # 유튜브와 영상 파일(.mp4 …)은 주소창 없는 앱 창으로 연다: 재생 단추·소리·전체 화면이 있는 깨끗한 재생 창이 된다.
+        # Brave 를 먼저 찾는다(Edge 는 광고를 못 막음). 둘 다 크롬 계열이라 --app 옵션이 같다
         if sys.platform == "win32" and st.read_config().get("video_open", "app") == "app" and (wikiconv.tree.youtube_id(url) or wikiconv.tree.is_video_file(url)):
-            for exe in (os.path.expandvars(r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe"),
+            for exe in (os.path.expandvars(r"%ProgramFiles%\BraveSoftware\Brave-Browser\Application\brave.exe"),
+                        os.path.expandvars(r"%ProgramFiles(x86)%\BraveSoftware\Brave-Browser\Application\brave.exe"),
+                        os.path.expandvars(r"%LocalAppData%\BraveSoftware\Brave-Browser\Application\brave.exe"),
+                        os.path.expandvars(r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe"),
                         os.path.expandvars(r"%ProgramFiles%\Microsoft\Edge\Application\msedge.exe")):
                 if os.path.isfile(exe):
                     subprocess.Popen([exe, f"--app={url}", "--window-size=980,640"])
@@ -3101,12 +3153,13 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
 
     def auto_link_segs(self, segs):
         """옵션 '단어만 있어도 연결'(톰보이 방식): 평범한 글 속에서 다른 노트의 제목과 같은 낱말을 위키 링크로 만든다"""
-        key = (id(self.all_notes), len(self.all_notes))
+        scoped = self.wiki_scoped()
+        key = (id(self.all_notes), len(self.all_notes), self.cur["nb"] if scoped and self.cur else None)
         if getattr(self, "_auto_key", None) != key:
-            self._auto_key, self._auto_tab = key, wikilinks.title_table(self.all_notes)
+            self._auto_key, self._auto_tab = key, wikilinks.title_table(wikilinks.in_space(self.all_notes, self.cur["nb"] if self.cur else "", scoped))
         table, lengths = self._auto_tab
         own = self.cur["title"] if self.cur else ""
-        skip = {"code", "codeblock", "raw", "math", "link", "chip", "h1", "h2", "h3", "h4", "h5", "h6"}
+        skip = {"code", *TABLE_TAGS, "codeblock", "raw", "math", "link", "chip", "h1", "h2", "h3", "h4", "h5", "h6"}
         out = []
         for t, tags, extra in segs:
             if extra is not None or len(t) < 2 or skip.intersection(tags):
@@ -3138,7 +3191,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         if not self.wiki_on():
             return
         want = wikilinks.split_target(target)[0]
-        found = self.wiki_index().get(wikilinks.norm(want))   # 같은 제목이 여럿이면 가장 최근 노트
+        found = self.wiki_find(want)   # 같은 제목이 여럿이면 가장 최근 노트(범위 제한이 켜져 있으면 같은 위키 공간 안에서만)
         if found:
             path = found["path"]
             if found not in self.notes:

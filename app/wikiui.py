@@ -14,6 +14,39 @@ class WikiUIMixin:
             self._wiki_key, self._wiki_idx = key, wikilinks.index(self.all_notes)
         return self._wiki_idx
 
+    def wiki_scoped(self):
+        return st.wiki_scoped()
+
+    def wiki_find(self, title, nb=None):
+        """[[제목]] 이 가리키는 노트(없으면 None). 같은 제목이 여럿이면 가장 최근 노트, 범위 제한이 켜져 있으면 nb(기본: 지금 노트의 노트북)의 위키 공간 안에서만"""
+        k = wikilinks.norm(title)
+        if not self.wiki_scoped():
+            return self.wiki_index().get(k)
+        key = (id(self.all_notes), len(self.all_notes))
+        if getattr(self, "_wiki_mkey", None) != key:
+            self._wiki_mkey, self._wiki_multi = key, wikilinks.multi(self.all_notes)
+        if nb is None:
+            nb = self.cur["nb"] if self.cur else ""
+        return wikilinks.pick(self._wiki_multi.get(k, []), nb, True)
+
+    def expand_embeds(self, src):
+        """렌더링 전에 줄에 ![[노트]]·![[노트#절]] 만 있는 곳을 그 노트의 내용으로 바꾼다(위키가 꺼져 있으면 그대로)"""
+        if "![[" not in src or not self.wiki_on() or self.doc_open:
+            return src
+
+        def fetch(title, nb):
+            n = self.wiki_find(title, nb)
+            if not n:
+                return None
+            try:
+                with open(n["path"], "rb") as fh:
+                    body = st.decode(fh.read())
+            except OSError:
+                return None
+            return {"key": self.store.key_of(n["path"]), "title": n["title"], "body": body, "nb": n["nb"]}
+        me = self.cur["nb"] if self.cur else ""
+        return wikilinks.expand_embeds(src, fetch, me, seen=(self.store.key_of(self.cur["path"]),) if self.cur else ())
+
     # ---- [[ 제목 자동완성
     def wiki_typed(self, e=None):
         if e is not None and e.keysym in ("Up", "Down", "Return", "Tab", "Escape", "Shift_L", "Shift_R", "Control_L", "Control_R"):
@@ -24,7 +57,7 @@ class WikiUIMixin:
         tok = wikilinks.open_token(t.get("insert linestart", "insert") + ime.composing())
         if tok is None:
             return self.wiki_close()
-        items = wikilinks.suggest([n for n in self.all_notes if n["path"] != self.cur["path"]], tok[1])
+        items = wikilinks.suggest(wikilinks.in_space([n for n in self.all_notes if n["path"] != self.cur["path"]], self.cur["nb"], self.wiki_scoped()), tok[1])
         if not items or (len(items) == 1 and wikilinks.norm(items[0]) == wikilinks.norm(tok[1])):
             return self.wiki_close()
         if self.wiki_pop is None:
@@ -120,10 +153,11 @@ class WikiUIMixin:
         def done(link_map):
             if not top.winfo_exists():
                 return
-            idx = self.wiki_index()
             by_key = {self.store.key_of(x["path"]): x for x in self.all_notes}
             mine = self.store.key_of(n["path"])
-            back = [k for k in wikilinks.backlinks(link_map, n["title"]) if k != mine and k in by_key]
+            scoped = self.wiki_scoped()
+            back = [k for k in wikilinks.backlinks(link_map, n["title"]) if k != mine and k in by_key
+                    and (not scoped or wikilinks.space(by_key[k]["nb"]) == wikilinks.space(n["nb"]))]
             out = []
             if self.cur and n["path"] == self.cur["path"]:
                 body = self.text.get("1.0", "end-1c")
@@ -134,7 +168,7 @@ class WikiUIMixin:
                 except OSError:
                     body = ""
             for title, _, _ in wikilinks.links_in(body):
-                tgt = idx.get(wikilinks.norm(title))
+                tgt = self.wiki_find(title, n["nb"])
                 if tgt and tgt["path"] != n["path"] and tgt["path"] not in out:
                     out.append(tgt["path"])
             for which, paths in ((0, [by_key[k]["path"] for k in back]), (1, out)):

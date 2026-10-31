@@ -524,7 +524,8 @@ class Reader:
                 out.append(self.html_table("\n".join(buf)))
                 i = j
                 continue
-            if "|" in ln and i + 1 < n and re.fullmatch(r"\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*", lines[i + 1]):
+            if "|" in ln and i + 1 < n and re.fullmatch(r"\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*", lines[i + 1]) \
+                    and ("|" in lines[i + 1] or "---" in lines[i + 1]):    # 대시 1~2개(:-- --: :-:)도 구분줄(GFM). 파이프 없이 '-' 한두 개뿐인 줄은 표가 아니다
                 flush()
                 rows = [ln]
                 aligns = [("center" if a.strip().startswith(":") and a.strip().endswith(":") else
