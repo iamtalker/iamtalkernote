@@ -28,5 +28,15 @@ check("줄: 개수·퍼센트·용량", "전체 1000개" in s and "받음 750개
 check("줄: 속도 있으면 시간도", "남은 시간" in spg.line(1000, 250, 1 << 30, 1 << 28, 1 << 20))
 s2 = spg.line(1000, 250, 1 << 30, 1 << 28, 0, 5000)
 check("전체 파일 수 기준: 5,000 중 750 받음 15%", "전체 5,000개" in s2 and "받음 750개" in s2 and "남음 4,250개" in s2 and "15%" in s2)
+import json, tempfile, time as _t
+with tempfile.TemporaryDirectory() as d_:
+    check("폰이 적은 값이 없으면 None", spg.read_phone(d_) is None)
+    json.dump({"updated": int(_t.time() * 1000), "notesHave": 400, "notesAll": 13666, "mediaHave": 1500, "mediaAll": 53314}, open(d_ + "/progress.json", "w"))
+    ph = spg.read_phone(d_)
+    check("폰이 적은 값을 읽음", ph and ph["notesHave"] == 400)
+    ln = spg.phone_line(ph)
+    check("줄: 전체 66,980 중 1,900 · 글/그림", "66,980개 중 1,900개 (2%)" in ln and "글 400 / 13,666개" in ln and "그림 1,500 / 53,314개" in ln)
+    json.dump({"updated": 1000, "notesHave": 1, "notesAll": 2, "mediaHave": 3, "mediaAll": 4}, open(d_ + "/progress.json", "w"))
+    check("오래된 값은 안 믿음", spg.read_phone(d_) is None)
 print("통과" if not fails else "실패 %d" % fails)
 sys.exit(1 if fails else 0)

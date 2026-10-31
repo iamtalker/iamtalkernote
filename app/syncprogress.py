@@ -62,3 +62,37 @@ def line(total_files, need_files, total_bytes, need_bytes, rate, all_files=0):
     if need_bytes > 0 and rate > 0:
         s += " · 속도 %s/초 · 남은 시간 %s" % (size(int(rate)), remaining(need_bytes, rate))
     return s
+
+
+FRESH = 600   # 폰이 센 값은 이 초 안의 것만 믿는다
+
+
+def read_phone(directory, now=None):
+    """폰이 설정 폴더에 적어 둔 실제 진행(progress.json) → dict 또는 None(없거나 오래됨·깨짐)"""
+    import json
+    import os
+    now = time.time() if now is None else now
+    try:
+        with open(os.path.join(directory, "progress.json"), encoding="utf-8") as fh:
+            d = json.load(fh)
+        if now - d["updated"] / 1000 > FRESH:
+            return None
+        return {k: int(d[k]) for k in ("notesHave", "notesAll", "mediaHave", "mediaAll")}
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def phone_line(d, rate=0.0):
+    """폰이 직접 센 값으로 만든 줄: 전체·글·그림 개수와 퍼센트(속도를 알면 남은 시간)"""
+    have = d["notesHave"] + d["mediaHave"]
+    total = d["notesAll"] + d["mediaAll"]
+
+    def pct(a, b):
+        return a * 100 // b if b else 100
+    s = ("폰에 실제로 있는 파일: 전체 %s개 중 %s개 (%d%%)" + chr(10) + "글 %s / %s개 · 그림 %s / %s개") % (
+        format(total, ","), format(have, ","), pct(have, total), format(d["notesHave"], ","), format(d["notesAll"], ","),
+        format(d["mediaHave"], ","), format(d["mediaAll"], ","))
+    if rate > 0 and total > have:
+        sec = int((total - have) / rate)
+        s += chr(10) + "초당 %.1f개 · 남은 시간 %s" % (rate, remaining(sec * rate, rate))   # 파일 수 기준
+    return s

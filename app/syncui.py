@@ -528,7 +528,7 @@ def tab(app, p, kit):
         ver.pack(anchor="w")
         prog = lab(body, "", fg=C["muted"], font=(app.ui, 9), wraplength=440)
         prog.pack(anchor="w", pady=(2, 0))
-        etas = {"e": syncprogress.Eta()}
+        etas = {"e": syncprogress.Eta(), "f": syncprogress.Eta()}
 
         # ---- 주기적으로 상태 보기
         def poll():
@@ -559,7 +559,12 @@ def tab(app, p, kit):
                         if plan and stagesync.enabled(state["policy"]):
                             stage = "열린 단계 %d / %d\n" % (min(stagesync.released(), len(plan["tiers"])), len(plan["tiers"]))
                         all_n = sum(len(t["files"]) for t in plan["tiers"]) if plan else 0
-                        prog.config(text=stage + "폰 받기: " + syncprogress.line(pp[0], pp[1], pp[2], pp[3], etas["e"].update(pp[3]), all_n))
+                        ph = syncprogress.read_phone(syncsettings.control_dir())
+                        if ph:   # 폰이 자기 저장소에서 직접 센 값이 있으면 그것을 쓴다(컴퓨터 Syncthing 이 세는 값은 가린 파일의 묵은 기록이 섞인다)
+                            left = ph["notesAll"] + ph["mediaAll"] - ph["notesHave"] - ph["mediaHave"]
+                            prog.config(text=stage + syncprogress.phone_line(ph, etas["f"].update(left)))
+                        else:
+                            prog.config(text=stage + "폰 받기: " + syncprogress.line(pp[0], pp[1], pp[2], pp[3], etas["e"].update(pp[3]), all_n))
                     states = [s for s, _ in ov["folders"].values()]
                     busy = sum(1 for s in states if s not in ("idle", "?"))
                     status.config(text=("실행 중 · " + (f"기기 {ov['connected']}대 연결됨" if ov["connected"] else "연결된 기기 없음") + f" (등록 {ov['peers']}대)") + (f" · 맞추는 중 {busy}개" if busy else " · 모두 최신"), fg="#15803d")
