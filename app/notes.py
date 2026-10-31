@@ -6005,7 +6005,7 @@ def main():
             ctypes.windll.shcore.SetProcessDpiAwareness(1)
         except Exception:  # noqa: BLE001
             pass
-    if not single.acquire():   # 이미 실행 중(창이 열려 있거나 트레이에 있음): 그 앱에 창을 열어 달라고 알렸으니 여기서는 끝낸다
+    if not os.environ.get("IAT_NO_SINGLE") and not single.acquire():   # (IAT_NO_SINGLE: 시험용 — 실행 중인 앱을 건드리지 않고 따로 띄운다) 이미 실행 중(창이 열려 있거나 트레이에 있음): 그 앱에 창을 열어 달라고 알렸으니 여기서는 끝낸다
         return
     App().run()
 
