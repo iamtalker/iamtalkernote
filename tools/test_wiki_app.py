@@ -183,6 +183,24 @@ check("다른 노트는 그대로", open(other["path"], encoding="utf-8").read()
 
 app.nb = notes.ALL
 
+# --- 괄호 없이 제목과 같은 낱말 연결(옵션)
+put("자동.md", "오늘 링크원 을 본다", now)
+app.nb = notes.ALL
+app.reload_notes()
+for _ in range(60):
+    app.root.update()
+    time.sleep(0.02)
+app.set_mode("view")
+app.open_note(next(x for x in app.all_notes if x["title"] == "자동"))
+app.render()
+check("옵션을 끄면(기본) 낱말은 연결 안 됨", not app.view.tag_ranges("link"))
+st.write_config(wikiAuto=True)
+app.render()
+r = app.view.tag_ranges("link")
+check("옵션을 켜면 제목과 같은 낱말이 링크", bool(r) and app.view.get(r[0], r[1]) == "링크원")
+st.write_config(wikiAuto=False)
+app.set_mode("edit")
+
 app.root.destroy()
 print("실패 %d" % fails if fails else "전부 통과")
 sys.exit(1 if fails else 0)

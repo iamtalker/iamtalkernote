@@ -3940,6 +3940,8 @@ class App:
         self.img_files.clear()
         vmap, w_off, s_off = [], 0, 0        # 화면 위치(w) ↔ 렌더링 글 위치(s): 렌더링만으로는 원문 위치를 몰라서 블록 맞추기에 쓴다
         wiki, widx = self.wiki_on(), None
+        if wiki and st.read_config().get("wikiAuto", False) and self.cur and not self.doc_open:
+            segs = self.auto_link_segs(segs)
         for t, tags, extra in segs:
             tg = list(tags)
             if "b" in tg and "i" in tg:
@@ -4358,6 +4360,23 @@ class App:
                     subprocess.Popen([exe, f"--app={url}", "--window-size=980,640"])
                     return
         webbrowser.open(url)
+
+    def auto_link_segs(self, segs):
+        """옵션 '단어만 있어도 연결'(톰보이 방식): 평범한 글 속에서 다른 노트의 제목과 같은 낱말을 위키 링크로 만든다"""
+        key = (id(self.all_notes), len(self.all_notes))
+        if getattr(self, "_auto_key", None) != key:
+            self._auto_key, self._auto_tab = key, wikilinks.title_table(self.all_notes)
+        table, lengths = self._auto_tab
+        own = self.cur["title"] if self.cur else ""
+        skip = {"code", "codeblock", "raw", "math", "link", "chip", "h1", "h2", "h3", "h4", "h5", "h6"}
+        out = []
+        for t, tags, extra in segs:
+            if extra is not None or len(t) < 2 or skip.intersection(tags):
+                out.append((t, tags, extra))
+                continue
+            for piece, title in wikilinks.auto_links(t, table, lengths, own):
+                out.append((piece, tags + ("link",) if title else tags, ("link", "page", title) if title else None))
+        return out
 
     def wiki_on(self):
         return st.wiki_enabled()
@@ -4991,6 +5010,14 @@ class App:
                 if self.cur:
                     self.render()
             tk.Checkbutton(p, text="위키 링크 사용  ([[노트 제목]] 으로 노트 연결)", variable=wk, command=set_wiki,
+                           bg=C["bg"], activebackground=C["bg"], font=(self.ui, 10), selectcolor=C["bg"]).pack(anchor="w")
+            wa = tk.BooleanVar(value=bool(st.read_config().get("wikiAuto", False)))
+
+            def set_auto():
+                st.write_config(wikiAuto=wa.get())
+                if self.cur:
+                    self.render()
+            tk.Checkbutton(p, text="괄호 없이 제목과 같은 낱말도 연결  (톰보이 방식)", variable=wa, command=set_auto,
                            bg=C["bg"], activebackground=C["bg"], font=(self.ui, 10), selectcolor=C["bg"]).pack(anchor="w")
             lab(p, "켜 두면 같은 제목의 노트는 만들 수 없고, [[제목]] 은 가장 최근에 고친 노트로 연결됩니다. 없는 제목의 링크는 붉게 보이고 누르면 새로 만들 수 있습니다. 끄면 [[ ]] 는 그냥 글자입니다.",
                 fg=C["muted"], font=(self.ui, 9), wraplength=620).pack(anchor="w", pady=(2, 0))

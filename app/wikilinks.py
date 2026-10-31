@@ -85,3 +85,45 @@ def backlinks(link_map, title):
     """link_map {경로: [링크 제목들]} 에서 title 을 가리키는 경로들"""
     k = norm(title)
     return sorted(p for p, ts in link_map.items() if any(norm(t) == k for t in ts))
+
+
+def title_table(notes, min_len=2):
+    """글 속 단어 자동 연결용: ({정규화한 제목: 가장 최근 노트의 제목}, 제목 길이들). 너무 짧은 제목은 뺀다"""
+    best = index(notes)
+    table = {k: n["title"] for k, n in best.items() if len(k) >= min_len}
+    return table, sorted({len(k) for k in table}, reverse=True)
+
+
+def _word_char(c):
+    return c.isascii() and c.isalnum()
+
+
+def auto_links(text, table, lengths, own=""):
+    """text 에서 다른 노트 제목과 같은 낱말을 찾아 [(조각, 연결할 제목 또는 None)] 으로 쪼갠다(가장 긴 제목 먼저, 겹치지 않게).
+    영문·숫자 제목은 낱말 경계에서만 맞추고, 한글은 조사가 붙으므로 경계를 보지 않는다. own = 이 노트의 제목(자기 자신은 잇지 않는다)"""
+    low = text.lower()
+    own = norm(own)
+    out, i, last, n = [], 0, 0, len(text)
+    while i < n:
+        hit = None
+        for ln in lengths:
+            if i + ln > n:
+                continue
+            key = low[i:i + ln]
+            if key in table and key != own:
+                a, b = key[0], key[-1]
+                if (_word_char(a) and i > 0 and _word_char(low[i - 1])) or (_word_char(b) and i + ln < n and _word_char(low[i + ln])):
+                    continue
+                hit = (ln, table[key])
+                break
+        if hit:
+            if i > last:
+                out.append((text[last:i], None))
+            out.append((text[i:i + hit[0]], hit[1]))
+            i += hit[0]
+            last = i
+        else:
+            i += 1
+    if last < n:
+        out.append((text[last:], None))
+    return out or [(text, None)]

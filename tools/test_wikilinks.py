@@ -43,5 +43,13 @@ check("후보: 앞부분 먼저, 최근 순, 제목당 하나", wl.suggest(notes
 check("빈 글이면 최근 순", wl.suggest(notes, "")[0] == "회의록")
 check("백링크 찾기", wl.backlinks({"a": ["회의록", "x"], "b": ["Y"], "c": [" 회의록"]}, "회의록") == ["a", "c"])
 
+tab, lens = wl.title_table([{"title": "회의록", "mtime": 1, "path": "a"}, {"title": "Art", "mtime": 1, "path": "b"}, {"title": "가", "mtime": 1, "path": "c"},
+                            {"title": "회의록 요약", "mtime": 1, "path": "d"}])
+pieces = wl.auto_links("오늘 회의록을 정리했고 party 의 art 와 회의록 요약도 본다", tab, lens, own="")
+check("글 속 제목 자동 연결(조사가 붙은 한글, 영문은 낱말 경계)", pieces == [("오늘 ", None), ("회의록", "회의록"), ("을 정리했고 party 의 ", None), ("art", "Art"), (" 와 ", None),
+                                                          ("회의록 요약", "회의록 요약"), ("도 본다", None)])
+check("한 글자 제목은 연결하지 않음", wl.auto_links("가나다", tab, lens) == [("가나다", None)])
+check("자기 자신의 제목은 잇지 않음", wl.auto_links("회의록", tab, lens, own="회의록") == [("회의록", None)])
+
 print("실패 %d" % fails if fails else "전부 통과")
 sys.exit(1 if fails else 0)
