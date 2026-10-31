@@ -66,13 +66,14 @@ class PlannerView(tk.Frame):
                        selectcolor=C["bg"], font=(ui, 9), fg=C["muted"]).pack(side="right", padx=(0, 10))
         wrap = tk.Frame(bottom, bg=C["bg"])
         wrap.pack(fill="both", expand=True, padx=18, pady=(6, 14))
-        self.tree = ttk.Treeview(wrap, style="Flat.Treeview", columns=("start", "end"), show="tree headings", selectmode="browse", height=6)
-        self.tree.heading("#0", text="할일  (앞의 ☐ 를 누르면 오늘 날짜로 완료)", anchor="w")
-        self.tree.heading("start", text="추가한 날", anchor="e")
-        self.tree.heading("end", text="완료한 날", anchor="e")
-        self.tree.column("#0", stretch=True, width=300)
-        self.tree.column("start", width=150, anchor="e", stretch=False)
-        self.tree.column("end", width=100, anchor="e", stretch=False)
+        self.tree = ttk.Treeview(wrap, style="Flat.Treeview", columns=("start", "end", "text"), displaycolumns=("start", "end", "text"), show="headings",
+                                 selectmode="browse", height=6)
+        self.tree.heading("start", text="추가한 날", anchor="w")
+        self.tree.heading("end", text="완료한 날", anchor="w")
+        self.tree.heading("text", text="할일  (☐ 를 누르면 오늘 날짜로 완료 · 오른쪽 클릭: 변경·삭제)", anchor="w")
+        self.tree.column("start", width=130, minwidth=130, anchor="w", stretch=False)
+        self.tree.column("end", width=100, minwidth=100, anchor="w", stretch=False)
+        self.tree.column("text", width=300, minwidth=120, anchor="w", stretch=True)
         sb = ttk.Scrollbar(wrap, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=sb.set)
         sb.pack(side="right", fill="y")
@@ -80,6 +81,10 @@ class PlannerView(tk.Frame):
         self.tree.tag_configure("done", foreground=C["muted"])
         self.tree.bind("<ButtonRelease-1>", self.on_tree_click)
         self.tree.bind("<Button-3>", self.on_tree_menu)
+        # 열 경계를 끌어 늘리거나 옆으로 끌어서 목록이 창 밖으로 밀려 나가지 않게 막는다
+        self.tree.bind("<Button-1>", lambda e: "break" if self.tree.identify_region(e.x, e.y) == "separator" else None, add="+")
+        self.tree.bind("<B1-Motion>", lambda e: "break")
+        self.tree.bind("<Configure>", lambda e: self.tree.xview_moveto(0))
         self.refresh()
 
     # ---- 달력
@@ -201,19 +206,23 @@ class PlannerView(tk.Frame):
                 continue
             d = M.parse(t.get("date"))
             diff = (datetime.date.today() - d).days if d else 0     # 양수 = 지난 날짜, 음수 = 앞으로 며칠 남음(D-n)
-            self.tree.insert("", "end", iid=t["id"], text=("☑  " if t["done"] else "☐  ") + t["text"],
-                             values=((t["date"] + ("" if t["done"] else f"  D-{-diff}" if diff < 0 else "  D-day" if diff == 0 else "")) if t.get("date") else "", t.get("done_on") or ""),
+            self.tree.insert("", "end", iid=t["id"],
+                             values=((t["date"] + ("" if t["done"] else f"  D-{-diff}" if diff < 0 else "  D-day" if diff == 0 else "")) if t.get("date") else "",
+                                     t.get("done_on") or "", ("☑  " if t["done"] else "☐  ") + t["text"]),
                              tags=("done",) if t["done"] else ())
 
     def on_tree_menu(self, e):
         """할일 목록에서 오른쪽 클릭: '추가한 날'이나 '완료한 날' 칸이면 그 날짜를 바꾼다(실제로 날짜를 잘못 적거나 늦게 끝낸 일이 있으므로)"""
         row, col = self.tree.identify_row(e.y), self.tree.identify_column(e.x)
         t = self.pl.find(row) if row else None
-        if not t or col not in ("#1", "#2"):
+        if not t or col not in ("#1", "#2", "#3"):
             return
         self.tree.selection_set(row)
         m = tk.Menu(self, tearoff=0)
-        if col == "#1":
+        if col == "#3":
+            m.add_command(label="내용 바꾸기…", command=lambda: self.rename_todo(t))
+            m.add_command(label="삭제", command=lambda: self.delete_todo(t))
+        elif col == "#1":
             m.add_command(label="추가한 날 바꾸기…", command=lambda: self.ask_date(t, "date"))
         else:
             m.add_command(label="완료한 날 바꾸기…" if t["done"] else "완료한 날을 정해 완료로…", command=lambda: self.ask_date(t, "done_on"))
@@ -246,11 +255,18 @@ class PlannerView(tk.Frame):
 
     def on_tree_click(self, e):
         row = self.tree.identify_row(e.y)
-        if row and self.tree.identify_region(e.x, e.y) == "tree" and e.x < 40:     # 앞의 체크 칸을 누르면 완료 토글
+        bb = self.tree.bbox(row, "text") if row else None
+        if row and self.tree.identify_column(e.x) == "#3" and bb and e.x - bb[0] < 32:     # 글 앞의 체크 칸(☐)을 누르면 완료 토글
             t = self.pl.find(row)
             if t:
                 self.pl.update(row, done=not t["done"])
                 self.changed()
+
+    def rename_todo(self, t):
+        s = simpledialog.askstring("할일 바꾸기", "할일 내용", initialvalue=t["text"], parent=self)
+        if s and " ".join(s.split()):
+            self.pl.update(t["id"], text=" ".join(s.split()))
+            self.changed()
 
     def delete_todo(self, t):
         if messagebox.askyesno("할일 삭제", f"「{t['text']}」을(를) 지울까요?", parent=self):
