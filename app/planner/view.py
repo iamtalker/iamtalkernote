@@ -1,12 +1,12 @@
 """달력·할일·공수 화면: 위에 달력(공휴일 표시), 아래에 할일 목록, 맨 아래에 이 달의 공수 요약(공수달력을 켰을 때)."""
 import datetime
 import tkinter as tk
+from i18n import tr, weekdays
 from tkinter import messagebox, simpledialog, ttk
 
 from . import datepick
 from . import model as M
 
-WEEK = "일월화수목금토"
 
 
 class PlannerView(tk.Frame):
@@ -28,18 +28,18 @@ class PlannerView(tk.Frame):
             if step == -1:
                 self.title = tk.Label(head, text="", bg=C["bg"], fg=C["text"], font=(ui, 14, "bold"), width=11)
                 self.title.pack(side="left")
-        today_b = tk.Label(head, text="오늘", bg=C["bg"], fg=C["accent"], font=(ui, 10), cursor="hand2", padx=10)
+        today_b = tk.Label(head, text=tr("오늘"), bg=C["bg"], fg=C["accent"], font=(ui, 10), cursor="hand2", padx=10)
         today_b.bind("<Button-1>", lambda e: self.goto(datetime.date.today()))
         today_b.pack(side="left")
         self.rate = tk.Frame(self, bg=C["bg"])         # 공수달력을 켰을 때만: 단가·일비를 달력에서 바로 입력
         self.rate_vars = {}
-        for key, label in (("wage", "단가(1공수)"), ("meal", "일비(하루)")):
+        for key, label in (("wage", tr("단가(1공수)")), ("meal", tr("일비(하루)"))):
             tk.Label(self.rate, text=label, bg=C["bg"], fg=C["muted"], font=(ui, 9)).pack(side="left", padx=(0, 4))
             var = tk.StringVar()
             e = tk.Entry(self.rate, textvariable=var, width=10, justify="right", relief="flat", bd=0, bg=C["panel"], fg=C["text"], insertbackground=C["text"],
                          highlightthickness=1, highlightbackground=C["line"], highlightcolor=C["accent"], font=(ui, 10))
             e.pack(side="left", ipady=3)
-            tk.Label(self.rate, text="원", bg=C["bg"], fg=C["muted"], font=(ui, 9)).pack(side="left", padx=(2, 14))
+            tk.Label(self.rate, text=tr("원"), bg=C["bg"], fg=C["muted"], font=(ui, 9)).pack(side="left", padx=(2, 14))
             e.bind("<Return>", lambda ev, k=key: self.save_rate(k))
             e.bind("<FocusOut>", lambda ev, k=key: self.save_rate(k))
             self.rate_vars[key] = var
@@ -51,7 +51,7 @@ class PlannerView(tk.Frame):
         grid.pack(fill="x", padx=18, pady=(8, 0))
         for c in range(7):
             grid.grid_columnconfigure(c, weight=1, uniform="d")
-            tk.Label(grid, text=WEEK[c], bg=C["panel"], fg=C["danger"] if c == 0 else (C["accent"] if c == 6 else C["muted"]),
+            tk.Label(grid, text=weekdays()[c], bg=C["panel"], fg=C["danger"] if c == 0 else (C["accent"] if c == 6 else C["muted"]),
                      font=(ui, 9)).grid(row=0, column=c, sticky="nsew", padx=(0, 1), pady=(0, 1))
         for i in range(42):
             lb = tk.Label(grid, text="", bg=C["bg"], fg=C["text"], font=(ui, 9), anchor="nw", justify="left", padx=4, pady=2, height=3, cursor="hand2",
@@ -62,16 +62,16 @@ class PlannerView(tk.Frame):
             self.cells.append(lb)
         mid = tk.Frame(bottom, bg=C["bg"])
         mid.pack(fill="x", padx=18, pady=(12, 4))
-        tk.Label(mid, text="할일", bg=C["bg"], fg=C["text"], font=(ui, 11, "bold")).pack(side="left")
-        tk.Checkbutton(mid, text="완료된 항목 숨기기", variable=self.hide_done, command=self.toggle_hide_done, bg=C["bg"], activebackground=C["bg"],
+        tk.Label(mid, text=tr("할일"), bg=C["bg"], fg=C["text"], font=(ui, 11, "bold")).pack(side="left")
+        tk.Checkbutton(mid, text=tr("완료된 항목 숨기기"), variable=self.hide_done, command=self.toggle_hide_done, bg=C["bg"], activebackground=C["bg"],
                        selectcolor=C["bg"], font=(ui, 9), fg=C["muted"]).pack(side="right", padx=(0, 10))
         wrap = tk.Frame(bottom, bg=C["bg"])
         wrap.pack(fill="both", expand=True, padx=18, pady=(6, 14))
         self.tree = ttk.Treeview(wrap, style="Flat.Treeview", columns=("start", "end", "text"), displaycolumns=("start", "end", "text"), show="headings",
                                  selectmode="extended", height=6)   # Ctrl·Shift 로 여러 개 고르기
-        self.tree.heading("start", text="추가한 날", anchor="w")
-        self.tree.heading("end", text="완료한 날", anchor="w")
-        self.tree.heading("text", text="할일  (☐ 를 누르면 오늘 날짜로 완료 · 오른쪽 클릭: 변경·삭제)", anchor="w")
+        self.tree.heading("start", text=tr("추가한 날"), anchor="w")
+        self.tree.heading("end", text=tr("완료한 날"), anchor="w")
+        self.tree.heading("text", text=tr("할일  (☐ 를 누르면 오늘 날짜로 완료 · 오른쪽 클릭: 변경·삭제)"), anchor="w")
         self.tree.column("start", width=130, minwidth=130, anchor="w", stretch=False)
         self.tree.column("end", width=100, minwidth=100, anchor="w", stretch=False)
         self.tree.column("text", width=300, minwidth=120, anchor="w", stretch=True)
@@ -109,7 +109,7 @@ class PlannerView(tk.Frame):
     def refresh(self, keep_rate=False):
         self.pl.sync()                                     # 밖(다른 편집기·폰 동기화)에서 고친 달력 파일을 반영
         C, cfg = self.C, self.get_cfg()
-        self.title.config(text=f"{self.year}년 {self.month}월")
+        self.title.config(text=tr('{0}년 {1}월').format(self.year, self.month))
         hol = {**self.pl.holidays_for(self.year - 1), **self.pl.holidays_for(self.year), **self.pl.holidays_for(self.year + 1)}
         today = M.iso(datetime.date.today())
         days = M.month_grid(self.year, self.month)
@@ -127,7 +127,7 @@ class PlannerView(tk.Frame):
             if len(todos) > 2:
                 lines.append(f"  +{len(todos) - 2}")
             if cfg["gongsu"] and s in self.pl.gongsu:
-                lines.append("공수 " + M.fmt_gongsu(self.pl.gongsu[s]))
+                lines.append(tr("공수 ") + M.fmt_gongsu(self.pl.gongsu[s]))
             lb.config(text="\n".join(lines), fg=fg, bg=C["soft"] if s == self.sel else C["bg"],
                       highlightbackground=C["accent"] if s == today else (C["soft"] if s == self.sel else C["bg"]))
         if cfg["gongsu"]:
@@ -138,8 +138,7 @@ class PlannerView(tk.Frame):
                     break                                  # 다른 칸을 고치다 저장했으면 아직 저장 안 한 칸의 글을 덮어쓰지 않는다
                 self.rate_vars[k].set(f"{cfg[k]:,}" if cfg[k] else "")
             r = self.pl.summary(self.year, self.month, cfg["wage"], cfg["meal"])
-            self.sumlab.config(text=(f"공수 합계 {M.fmt_gongsu(r['gongsu'])}  ·  출근 {r['days']}일  ·  일당 {r['pay']:,}원  +  일비 {r['meal']:,}원"
-                                     f"  =  총 {r['sum']:,}원"))
+            self.sumlab.config(text=(tr('공수 합계 {0}  ·  출근 {1}일  ·  일당 {2:,}원  +  일비 {3:,}원  =  총 {4:,}원').format(M.fmt_gongsu(r['gongsu']), r['days'], r['pay'], r['meal'], r['sum'])))
         else:
             self.rate.pack_forget()
             self.sumlab.config(text="")
@@ -168,13 +167,13 @@ class PlannerView(tk.Frame):
         m = tk.Menu(self, tearoff=0)
         if cfg["gongsu"]:
             for v in ("0.5", "1", "1.5", "2"):
-                m.add_command(label=f"공수 {v}", command=lambda v=v: self.set_gongsu(float(v)))
-            m.add_command(label="공수 직접 입력…", command=self.ask_gongsu)
-            m.add_command(label="공수 지우기", command=lambda: self.set_gongsu(0))
+                m.add_command(label=tr('공수 {0}').format(v), command=lambda v=v: self.set_gongsu(float(v)))
+            m.add_command(label=tr("공수 직접 입력…"), command=self.ask_gongsu)
+            m.add_command(label=tr("공수 지우기"), command=lambda: self.set_gongsu(0))
             m.add_separator()
-        m.add_command(label="이 날 할일 추가…", command=self.add_dated)
+        m.add_command(label=tr("이 날 할일 추가…"), command=self.add_dated)
         for t in [x for x in self.pl.todos if x.get("date") == self.sel]:
-            m.add_command(label="삭제: " + t["text"][:24], command=lambda t=t: self.delete_todo(t))
+            m.add_command(label=tr("삭제: ") + t["text"][:24], command=lambda t=t: self.delete_todo(t))
         m.tk_popup(e.x_root, e.y_root)
 
     def changed(self):
@@ -188,7 +187,7 @@ class PlannerView(tk.Frame):
         self.changed()
 
     def ask_gongsu(self):
-        s = simpledialog.askstring("공수", f"{self.sel} 공수(예: 1, 1.5, 2)", parent=self)
+        s = simpledialog.askstring(tr("공수"), tr('{0} 공수(예: 1, 1.5, 2)').format(self.sel), parent=self)
         try:
             if s:
                 self.set_gongsu(float(s))
@@ -196,7 +195,7 @@ class PlannerView(tk.Frame):
             pass
 
     def add_dated(self):
-        s = simpledialog.askstring("할일", f"{self.sel} 할일", parent=self)
+        s = simpledialog.askstring(tr("할일"), tr('{0} 할일').format(self.sel), parent=self)
         if s and self.pl.add(s, self.sel):
             self.changed()
 
@@ -220,23 +219,23 @@ class PlannerView(tk.Frame):
         t = self.pl.find(row) if row else None
         m = tk.Menu(self, tearoff=0)
         if not t:                                            # 빈 곳: 만들기만
-            m.add_command(label="할일 생성", command=self.new_todo)
+            m.add_command(label=tr("할일 생성"), command=self.new_todo)
             return m.tk_popup(e.x_root, e.y_root)
         if row not in self.tree.selection():
             self.tree.selection_set(row)
         picked = [x for x in (self.pl.find(i) for i in self.tree.selection()) if x] or [t]
         many = len(picked) > 1
         if col == "#3":
-            m.add_command(label="할일 생성", command=self.new_todo)
+            m.add_command(label=tr("할일 생성"), command=self.new_todo)
             if not many:
-                m.add_command(label="할일 변경", command=lambda: self.rename_todo(t))
-            m.add_command(label="할일 삭제" + (f" ({len(picked)}개)" if many else ""), command=lambda: self.bulk(picked, "delete"))
+                m.add_command(label=tr("할일 변경"), command=lambda: self.rename_todo(t))
+            m.add_command(label=tr("할일 삭제") + (tr(' ({0}개)').format(len(picked)) if many else ""), command=lambda: self.bulk(picked, "delete"))
         elif col in ("#1", "#2"):
             field = "date" if col == "#1" else "done_on"
             has = bool(t.get("date")) if col == "#1" else bool(t["done"])
-            m.add_command(label="날짜 변경" if has and not many else "날짜 만들기", command=lambda: self.bulk(picked, field))
+            m.add_command(label=tr("날짜 변경") if has and not many else tr("날짜 만들기"), command=lambda: self.bulk(picked, field))
             if many or has:
-                m.add_command(label="날짜 삭제", command=lambda: self.bulk(picked, "nodate" if col == "#1" else "undone"))
+                m.add_command(label=tr("날짜 삭제"), command=lambda: self.bulk(picked, "nodate" if col == "#1" else "undone"))
         else:
             return
         m.tk_popup(e.x_root, e.y_root)
@@ -248,28 +247,28 @@ class PlannerView(tk.Frame):
         """고른 할일 여러 개를 한꺼번에: 완료·완료 취소·날짜 지정·날짜 없애기·삭제"""
         today = M.iso(datetime.date.today())
         if op == "delete":
-            if not messagebox.askyesno("할일 삭제", f"고른 {len(todos)}개를 지울까요?", parent=self):
+            if not messagebox.askyesno(tr("할일 삭제"), tr('고른 {0}개를 지울까요?').format(len(todos)), parent=self):
                 return
             for t in todos:
                 self.pl.remove(t["id"])
         elif op in ("date", "done_on"):
             first = todos[0]
             cur = (first.get("date") if op == "date" else first.get("done_on")) or today
-            s = datepick.ask(self, self.C, self.ui, "날짜", ("추가한 날" if op == "date" else "완료한 날") + (f" ({len(todos)}개)" if len(todos) > 1 else "")
-                             + "  — 직접 쓰거나(예: 20260914) 아래 달력에서 고르세요", cur)
+            s = datepick.ask(self, self.C, self.ui, tr("날짜"), (tr("추가한 날") if op == "date" else tr("완료한 날")) + (tr(' ({0}개)').format(len(todos)) if len(todos) > 1 else "")
+                             + tr("  — 직접 쓰거나(예: 20260914) 아래 달력에서 고르세요"), cur)
             d = M.parse_loose(s) if s else None
             if s and not d:
-                return messagebox.showinfo("날짜", "날짜를 읽을 수 없습니다. 예: 2026-09-14 또는 20260914", parent=self)
+                return messagebox.showinfo(tr("날짜"), tr("날짜를 읽을 수 없습니다. 예: 2026-09-14 또는 20260914"), parent=self)
             if not d:
                 return
             for t in todos:
                 if op == "date":
                     if t["done"] and t.get("done_on") and d > t["done_on"]:
-                        return messagebox.showinfo("날짜", "추가한 날이 완료한 날보다 늦을 수 없습니다.", parent=self)
+                        return messagebox.showinfo(tr("날짜"), tr("추가한 날이 완료한 날보다 늦을 수 없습니다."), parent=self)
                     self.pl.update(t["id"], date=d)
                 else:
                     if t.get("date") and d < t["date"]:
-                        return messagebox.showinfo("날짜", "완료한 날이 추가한 날보다 빠를 수 없습니다.", parent=self)
+                        return messagebox.showinfo(tr("날짜"), tr("완료한 날이 추가한 날보다 빠를 수 없습니다."), parent=self)
                     self.pl.set_done_on(t["id"], d)
         else:
             for t in todos:
@@ -289,7 +288,7 @@ class PlannerView(tk.Frame):
 
     def new_todo(self):
         """날짜 없이 할일을 만든다(날짜는 목록에서 날짜 칸을 오른쪽 클릭해 지정). 날짜를 정해 만들려면 달력의 날을 오른쪽 클릭"""
-        s = simpledialog.askstring("할일 만들기", "할일 내용", parent=self)
+        s = simpledialog.askstring(tr("할일 만들기"), tr("할일 내용"), parent=self)
         if s and self.pl.add(s):
             self.changed()
 
@@ -308,12 +307,12 @@ class PlannerView(tk.Frame):
                 self.changed()
 
     def rename_todo(self, t):
-        s = simpledialog.askstring("할일 바꾸기", "할일 내용", initialvalue=t["text"], parent=self)
+        s = simpledialog.askstring(tr("할일 바꾸기"), tr("할일 내용"), initialvalue=t["text"], parent=self)
         if s and " ".join(s.split()):
             self.pl.update(t["id"], text=" ".join(s.split()))
             self.changed()
 
     def delete_todo(self, t):
-        if messagebox.askyesno("할일 삭제", f"「{t['text']}」을(를) 지울까요?", parent=self):
+        if messagebox.askyesno(tr("할일 삭제"), tr('「{0}」을(를) 지울까요?').format(t['text']), parent=self):
             self.pl.remove(t["id"])
             self.changed()

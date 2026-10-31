@@ -43,7 +43,7 @@ class SearchBoxMixin:
         try:
             if fam != self.ui:
                 ref = tkfont.Font(root=self.root, family=self.ui, size=f.actual("size"), weight=f.actual("weight"))
-                if abs(f.measure("가") - ref.measure("가")) <= 2:
+                if abs(f.measure(tr("가")) - ref.measure(tr("가"))) <= 2:
                     return self.ui
         except tk.TclError:
             pass
@@ -136,14 +136,14 @@ class SearchBoxMixin:
         items = []
         hist = self.search_history()
         if not text.strip():        # 빈 칸: 최근 검색
-            return [("최근", h, h, 0, len(text)) for h in hist[:8]]
+            return [(tr("최근"), h, h, 0, len(text)) for h in hist[:8]]
         low = tok.lower()
         if low.startswith("#"):                   # 태그만: '#' 만 쳤을 때는 띄우지 않고, '#신' 처럼 한 글자라도 더 쳐야 그 글자로 시작하는 태그를 보여 준다
             key = low[1:]
             if not key:
                 return []
             tags = sorted(self.ac_tags().items(), key=lambda kv: (-kv[1], kv[0].lower()))
-            return [("태그", f"#{t}   ({c:,})", f"#{t}", start, pos) for t, c in tags if t.lower().startswith(key)][:8]
+            return [(tr("태그"), f"#{t}   ({c:,})", f"#{t}", start, pos) for t, c in tags if t.lower().startswith(key)][:8]
         if not tok:
             return []
         key = (id(self.notes), len(self.notes))   # 그냥 글자를 치면 제목만(태그는 # 를 눌렀을 때만, 최근 검색은 빈 칸일 때만)
@@ -159,7 +159,7 @@ class SearchBoxMixin:
                 break
             plain = re.fullmatch(r"[^\s()\"&|!]+", title) is not None
             ins = title if plain and not quoted else (title + '"' if quoted else f'"{title}"')
-            items.append(("제목", title, ins, start, pos))
+            items.append((tr("제목"), title, ins, start, pos))
         return items[:8]
 
     def ac_show(self):
@@ -180,7 +180,7 @@ class SearchBoxMixin:
         lb = self.ac_list
         lb.delete(0, "end")
         for kind, label, _ins, _a, _b in self.ac_items:   # 제목·태그는 # 로 구분되니 표시를 달지 않고, 최근 검색만 '최근' 을 붙인다
-            lb.insert("end", f"최근   {label}" if kind == "최근" else label)
+            lb.insert("end", tr('최근   {0}').format(label) if kind == tr("최근") else label)
         lb.config(height=len(self.ac_items))
         box = self.search_entry.master
         lb.place(in_=self.listf, x=box.winfo_rootx() - self.listf.winfo_rootx(),

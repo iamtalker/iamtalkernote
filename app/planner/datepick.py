@@ -2,6 +2,7 @@
 새 단추를 늘리지 않으려고 달력은 늘 펼쳐 두고, 날을 누르면 입력칸이 채워진다(더블클릭하면 바로 확인)."""
 import datetime
 import tkinter as tk
+from i18n import tr, weekdays
 
 from . import model as M
 
@@ -42,7 +43,7 @@ def ask(parent, colors, ui, title, prompt, initial=""):
         lb.pack(side="left")
         if step == -1:
             title_l.pack(side="left", expand=True)
-    for c, w in enumerate("일월화수목금토"):
+    for c, w in enumerate(weekdays()):
         tk.Label(grid, text=w, width=4, bg=C["panel"], fg=C["danger"] if c == 0 else (C["accent"] if c == 6 else C["muted"]), font=(ui, 9)).grid(
             row=0, column=c, padx=(0, 1), pady=(0, 1), sticky="nsew")
     for i in range(42):
@@ -57,7 +58,7 @@ def ask(parent, colors, ui, title, prompt, initial=""):
             ok()
 
     def draw():
-        title_l.config(text=f"{st['y']}년 {st['m']}월")
+        title_l.config(text=tr('{0}년 {1}월').format(st['y'], st['m']))
         days = M.month_grid(st["y"], st["m"])
         chosen = M.parse_loose(var.get())
         today = M.iso(datetime.date.today())
@@ -87,8 +88,8 @@ def ask(parent, colors, ui, title, prompt, initial=""):
     var.trace_add("write", follow)
     btns = tk.Frame(d, bg=C["bg"])
     btns.pack(fill="x", padx=16, pady=(0, 14))
-    for text, cmd, fg in (("확인", ok, C["accent"]), ("취소", cancel, C["muted"])):
-        lb = tk.Label(btns, text=text, bg=C["bg"], fg=fg, font=(ui, 10, "bold" if text == "확인" else "normal"), cursor="hand2", padx=12, pady=4)
+    for text, cmd, fg in ((tr("확인"), ok, C["accent"]), (tr("취소"), cancel, C["muted"])):
+        lb = tk.Label(btns, text=text, bg=C["bg"], fg=fg, font=(ui, 10, "bold" if text == tr("확인") else "normal"), cursor="hand2", padx=12, pady=4)
         lb.bind("<Button-1>", lambda ev, c=cmd: c())
         lb.pack(side="right")
     d.bind("<Return>", ok)

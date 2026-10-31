@@ -45,6 +45,8 @@ import tagac  # noqa: E402
 import favorites  # noqa: E402
 from outliner.widget import OutlineEditor  # noqa: E402
 from planner import model as pm  # noqa: E402
+import i18n  # noqa: E402   (화면 글자 언어: i18n.py)
+from i18n import tr  # noqa: E402,F401
 from planner.view import PlannerView  # noqa: E402
 import wikilinks  # noqa: E402
 import syncsettings  # noqa: E402

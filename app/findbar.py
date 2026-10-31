@@ -77,7 +77,7 @@ class FindBarMixin:
             if w is prim:
                 self.find_hits = hits
         if not self.find_hits:
-            return self.find_count.config(text="없음", fg=C["danger"])
+            return self.find_count.config(text=tr("없음"), fg=C["danger"])
         if goto:   # 편집 칸이면 커서 다음의 것, 렌더링 화면이면 처음 것
             at = prim.index("insert") if prim is self.text else "1.0"
             i = next((k for k, (a, _) in enumerate(self.find_hits) if prim.compare(a, ">=", at)), 0)

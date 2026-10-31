@@ -88,14 +88,14 @@ class WikiUIMixin:
             return
         self.flush()
         top = tk.Toplevel(self.root)
-        top.title(f"연결된 노트 — {n['title']}")
+        top.title(tr('연결된 노트 — {0}').format(n['title']))
         top.configure(bg=C["bg"])
         top.geometry("460x420")
         top.transient(self.root)
-        info = tk.Label(top, text="찾는 중…", bg=C["bg"], fg=C["muted"], font=(self.ui, 9), anchor="w", padx=14, pady=6)
+        info = tk.Label(top, text=tr("찾는 중…"), bg=C["bg"], fg=C["muted"], font=(self.ui, 9), anchor="w", padx=14, pady=6)
         info.pack(fill="x")
         lists = []
-        for head in ("이 노트를 가리키는 노트", "이 노트가 가리키는 노트"):
+        for head in (tr("이 노트를 가리키는 노트"), tr("이 노트가 가리키는 노트")):
             tk.Label(top, text=head, bg=C["bg"], fg=C["text"], font=(self.ui, 10, "bold"), anchor="w", padx=14).pack(fill="x", pady=(6, 2))
             lb = tk.Listbox(top, activestyle="none", exportselection=False, font=(self.ui, 10), relief="flat", bd=0, bg=C["panel"], fg=C["text"],
                             selectbackground=C["accent"], selectforeground="#ffffff", highlightthickness=0)
@@ -142,7 +142,7 @@ class WikiUIMixin:
                 for p in paths:
                     nn = next((x for x in self.all_notes if x["path"] == p), None)
                     lists[which].insert("end", nn["title"] if nn else p)
-            info.config(text=f"가리키는 노트 {len(back)}개 · 가리킨 노트 {len(out)}개 (두 번 누르면 열림)")
+            info.config(text=tr('가리키는 노트 {0}개 · 가리킨 노트 {1}개 (두 번 누르면 열림)').format(len(back), len(out)))
 
         def poll():
             try:

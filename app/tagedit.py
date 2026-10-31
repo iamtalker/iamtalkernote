@@ -54,7 +54,7 @@ class TagEditMixin:
         new_line = keep + [t for t in want if t not in have]
         if set(new_line) == set(on_line):
             if stuck:
-                self.status.config(text="본문에 직접 쓴 #태그는 여기서 못 지웁니다: " + " ".join("#" + t for t in stuck))
+                self.status.config(text=tr("본문에 직접 쓴 #태그는 여기서 못 지웁니다: ") + " ".join("#" + t for t in stuck))
             return
         line = "태그: " + " ".join("#" + t for t in new_line) if new_line else ""
         T.edit_separator()
@@ -74,9 +74,9 @@ class TagEditMixin:
         self.dirty = True
         self.flush()                                                  # 바로 저장하고 목록·사이드바·상태 줄을 갱신
         if stuck:
-            self.status.config(text="태그를 저장했습니다. 본문에 직접 쓴 #태그는 못 지웁니다: " + " ".join("#" + t for t in stuck))
+            self.status.config(text=tr("태그를 저장했습니다. 본문에 직접 쓴 #태그는 못 지웁니다: ") + " ".join("#" + t for t in stuck))
         else:
-            self.update_status("태그 저장됨")
+            self.update_status(tr("태그 저장됨"))
 
     # ------------------------------------------------------------ 태그 목록: 우클릭으로 추가·이름 바꾸기·삭제
     def on_tag_menu(self, e):
@@ -89,11 +89,11 @@ class TagEditMixin:
         tags = [self.tag_keys[int(i[2:])] for i in self.tagtree.selection()]
         m = tk.Menu(self.root, tearoff=0)
         if len(tags) == 1:
-            m.add_command(label="태그 이름 변경…", command=lambda: self.tag_rename(tags))
-            m.add_command(label="태그 삭제…", command=lambda: self.tag_delete(tags))
+            m.add_command(label=tr("태그 이름 변경…"), command=lambda: self.tag_rename(tags))
+            m.add_command(label=tr("태그 삭제…"), command=lambda: self.tag_delete(tags))
         else:
-            m.add_command(label=f"태그 {len(tags)}개를 하나의 이름으로 바꾸기(합치기)…", command=lambda: self.tag_rename(tags))
-            m.add_command(label=f"태그 {len(tags)}개 삭제…", command=lambda: self.tag_delete(tags))
+            m.add_command(label=tr('태그 {0}개를 하나의 이름으로 바꾸기(합치기)…').format(len(tags)), command=lambda: self.tag_rename(tags))
+            m.add_command(label=tr('태그 {0}개 삭제…').format(len(tags)), command=lambda: self.tag_delete(tags))
         m.tk_popup(e.x_root, e.y_root)
         return "break"
 
@@ -107,7 +107,7 @@ class TagEditMixin:
             n["tags"] = set(want)
             self.reload_tags()
             self.refresh(keep_page=True)
-            self.status.config(text="태그를 저장했습니다 (원본 파일은 그대로)")
+            self.status.config(text=tr("태그를 저장했습니다 (원본 파일은 그대로)"))
         self.update_status()
 
     def edit_memo(self):
@@ -115,8 +115,8 @@ class TagEditMixin:
         n = self.cur
         if not (self.doc_open and n):
             return
-        top = self.tool_window("메모 — " + n["title"], "520x340")
-        tk.Label(top, text="이 파일에 붙이는 메모입니다. 원본 파일은 건드리지 않고 앱의 DB 에만 저장되며, 검색에도 잡힙니다.",
+        top = self.tool_window(tr("메모 — ") + n["title"], "520x340")
+        tk.Label(top, text=tr("이 파일에 붙이는 메모입니다. 원본 파일은 건드리지 않고 앱의 DB 에만 저장되며, 검색에도 잡힙니다."),
                  bg=C["bg"], fg=C["muted"], font=(self.ui, 9), anchor="w", justify="left", wraplength=480, padx=16, pady=10).pack(fill="x")
         btns = tk.Frame(top, bg=C["bg"])
         btns.pack(side="bottom", fill="x", padx=16, pady=12)
@@ -134,18 +134,18 @@ class TagEditMixin:
             self.refresh(keep_page=True)
             if self.cur is n:
                 self.show_doc(n, native=self.pv_active)
-        Btn(btns, "저장", save, kind="primary", bold=True, padx=22, pady=5).pack(side="right")
-        Btn(btns, "취소", top.destroy, padx=14, pady=5).pack(side="right", padx=8)
+        Btn(btns, tr("저장"), save, kind="primary", bold=True, padx=22, pady=5).pack(side="right")
+        Btn(btns, tr("취소"), top.destroy, padx=14, pady=5).pack(side="right", padx=8)
 
     def tag_new(self, targets):
         """노트 목록에서 고른 노트(들)에 태그를 붙인다(공백·쉼표로 여러 개 가능)"""
-        who = f"노트 {len(targets)}개" if len(targets) > 1 else "이 노트"
-        name = simpledialog.askstring("태그 추가", f"{who}에 추가할 태그를 적으세요.\n(공백이나 쉼표로 여러 개, 앞의 # 는 없어도 됩니다)", parent=self.root)
+        who = tr('노트 {0}개').format(len(targets)) if len(targets) > 1 else tr("이 노트")
+        name = simpledialog.askstring(tr("태그 추가"), tr('{0}에 추가할 태그를 적으세요.\n(공백이나 쉼표로 여러 개, 앞의 # 는 없어도 됩니다)').format(who), parent=self.root)
         if name is None:
             return
         tags = [t for t in (clean_tag_name(x) for x in re.split(r"[,\s]+", name)) if t]
         if not tags:
-            return messagebox.showinfo(APP, "쓸 수 있는 태그가 없습니다. (비었거나 30자를 넘거나 [ ] ( ) / < > 가 들어 있습니다)", parent=self.root)
+            return messagebox.showinfo(APP, tr("쓸 수 있는 태그가 없습니다. (비었거나 30자를 넘거나 [ ] ( ) / < > 가 들어 있습니다)"), parent=self.root)
         self.tag_add_to(targets, list(dict.fromkeys(tags)))
 
     def tag_add_to(self, targets, tags):
@@ -163,24 +163,24 @@ class TagEditMixin:
                     self.store.save(n["path"], body, versioned=True, force=True, ev="tags")
                     done += 1
             except OSError as ex:
-                return messagebox.showerror(APP, f"태그를 더하지 못했습니다.\n{ex}", parent=self.root)
+                return messagebox.showerror(APP, tr('태그를 더하지 못했습니다.\n{0}').format(ex), parent=self.root)
         self.after_tag_change(cur_path)
-        self.status.config(text=f"태그 {' '.join('#' + t for t in tags)} 를 노트 {done}개에 더했습니다"
-                                + ("" if done == len(targets) else f" (나머지 {len(targets) - done}개는 이미 있음)"))
+        self.status.config(text=tr('태그 {0} 를 노트 {1}개에 더했습니다').format(' '.join('#' + t for t in tags), done)
+                                + ("" if done == len(targets) else tr(' (나머지 {0}개는 이미 있음)').format(len(targets) - done)))
 
     def tag_rename(self, tags):
         """tags(하나 이상)를 모두 새 이름 하나로 바꾼다. 여러 개를 골랐으면 그 이름으로 합쳐진다"""
         if len(tags) == 1:
-            title, ask, suggest = "태그 이름 바꾸기", f"'{tags[0]}' 의 새 이름 (공백은 _ 로 바뀝니다):", re.sub(r"\s+", "_", tags[0])
+            title, ask, suggest = tr("태그 이름 바꾸기"), tr("'{0}' 의 새 이름 (공백은 _ 로 바뀝니다):").format(tags[0]), re.sub(r"\s+", "_", tags[0])
         else:
-            title, suggest = "태그 합치기", re.sub(r"\s+", "_", tags[0])
-            ask = f"선택한 태그 {len(tags)}개({', '.join(tags[:4])}{' …' if len(tags) > 4 else ''})를\n모두 이 이름 하나로 바꿉니다 (공백은 _ 로 바뀝니다):"
+            title, suggest = tr("태그 합치기"), re.sub(r"\s+", "_", tags[0])
+            ask = tr('선택한 태그 {0}개({1}{2})를\n모두 이 이름 하나로 바꿉니다 (공백은 _ 로 바뀝니다):').format(len(tags), ', '.join(tags[:4]), ' …' if len(tags) > 4 else '')
         name = simpledialog.askstring(title, ask, initialvalue=suggest, parent=self.root)
         if name is None:
             return
         new = clean_tag_name(name)
         if not new:
-            return messagebox.showinfo(APP, "쓸 수 없는 이름입니다. (비었거나 30자를 넘거나 [ ] ( ) / < > , 가 들어 있습니다)", parent=self.root)
+            return messagebox.showinfo(APP, tr("쓸 수 없는 이름입니다. (비었거나 30자를 넘거나 [ ] ( ) / < > , 가 들어 있습니다)"), parent=self.root)
         if tags == [new]:
             return
         self.tag_apply(tags, new)
@@ -193,7 +193,7 @@ class TagEditMixin:
         self.flush()
         want = set(tags)
         targets = [n for n in self.all_notes if want & n["tags"]]
-        names = ", ".join(f"'{t}'" for t in tags[:5]) + (f" 외 {len(tags) - 5}개" if len(tags) > 5 else "")
+        names = ", ".join(f"'{t}'" for t in tags[:5]) + (tr(' 외 {0}개').format(len(tags) - 5) if len(tags) > 5 else "")
 
         def scan(prog, cancel):
             out, total = [], {"fm": 0, "line": 0, "inline": 0, "stuck": 0}
@@ -219,32 +219,31 @@ class TagEditMixin:
             items, c = res
             dcount = self.docs.tag_use_count(tags)   # 가져온 파일에 붙인 같은 태그(원본은 그대로, 앱의 DB 만 바뀐다)
             if not items and not dcount:
-                return messagebox.showinfo(APP, "바꿀 곳이 없습니다." + (f"\n(본문 속 #태그 {c['stuck']}곳은 이 이름으로 바꿀 수 없습니다)" if c["stuck"] else ""), parent=self.root)
-            parts = [f"{label} {c[k]}곳" for k, label in (("fm", "머리말"), ("line", "태그 줄"), ("inline", "본문 #태그")) if c[k]]
-            what = (f"{names} → '{new}' 로 " + ("합칩니다" if len(tags) > 1 else "바꿉니다")) if new else f"{names} 를 지웁니다"
+                return messagebox.showinfo(APP, tr("바꿀 곳이 없습니다.") + (tr('\n(본문 속 #태그 {0}곳은 이 이름으로 바꿀 수 없습니다)').format(c['stuck']) if c["stuck"] else ""), parent=self.root)
+            parts = [tr('{0} {1}곳').format(label, c[k]) for k, label in (("fm", tr("머리말")), ("line", tr("태그 줄")), ("inline", tr("본문 #태그"))) if c[k]]
+            what = (tr("{0} → '{1}' 로 ").format(names, new) + (tr("합칩니다") if len(tags) > 1 else tr("바꿉니다"))) if new else tr('{0} 를 지웁니다').format(names)
             extra = ""
             if new is None and c["inline"]:
-                extra += "\n본문 속 #태그는 글에서 그 글자가 지워집니다."
+                extra += tr("\n본문 속 #태그는 글에서 그 글자가 지워집니다.")
             if c["stuck"]:
-                extra += f"\n본문 속 #태그 {c['stuck']}곳은 '{new}' 가 본문 태그로 쓸 수 없는 이름이라 그대로 남습니다."
+                extra += tr("\n본문 속 #태그 {0}곳은 '{1}' 가 본문 태그로 쓸 수 없는 이름이라 그대로 남습니다.").format(c['stuck'], new)
             if dcount:
-                parts.append(f"가져온 파일 {dcount:,}개")
-            if not messagebox.askyesno(APP, f"{what}.\n\n노트 {len(items):,}개 ({', '.join(parts)}){extra}\n\n"
-                                            "이전 내용은 노트 버전으로 남고, 수정 시각은 바뀌지 않습니다. 계속할까요?", parent=self.root):
+                parts.append(tr('가져온 파일 {0:,}개').format(dcount))
+            if not messagebox.askyesno(APP, tr('{0}.\n\n노트 {1:,}개 ({2}){3}\n\n이전 내용은 노트 버전으로 남고, 수정 시각은 바뀌지 않습니다. 계속할까요?').format(what, len(items), ', '.join(parts), extra), parent=self.root):
                 return
-            self.checkpoint("태그 정리 전", lambda: self.tag_write(items, tags, new)) if len(items) >= 5 else self.tag_write(items, tags, new)
-        self.run_task("태그 확인", scan, confirm, text="태그가 든 노트를 확인하는 중…")
+            self.checkpoint(tr("태그 정리 전"), lambda: self.tag_write(items, tags, new)) if len(items) >= 5 else self.tag_write(items, tags, new)
+        self.run_task(tr("태그 확인"), scan, confirm, text=tr("태그가 든 노트를 확인하는 중…"))
 
     def tag_write(self, items, tags, new):
         cur_path = self.cur["path"] if self.cur else None
-        top = self.tool_window("태그 바꾸는 중", "420x110", native=True)
+        top = self.tool_window(tr("태그 바꾸는 중"), "420x110", native=True)
         msg = tk.Label(top, text="", bg=C["bg"], fg=C["text"], font=(self.ui, 10), pady=24)
         msg.pack()
         top.protocol("WM_DELETE_WINDOW", lambda: None)
         done = 0
         for i, (n, body) in enumerate(items):
             if i % 10 == 0:
-                msg.config(text=f"노트의 태그를 바꾸는 중… {i:,} / {len(items):,}")
+                msg.config(text=tr('노트의 태그를 바꾸는 중… {0:,} / {1:,}').format(i, len(items)))
                 top.update()
             try:   # 수정 시각은 그대로 두고(touch=False), 이전 내용은 버전으로 남긴다(force)
                 self.store.save(n["path"], body, versioned=True, force=True, touch=False, ev="tags")
@@ -256,7 +255,7 @@ class TagEditMixin:
         if self.tag in tags:
             self.tag = new
         self.after_tag_change(cur_path)
-        messagebox.showinfo(APP, f"노트 {done:,}개" + (f", 가져온 파일 {dn:,}개" if dn else "") + "의 태그를 " + ("바꿨습니다." if new else "지웠습니다."), parent=self.root)
+        messagebox.showinfo(APP, tr('노트 {0:,}개').format(done) + (tr(', 가져온 파일 {0:,}개').format(dn) if dn else "") + tr("의 태그를 ") + (tr("바꿨습니다.") if new else tr("지웠습니다.")), parent=self.root)
 
     def after_tag_change(self, cur_path):
         """태그를 바꾼 뒤: 노트를 다시 읽고 사이드바·목록·열려 있던 노트를 갱신한다"""

@@ -10,6 +10,7 @@ from notes_shared import *  # noqa: E402,F401,F403   (가져오기·상수·색�
 import notes_shared as _shared  # noqa: E402
 import autotitle  # noqa: E402   (제목 없이 쓴 새 노트: 본문 첫 줄을 제목으로)
 from dialogs import DialogsMixin  # noqa: E402   (큰 대화창들: dialogs.py)
+from langbtn import LangButton  # noqa: E402   (오른쪽 위 언어 단추: langbtn.py)
 from searchbox import SearchBoxMixin  # noqa: E402   (검색창 자동완성·입력기 글꼴: searchbox.py)
 from findbar import FindBarMixin  # noqa: E402   (문서에서 찾기 막대(Ctrl+F): findbar.py)
 from wikiui import WikiUIMixin  # noqa: E402   (위키 링크(켜짐 확인·[[ 자동완성·연결된 노트 보기): wikiui.py)
@@ -19,6 +20,7 @@ from tagedit import TagEditMixin  # noqa: E402   (태그 편집(맨 아래 태�
 class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin):
     def __init__(self):
         global UI
+        i18n.init(st.read_config().get("lang"))
         theme = migrate_theme(st.read_config().get("theme", {}))
         apply_theme(theme["name"], theme["custom"])
         self.root = tk.Tk()
@@ -182,100 +184,101 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         act = lambda a: (lambda: self.run_action(a))  # noqa: E731
 
         m = tk.Menu(mb, tearoff=0)
-        m.add_command(label="새 노트", accelerator="Ctrl+N", command=self.new_note)
-        m.add_command(label="새 노트북", accelerator="Ctrl+Shift+N", command=self.add_notebook)
-        m.add_command(label="새 하위 노트북", command=self.add_subnotebook)
+        m.add_command(label=tr("새 노트"), accelerator="Ctrl+N", command=self.new_note)
+        m.add_command(label=tr("새 노트북"), accelerator="Ctrl+Shift+N", command=self.add_notebook)
+        m.add_command(label=tr("새 하위 노트북"), command=self.add_subnotebook)
         m.add_separator()
-        m.add_command(label="폴더 가져오기…", command=lambda: self.show_options("imports"))
+        m.add_command(label=tr("폴더 가져오기…"), command=lambda: self.show_options("imports"))
         m.add_separator()
-        m.add_command(label="휴지통", command=lambda: self.go_nb(TRASH))
+        m.add_command(label=tr("휴지통"), command=lambda: self.go_nb(TRASH))
         m.add_separator()
-        m.add_command(label="종료", accelerator="Alt+F4", command=self.quit)
-        mb.add_cascade(label="파일", menu=m)
+        m.add_command(label=tr("종료"), accelerator="Alt+F4", command=self.quit)
+        mb.add_cascade(label=tr("파일"), menu=m)
 
         m = tk.Menu(mb, tearoff=0)
-        m.add_command(label="실행 취소", accelerator="Ctrl+Z", command=lambda: self.text_do("edit_undo"))
-        m.add_command(label="다시 실행", accelerator="Ctrl+Y", command=lambda: self.text_do("edit_redo"))
+        m.add_command(label=tr("실행 취소"), accelerator="Ctrl+Z", command=lambda: self.text_do("edit_undo"))
+        m.add_command(label=tr("다시 실행"), accelerator="Ctrl+Y", command=lambda: self.text_do("edit_redo"))
         m.add_separator()
-        m.add_command(label="잘라내기", accelerator="Ctrl+X", command=lambda: self.text.event_generate("<<Cut>>"))
-        m.add_command(label="복사", accelerator="Ctrl+C", command=lambda: self.text.event_generate("<<Copy>>"))
-        m.add_command(label="붙여넣기", accelerator="Ctrl+V", command=lambda: self.text.event_generate("<<Paste>>"))
-        m.add_command(label="모두 선택", accelerator="Ctrl+A", command=lambda: (self.text.tag_add("sel", "1.0", "end-1c"), self.text.focus_set()))
+        m.add_command(label=tr("잘라내기"), accelerator="Ctrl+X", command=lambda: self.text.event_generate("<<Cut>>"))
+        m.add_command(label=tr("복사"), accelerator="Ctrl+C", command=lambda: self.text.event_generate("<<Copy>>"))
+        m.add_command(label=tr("붙여넣기"), accelerator="Ctrl+V", command=lambda: self.text.event_generate("<<Paste>>"))
+        m.add_command(label=tr("모두 선택"), accelerator="Ctrl+A", command=lambda: (self.text.tag_add("sel", "1.0", "end-1c"), self.text.focus_set()))
         m.add_separator()
-        m.add_command(label="굵게", accelerator="Ctrl+B", command=act(("wrap", "b")))
-        m.add_command(label="기울임꼴", accelerator="Ctrl+I", command=act(("wrap", "i")))
-        m.add_command(label="취소선", command=act(("wrap", "s")))
-        m.add_command(label="링크 만들기", accelerator="Ctrl+K", command=act(("wrap", "link")))
-        m.add_command(label="코드", command=act(("wrap", "code")))
+        m.add_command(label=tr("굵게"), accelerator="Ctrl+B", command=act(("wrap", "b")))
+        m.add_command(label=tr("기울임꼴"), accelerator="Ctrl+I", command=act(("wrap", "i")))
+        m.add_command(label=tr("취소선"), command=act(("wrap", "s")))
+        m.add_command(label=tr("링크 만들기"), accelerator="Ctrl+K", command=act(("wrap", "link")))
+        m.add_command(label=tr("코드"), command=act(("wrap", "code")))
         m.add_separator()
-        m.add_command(label="번호 매기기 목록", command=act(("line", "ol")))
-        m.add_command(label="글머리 기호 목록", command=act(("line", "ul")))
-        m.add_command(label="인용", command=act(("line", "quote")))
+        m.add_command(label=tr("번호 매기기 목록"), command=act(("line", "ol")))
+        m.add_command(label=tr("글머리 기호 목록"), command=act(("line", "ul")))
+        m.add_command(label=tr("인용"), command=act(("line", "quote")))
         h = tk.Menu(m, tearoff=0)
         for lv in (1, 2, 3, 4):
-            h.add_command(label=f"제목 {lv}", command=act(("heading", lv)))
-        h.add_command(label="본문", command=act(("heading", 0)))
-        m.add_cascade(label="제목", menu=h)
-        m.add_command(label="가로줄", command=act(("block", "hr")))
-        m.add_command(label="표", command=act(("block", "table")))
-        m.add_command(label="코드 블록", command=act(("block", "codeblock")))
-        m.add_command(label="날짜 및 시간 삽입", accelerator="Ctrl+Shift+T", command=self.insert_datetime)
+            h.add_command(label=tr("제목 {n}").format(n=lv), command=act(("heading", lv)))
+        h.add_command(label=tr("본문"), command=act(("heading", 0)))
+        m.add_cascade(label=tr("제목"), menu=h)
+        m.add_command(label=tr("가로줄"), command=act(("block", "hr")))
+        m.add_command(label=tr("표"), command=act(("block", "table")))
+        m.add_command(label=tr("코드 블록"), command=act(("block", "codeblock")))
+        m.add_command(label=tr("날짜 및 시간 삽입"), accelerator="Ctrl+Shift+T", command=self.insert_datetime)
         m.add_separator()
-        m.add_command(label="문서에서 찾기", accelerator="Ctrl+F", command=lambda: self.cur and self.show_find())
-        m.add_command(label="모든 파일에서 검색", accelerator="Ctrl+Shift+F", command=self.focus_search)
+        m.add_command(label=tr("문서에서 찾기"), accelerator="Ctrl+F", command=lambda: self.cur and self.show_find())
+        m.add_command(label=tr("모든 파일에서 검색"), accelerator="Ctrl+Shift+F", command=self.focus_search)
         m.add_separator()
-        m.add_command(label="노트 속성…", command=self.show_properties)
-        m.add_command(label="노트 버전…", command=self.show_versions)
-        m.add_command(label="비슷한 노트 찾기…", command=self.show_similar)
-        mb.add_cascade(label="편집", menu=m)
+        m.add_command(label=tr("노트 속성…"), command=self.show_properties)
+        m.add_command(label=tr("노트 버전…"), command=self.show_versions)
+        m.add_command(label=tr("비슷한 노트 찾기…"), command=self.show_similar)
+        mb.add_cascade(label=tr("편집"), menu=m)
 
         m = tk.Menu(mb, tearoff=0)
-        m.add_checkbutton(label="노트북 보기", variable=self.v["notebooks"], command=self.on_view_toggle)
-        m.add_checkbutton(label="태그 보기", variable=self.v["tags"], command=self.on_view_toggle)
-        m.add_checkbutton(label="노트 목록 보기", accelerator="Ctrl+Shift+L", variable=self.v["list"], command=self.on_view_toggle)
-        m.add_checkbutton(label="문법 해설 보기", accelerator="Ctrl+/", variable=self.v["syntax"], command=self.on_view_toggle)
+        m.add_checkbutton(label=tr("노트북 보기"), variable=self.v["notebooks"], command=self.on_view_toggle)
+        m.add_checkbutton(label=tr("태그 보기"), variable=self.v["tags"], command=self.on_view_toggle)
+        m.add_checkbutton(label=tr("노트 목록 보기"), accelerator="Ctrl+Shift+L", variable=self.v["list"], command=self.on_view_toggle)
+        m.add_checkbutton(label=tr("문법 해설 보기"), accelerator="Ctrl+/", variable=self.v["syntax"], command=self.on_view_toggle)
         m.add_separator()
-        for key, label in (("edit", "마크다운만"), ("split", "마크다운 + 렌더링"), ("view", "렌더링만")):
+        for key, label in (("edit", tr("마크다운만")), ("split", tr("마크다운 + 렌더링")), ("view", tr("렌더링만"))):
             m.add_radiobutton(label=label, value=key, variable=self.v_mode, command=lambda k=key: self.set_mode(k))
-        m.add_command(label="편집기 레이아웃 전환", accelerator="Ctrl+L", command=lambda: self.cur and self.cycle_mode())
-        mb.add_cascade(label="보기", menu=m)
+        m.add_command(label=tr("편집기 레이아웃 전환"), accelerator="Ctrl+L", command=lambda: self.cur and self.cycle_mode())
+        mb.add_cascade(label=tr("보기"), menu=m)
 
         m = tk.Menu(mb, tearoff=0)
-        m.add_command(label="뒤로", accelerator="Ctrl+-", command=lambda: self.go(-1))
-        m.add_command(label="앞으로", accelerator="Ctrl++", command=lambda: self.go(1))
-        mb.add_cascade(label="이동", menu=m)
+        m.add_command(label=tr("뒤로"), accelerator="Ctrl+-", command=lambda: self.go(-1))
+        m.add_command(label=tr("앞으로"), accelerator="Ctrl++", command=lambda: self.go(1))
+        mb.add_cascade(label=tr("이동"), menu=m)
 
         m = tk.Menu(mb, tearoff=0)
-        m.add_command(label="복원 지점…", command=self.show_snapshots)
-        m.add_command(label="전체 변경 이력…", command=self.show_journal)
+        m.add_command(label=tr("복원 지점…"), command=self.show_snapshots)
+        m.add_command(label=tr("전체 변경 이력…"), command=self.show_journal)
         m.add_separator()
-        m.add_command(label="중복 노트 찾기…", command=self.show_duplicates)
-        m.add_command(label="스크랩 군더더기 정리…", command=self.show_cleanup)
-        m.add_command(label="안 쓰는 미디어 파일 정리…", command=self.show_unused_media)
-        mb.add_cascade(label="도구", menu=m)
+        m.add_command(label=tr("중복 노트 찾기…"), command=self.show_duplicates)
+        m.add_command(label=tr("스크랩 군더더기 정리…"), command=self.show_cleanup)
+        m.add_command(label=tr("안 쓰는 미디어 파일 정리…"), command=self.show_unused_media)
+        mb.add_cascade(label=tr("도구"), menu=m)
 
         m = tk.Menu(mb, tearoff=0)
-        m.add_command(label="옵션…", accelerator="Ctrl+,", command=lambda: self.show_options("general"))
+        m.add_command(label=tr("옵션…"), accelerator="Ctrl+,", command=lambda: self.show_options("general"))
         m.add_separator()
-        m.add_command(label="폴더 설정… (노트·리소스 폴더)", command=lambda: self.show_options("folders"))
+        m.add_command(label=tr("폴더 설정… (노트·리소스 폴더)"), command=lambda: self.show_options("folders"))
         m.add_separator()
-        m.add_command(label="글꼴·크기…", command=lambda: self.show_options("fonts"))
-        m.add_command(label="테마·색상…", command=lambda: self.show_options("theme"))
-        m.add_command(label="노트 버전 설정…", command=lambda: self.show_options("versions"))
-        m.add_command(label="동기화 설정…", command=lambda: self.show_options("sync"))
-        m.add_command(label="웹 클리퍼 설정…", command=lambda: self.show_options("clipper"))
-        mb.add_cascade(label="설정", menu=m)
+        m.add_command(label=tr("글꼴·크기…"), command=lambda: self.show_options("fonts"))
+        m.add_command(label=tr("테마·색상…"), command=lambda: self.show_options("theme"))
+        m.add_command(label=tr("노트 버전 설정…"), command=lambda: self.show_options("versions"))
+        m.add_command(label=tr("동기화 설정…"), command=lambda: self.show_options("sync"))
+        m.add_command(label=tr("웹 클리퍼 설정…"), command=lambda: self.show_options("clipper"))
+        mb.add_cascade(label=tr("설정"), menu=m)
 
         m = tk.Menu(mb, tearoff=0)
-        m.add_command(label="사용 설명서 (GitHub)…", accelerator="F1", command=self.open_manual)
-        m.add_command(label="검색 문법", command=self.help_search)
-        m.add_command(label="안드로이드 앱 내려받기 (APK)…", command=lambda: webbrowser.open(self.ANDROID_URL))
+        m.add_command(label=tr("사용 설명서 (GitHub)…"), accelerator="F1", command=self.open_manual)
+        m.add_command(label=tr("검색 문법"), command=self.help_search)
+        m.add_command(label=tr("안드로이드 앱 내려받기 (APK)…"), command=lambda: webbrowser.open(self.ANDROID_URL))
         m.add_separator()
-        m.add_command(label="업데이트 확인…", command=self.check_update)
-        m.add_command(label=f"{APP} 정보 (버전 {VERSION})", command=lambda: messagebox.showinfo(
-            APP, f"{APP} {VERSION}\n\n위키나루 기반 마크다운 노트 앱\n노트는 .md 파일로 저장됩니다.\n\n저장 폴더: " + self.store.root
+        m.add_command(label=tr("업데이트 확인…"), command=self.check_update)
+        m.add_command(label=tr("{app} 정보 (버전 {v})").format(app=APP, v=VERSION), command=lambda: messagebox.showinfo(
+            APP, f"{APP} {VERSION}\n\n" + tr("위키나루 기반 마크다운 노트 앱\n노트는 .md 파일로 저장됩니다.\n\n저장 폴더: ") + self.store.root
             + "\n\nhttps://github.com/" + updater.REPO, parent=self.root))
-        mb.add_cascade(label="도움말", menu=m)
+        mb.add_cascade(label=tr("도움말"), menu=m)
+
         self.root.config(menu=mb)
 
     # ------------------------------------------------------------ 도구: 중복 노트 · 스크랩 군더더기
@@ -297,7 +300,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             self.open_note(n)
         return n
 
-    def run_task(self, title, work, done, text="노트를 읽는 중…", cancellable=True):
+    def run_task(self, title, work, done, text=tr("노트를 읽는 중…"), cancellable=True):
         """오래 걸리는 일을 뒤에서 돌리고 진행 창을 보여 준다(work(progress, cancelled) → 결과). 끝나면 done(결과). 취소하면 done 은 부르지 않는다."""
         self.flush()
         top = self.tool_window(title, "420x150")
@@ -311,7 +314,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             top.destroy()
         if cancellable:
             top.protocol("WM_DELETE_WINDOW", stop)
-            Btn(top, "취소", stop, padx=14, pady=3).pack()
+            Btn(top, tr("취소"), stop, padx=14, pady=3).pack()
         else:   # 중간에 멈추면 안 되는 작업(파일 옮기기·링크 고치기)
             top.protocol("WM_DELETE_WINDOW", lambda: None)
             top.grab_set()
@@ -352,8 +355,8 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
 
     def checkpoint(self, label, then):
         """큰 작업 직전에 복원 지점을 만들고(바뀐 게 없으면 바로) then() 을 부른다. 취소하면 then 은 부르지 않는다."""
-        self.run_task("복원 지점 만드는 중", lambda prog, cancel: self.snap.create(label, prog, cancel), lambda pid: then(),
-                      text=f"\"{label}\" 복원 지점을 만드는 중… (처음 한 번은 오래 걸립니다)")
+        self.run_task(tr("복원 지점 만드는 중"), lambda prog, cancel: self.snap.create(label, prog, cancel), lambda pid: then(),
+                      text=tr('"{0}" 복원 지점을 만드는 중… (처음 한 번은 오래 걸립니다)').format(label))
 
     def auto_snapshot(self):
         """시작한 뒤 한참 있다가: 마지막 복원 지점이 하루 넘었으면 조용히 하나 만들고 오래된 것을 정리한다"""
@@ -367,7 +370,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
 
         def job():
             try:
-                self.snap.create("자동")
+                self.snap.create(tr("자동"))
                 self.snap.prune(cfg["count"], cfg["days"])
                 q.put("ok")
             except Exception as ex:  # noqa: BLE001
@@ -380,7 +383,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             except queue.Empty:
                 return self.root.after(1000, poll)
             if r == "ok":
-                self.status.config(text="복원 지점을 만들었습니다.")
+                self.status.config(text=tr("복원 지점을 만들었습니다."))
         poll()
 
     def trash_notes(self, paths):
@@ -414,28 +417,28 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
 
     def show_duplicates(self):
         """도구 > 중복 노트 찾기: 같은 원본 주소 · 같은 본문 · 같은 제목에 비슷한 본문을 묶어 보여 주고, 골라서 휴지통으로"""
-        self.scan_notes("중복 노트 찾기", lambda notes, prog, cancel: cleanup.find_duplicates(notes, prog, cancel), self.duplicates_dialog)
+        self.scan_notes(tr("중복 노트 찾기"), lambda notes, prog, cancel: cleanup.find_duplicates(notes, prog, cancel), self.duplicates_dialog)
 
     def show_similar(self):
         """편집 > 비슷한 노트 찾기: 열어 둔 노트와 쓰인 낱말이 비슷한 노트를 색인된 본문에서 찾아 보여 준다(See Also)"""
         if not self.cur or self.doc_open:
-            return messagebox.showinfo(APP, "먼저 노트를 여세요." if not self.cur else "가져온 파일은 아직 지원하지 않습니다(노트만).", parent=self.root)
+            return messagebox.showinfo(APP, tr("먼저 노트를 여세요.") if not self.cur else tr("가져온 파일은 아직 지원하지 않습니다(노트만)."), parent=self.root)
         self.flush()
         n = self.cur
         key, body = self.store.key_of(n["path"]), n["body"]
 
         def done(res):
-            top = self.tool_window("비슷한 노트 — " + n["title"], "700x520")
+            top = self.tool_window(tr("비슷한 노트 — ") + n["title"], "700x520")
             if not res:
-                tk.Label(top, text="비슷한 노트를 찾지 못했습니다(글이 너무 짧거나 흔한 낱말뿐일 수 있습니다).", bg=C["bg"], fg=C["muted"],
+                tk.Label(top, text=tr("비슷한 노트를 찾지 못했습니다(글이 너무 짧거나 흔한 낱말뿐일 수 있습니다)."), bg=C["bg"], fg=C["muted"],
                          font=(self.ui, 10), padx=16, pady=20).pack(fill="x")
                 return
-            tk.Label(top, text="열어 둔 노트에서 자주 나오면서 흔하지 않은 낱말을 다른 노트 본문에서 찾은 결과입니다. 더블클릭하면 그 노트를 엽니다.",
+            tk.Label(top, text=tr("열어 둔 노트에서 자주 나오면서 흔하지 않은 낱말을 다른 노트 본문에서 찾은 결과입니다. 더블클릭하면 그 노트를 엽니다."),
                      bg=C["bg"], fg=C["muted"], font=(self.ui, 9), anchor="w", padx=16, pady=10).pack(fill="x")
             wrap = tk.Frame(top, bg=C["bg"])
             wrap.pack(fill="both", expand=True, padx=16, pady=(0, 12))
             tv = ttk.Treeview(wrap, columns=("title", "nb", "hit"), show="headings", selectmode="browse")
-            for col, text, w, stretch in (("title", "노트", 380, True), ("nb", "노트북", 170, False), ("hit", "겹친 낱말", 90, False)):
+            for col, text, w, stretch in (("title", tr("노트"), 380, True), ("nb", tr("노트북"), 170, False), ("hit", tr("겹친 낱말"), 90, False)):
                 tv.heading(col, text=text)
                 tv.column(col, width=w, stretch=stretch, anchor="e" if col == "hit" else "w")
             sb = ttk.Scrollbar(wrap, orient="vertical", command=tv.yview)
@@ -454,22 +457,21 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
                     self.open_note(by_key[sel[0]])
             tv.bind("<Double-1>", open_sel)
             tv.bind("<Return>", open_sel)
-        self.run_task("비슷한 노트 찾기", lambda prog, cancel: similar.find(self.store, key, body, 40, prog, cancel), done, text="비슷한 노트를 찾는 중…")
+        self.run_task(tr("비슷한 노트 찾기"), lambda prog, cancel: similar.find(self.store, key, body, 40, prog, cancel), done, text=tr("비슷한 노트를 찾는 중…"))
 
     def show_unused_media(self):
         """도구 > 안 쓰는 미디어 파일 정리: 어떤 노트도 가리키지 않는 그림·첨부를 찾아 한꺼번에 휴지통으로"""
-        self.scan_notes("안 쓰는 미디어 파일 찾기", lambda notes, prog, cancel: cleanup.unused_media(self.store, notes, prog, cancel), self.unused_media_dialog)
+        self.scan_notes(tr("안 쓰는 미디어 파일 찾기"), lambda notes, prog, cancel: cleanup.unused_media(self.store, notes, prog, cancel), self.unused_media_dialog)
 
     def unused_media_dialog(self, found):
         if not found:
-            return messagebox.showinfo(APP, "안 쓰는 미디어 파일이 없습니다.", parent=self.root)
+            return messagebox.showinfo(APP, tr("안 쓰는 미디어 파일이 없습니다."), parent=self.root)
         total = sum(s for _, s in found)
-        top = self.tool_window(f"안 쓰는 미디어 파일 — {len(found):,}개", "760x520", native=True)
+        top = self.tool_window(tr('안 쓰는 미디어 파일 — {0:,}개').format(len(found)), "760x520", native=True)
 
         def mb(n):
             return f"{n / 1048576:,.1f}MB" if n >= 1048576 else f"{n / 1024:,.0f}KB"
-        tk.Label(top, text=f"어떤 노트도 가리키지 않는 파일 {len(found):,}개 ({mb(total)}). 휴지통으로 보내면 {self.store.trash_days}일 동안 복원할 수 있습니다.\n"
-                           "(노트의 이전 버전 기록이 가리키는 그림은 확인하지 않으므로, 오래된 버전으로 되돌릴 때 그림이 빠질 수 있습니다.)",
+        tk.Label(top, text=tr('어떤 노트도 가리키지 않는 파일 {0:,}개 ({1}). 휴지통으로 보내면 {2}일 동안 복원할 수 있습니다.\n(노트의 이전 버전 기록이 가리키는 그림은 확인하지 않으므로, 오래된 버전으로 되돌릴 때 그림이 빠질 수 있습니다.)').format(len(found), mb(total), self.store.trash_days),
                  bg=C["bg"], fg=C["muted"], font=(self.ui, 9), anchor="w", justify="left", padx=16, pady=10).pack(fill="x")
         btns = tk.Frame(top, bg=C["bg"])
         btns.pack(side="bottom", fill="x", padx=16, pady=12)
@@ -492,15 +494,15 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
 
         def trash(items):
             if not items:
-                return messagebox.showinfo(APP, "먼저 파일을 고르세요.", parent=top)
-            if not messagebox.askyesno(APP, f"{len(items):,}개 파일을 휴지통으로 보낼까요?", parent=top):
+                return messagebox.showinfo(APP, tr("먼저 파일을 고르세요."), parent=top)
+            if not messagebox.askyesno(APP, tr('{0:,}개 파일을 휴지통으로 보낼까요?').format(len(items)), parent=top):
                 return
             try:
                 n = self.store.trash_files([p for p, _ in items], self.store.media_dir)
             except OSError as ex:
                 return messagebox.showerror(APP, str(ex), parent=top)
             top.destroy()
-            messagebox.showinfo(APP, f"{n:,}개 파일을 휴지통으로 보냈습니다. (파일 → 휴지통에서 복원)", parent=self.root)
+            messagebox.showinfo(APP, tr('{0:,}개 파일을 휴지통으로 보냈습니다. (파일 → 휴지통에서 복원)').format(n), parent=self.root)
         def open_one(e=None):   # 파일 하나를 누르면 그 파일을 연다(그림·영상 등 보는 파일만. 나머지는 폴더에서 위치만 보여 준다)
             sel = lb.curselection()
             if len(sel) != 1:
@@ -511,7 +513,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             else:
                 self.reveal_file(p)
         lb.bind("<<ListboxSelect>>", open_one)
-        Btn(btns, "모두 휴지통으로", lambda: trash(list(found)), kind="danger", padx=12, pady=3).pack(side="right")
+        Btn(btns, tr("모두 휴지통으로"), lambda: trash(list(found)), kind="danger", padx=12, pady=3).pack(side="right")
 
         menu = tk.Menu(top, tearoff=0)
 
@@ -523,9 +525,9 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             sel = list(lb.curselection())
             one = len(sel) == 1
             menu.delete(0, "end")
-            menu.add_command(label="파일 열기", command=open_one, state="normal" if one else "disabled")
-            menu.add_command(label="파일 위치 열기", command=open_sel, state="normal" if sel else "disabled")
-            menu.add_command(label=f"휴지통으로 보내기 ({len(sel)}개)" if len(sel) > 1 else "휴지통으로 보내기",
+            menu.add_command(label=tr("파일 열기"), command=open_one, state="normal" if one else "disabled")
+            menu.add_command(label=tr("파일 위치 열기"), command=open_sel, state="normal" if sel else "disabled")
+            menu.add_command(label=tr('휴지통으로 보내기 ({0}개)').format(len(sel)) if len(sel) > 1 else tr("휴지통으로 보내기"),
                              command=lambda: trash([found[k] for k in lb.curselection()]), state="normal" if sel else "disabled")
             menu.tk_popup(e.x_root, e.y_root)
         lb.bind("<Button-3>", on_menu)
@@ -546,21 +548,21 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
     def cleanup_options(self):
         """군더더기 찾기 전에 기준을 고른다: 사이트 공통 줄로 볼 비율·최소 노트 수, 지우지 않기로 한 줄 목록"""
         cfg = self.cleanup_cfg()
-        top = self.tool_window("스크랩 군더더기 정리 — 기준", "560x470", native=True)
-        tk.Label(top, text="같은 사이트에서 스크랩한 노트 여럿에 똑같이 나오는 줄(메뉴·머리글·바닥글)을 군더더기로 봅니다. 기준을 높이면 덜 지우고, 낮추면 더 지웁니다.\n"
-                           "찾은 뒤 미리 보기에서 지우기 싫은 줄을 오른쪽 클릭해 \"이 줄은 지우지 않기\" 를 고르면 아래 목록에 쌓입니다.",
+        top = self.tool_window(tr("스크랩 군더더기 정리 — 기준"), "560x470", native=True)
+        tk.Label(top, text=tr("같은 사이트에서 스크랩한 노트 여럿에 똑같이 나오는 줄(메뉴·머리글·바닥글)을 군더더기로 봅니다. 기준을 높이면 덜 지우고, 낮추면 더 지웁니다.\n"
+                           "찾은 뒤 미리 보기에서 지우기 싫은 줄을 오른쪽 클릭해 \"이 줄은 지우지 않기\" 를 고르면 아래 목록에 쌓입니다."),
                  bg=C["bg"], fg=C["muted"], font=(self.ui, 9), anchor="w", justify="left", wraplength=520, padx=16, pady=10).pack(fill="x")
         f = tk.Frame(top, bg=C["bg"])
         f.pack(fill="x", padx=16)
         ratio = tk.IntVar(value=cfg["ratio"])
         docs = tk.IntVar(value=cfg["min_docs"])
-        tk.Label(f, text="사이트 노트의", bg=C["bg"], fg=C["text"], font=(self.ui, 10)).grid(row=0, column=0, sticky="w")
+        tk.Label(f, text=tr("사이트 노트의"), bg=C["bg"], fg=C["text"], font=(self.ui, 10)).grid(row=0, column=0, sticky="w")
         tk.Spinbox(f, from_=5, to=100, increment=5, width=4, textvariable=ratio, font=(self.ui, 10)).grid(row=0, column=1, padx=4)
-        tk.Label(f, text="% 이상에 나오는 줄 (기본 30)", bg=C["bg"], fg=C["text"], font=(self.ui, 10)).grid(row=0, column=2, sticky="w")
-        tk.Label(f, text="그리고 최소", bg=C["bg"], fg=C["text"], font=(self.ui, 10)).grid(row=1, column=0, sticky="w", pady=6)
+        tk.Label(f, text=tr("% 이상에 나오는 줄 (기본 30)"), bg=C["bg"], fg=C["text"], font=(self.ui, 10)).grid(row=0, column=2, sticky="w")
+        tk.Label(f, text=tr("그리고 최소"), bg=C["bg"], fg=C["text"], font=(self.ui, 10)).grid(row=1, column=0, sticky="w", pady=6)
         tk.Spinbox(f, from_=2, to=200, width=4, textvariable=docs, font=(self.ui, 10)).grid(row=1, column=1, padx=4)
-        tk.Label(f, text="개 노트에 나와야 함 (기본 4)", bg=C["bg"], fg=C["text"], font=(self.ui, 10)).grid(row=1, column=2, sticky="w")
-        tk.Label(top, text="지우지 않기로 한 줄", bg=C["bg"], fg=C["text"], font=(self.ui, 10, "bold"), anchor="w", padx=16, pady=10).pack(fill="x")
+        tk.Label(f, text=tr("개 노트에 나와야 함 (기본 4)"), bg=C["bg"], fg=C["text"], font=(self.ui, 10)).grid(row=1, column=2, sticky="w")
+        tk.Label(top, text=tr("지우지 않기로 한 줄"), bg=C["bg"], fg=C["text"], font=(self.ui, 10, "bold"), anchor="w", padx=16, pady=10).pack(fill="x")
         btns = tk.Frame(top, bg=C["bg"])
         btns.pack(side="bottom", fill="x", padx=16, pady=12)
         wrap = tk.Frame(top, bg=C["panel"])
@@ -590,36 +592,36 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             c = save()
             top.destroy()
             self.cleanup_scan(c)
-        Btn(btns, "군더더기 찾기", go, kind="primary", bold=True, padx=16).pack(side="right")
-        Btn(btns, "닫기", lambda: (save(), top.destroy()), padx=14).pack(side="right", padx=6)
-        Btn(btns, "고른 줄 목록에서 빼기", drop, padx=12).pack(side="left")
+        Btn(btns, tr("군더더기 찾기"), go, kind="primary", bold=True, padx=16).pack(side="right")
+        Btn(btns, tr("닫기"), lambda: (save(), top.destroy()), padx=14).pack(side="right", padx=6)
+        Btn(btns, tr("고른 줄 목록에서 빼기"), drop, padx=12).pack(side="left")
 
     def cleanup_scan(self, c):
         opts = {"ratio": c["ratio"] / 100, "min_docs": c["min_docs"], "keep": c["keep"]}
-        self.scan_notes("스크랩 군더더기 찾기", lambda notes, prog, cancel: cleanup.scan_junk(notes, prog, cancel, opts), self.cleanup_dialog)
+        self.scan_notes(tr("스크랩 군더더기 찾기"), lambda notes, prog, cancel: cleanup.scan_junk(notes, prog, cancel, opts), self.cleanup_dialog)
 
     def check_update(self):
         """GitHub 의 최신 릴리스를 확인하고, 새 버전이면 내려받아 exe 를 바꾸고 다시 시작한다(소스로 실행 중이면 릴리스 페이지만 안내)"""
-        self.run_task("업데이트 확인", lambda prog, cancel: updater.latest(), self.update_found, text="최신 버전을 확인하는 중…")
+        self.run_task(tr("업데이트 확인"), lambda prog, cancel: updater.latest(), self.update_found, text=tr("최신 버전을 확인하는 중…"))
 
     def update_found(self, rel):
         if not updater.is_newer(rel["tag"], VERSION):
-            return messagebox.showinfo(APP, f"최신 버전입니다.\n현재 {VERSION}, 최신 릴리스 {rel['tag']}", parent=self.root)
+            return messagebox.showinfo(APP, tr('최신 버전입니다.\n현재 {0}, 최신 릴리스 {1}').format(VERSION, rel['tag']), parent=self.root)
         news = updater.whats_new(rel["body"])
-        head = f"새 버전 {rel['tag']} 이 나왔습니다. (현재 {VERSION})\n\n{news}\n\n"
+        head = tr('새 버전 {0} 이 나왔습니다. (현재 {1})\n\n{2}\n\n').format(rel['tag'], VERSION, news)
         if not (ed.FROZEN and rel["asset_url"] and rel["sha"]):   # 소스로 실행 중이거나 자동으로 바꿀 파일이 없으면 페이지만
-            why = "소스로 실행 중이라 자동으로 바꾸지 않습니다. " if not ed.FROZEN else ""
-            if messagebox.askyesno(APP, head + why + "릴리스 페이지를 열까요?", parent=self.root):
+            why = tr("소스로 실행 중이라 자동으로 바꾸지 않습니다. ") if not ed.FROZEN else ""
+            if messagebox.askyesno(APP, head + why + tr("릴리스 페이지를 열까요?"), parent=self.root):
                 webbrowser.open(rel["url"])
             return
         ans = messagebox.askyesnocancel(
-            APP, head + "예: 지금 업데이트(내려받아 바꾸고 자동으로 다시 시작)\n아니오: 릴리스 페이지 열기\n취소: 나중에", parent=self.root)
+            APP, head + tr("예: 지금 업데이트(내려받아 바꾸고 자동으로 다시 시작)\n아니오: 릴리스 페이지 열기\n취소: 나중에"), parent=self.root)
         if ans is None:
             return
         if not ans:
             return webbrowser.open(rel["url"])
-        self.run_task("업데이트 내려받기", lambda prog, cancel: updater.download(rel, prog, cancel), self.update_downloaded,
-                      text=f"{rel['tag']} 을 내려받는 중… (KB)")
+        self.run_task(tr("업데이트 내려받기"), lambda prog, cancel: updater.download(rel, prog, cancel), self.update_downloaded,
+                      text=tr('{0} 을 내려받는 중… (KB)').format(rel['tag']))
 
     def update_downloaded(self, path):
         if not path:
@@ -628,7 +630,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         try:
             updater.apply(path)
         except OSError as ex:
-            return messagebox.showerror(APP, f"업데이트를 시작하지 못했습니다.\n{ex}", parent=self.root)
+            return messagebox.showerror(APP, tr('업데이트를 시작하지 못했습니다.\n{0}').format(ex), parent=self.root)
         self.quit()   # 앱이 끝나야 실행 파일이 풀려서 바뀐다. 바뀐 뒤 새 버전이 자동으로 다시 시작된다.
 
     MANUAL_URL = "https://github.com/iamtalker/iamtalkernote/blob/main/docs/manual.md"
@@ -640,12 +642,12 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         webbrowser.open(self.MANUAL_URL)
 
     def help_search(self):
-        messagebox.showinfo("검색 문법", "공백 = AND\n회의록 AND (예산 OR 일정) NOT 취소\n\"정확한 구절\"\n"
+        messagebox.showinfo(tr("검색 문법"), tr("공백 = AND\n회의록 AND (예산 OR 일정) NOT 취소\n\"정확한 구절\"\n"
                             "& | ! 기호도 AND OR NOT 으로 쓸 수 있습니다(대문자만 연산자로 인식).\n\n"
                             "기간: date:20101011-20240104 만화&아이유  → 그 기간에 고친(생성순이면 만든) 글 중 만화와 아이유가 함께 든 글\n"
                             "   date:20240101(그 날) · date:202401(그 달) · date:2024(그 해) · date:20240101-(그날부터) · date:-20240104(그날까지)\n"
                             "   날짜:·기간: 으로 써도 됩니다. 아래 '기간' 칸과 함께 쓰면 겹치는 부분만 찾습니다.\n\n"
-                            "태그는 본문의 #태그, 또는 '태그: a, b' 줄에서 모읍니다.", parent=self.root)
+                            "태그는 본문의 #태그, 또는 '태그: a, b' 줄에서 모읍니다."), parent=self.root)
 
     def text_do(self, name):
         try:
@@ -680,6 +682,9 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         self.build_list()
         self.build_editor()
         self.build_sidebar()
+        if getattr(self, "lang_btn", None):
+            self.lang_btn.destroy()
+        self.lang_btn = LangButton(self.root, self.set_language, C, (self.ui, 8))   # 오른쪽 위 모서리의 언어 단추(깃발 + EN/KO)
 
     def on_view_toggle(self):
         for k, var in self.v.items():
@@ -771,7 +776,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         if clear:   # 머리글을 누르면 고른 것이 풀린다
             lb.config(cursor="hand2")
             lb.bind("<Button-1>", lambda e: clear())
-            self.tip(lb, "누르면 고른 태그가 풀립니다")
+            self.tip(lb, tr("누르면 고른 태그가 풀립니다"))
         if action:
             Btn(h, "＋", action, kind="ghost", bg=C["bg"], padx=6, pady=0).pack(side="right")
 
@@ -798,14 +803,14 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         self.left_pane = tk.PanedWindow(f, orient="vertical", sashwidth=4, sashrelief="flat", bg=C["line"], bd=0)
         self.left_pane.pack(fill="both", expand=True)
         self.nb_sec = tk.Frame(self.left_pane, bg=C["bg"])
-        self.section_head(self.nb_sec, "노트북")
+        self.section_head(self.nb_sec, tr("노트북"))
         self.nbtree = self.make_tree(self.nb_sec)
         self.nbtree.bind("<<TreeviewSelect>>", self.on_nb_select)
         self.nbtree.bind("<Delete>", lambda e: self.delete_notebook())
         self.nbtree.bind("<Button-3>", self.on_nb_menu)
         self.nbmenu = tk.Menu(self.root, tearoff=0)
         self.tag_sec = tk.Frame(self.left_pane, bg=C["bg"])
-        self.section_head(self.tag_sec, "태그", clear=self.clear_tag)
+        self.section_head(self.tag_sec, tr("태그"), clear=self.clear_tag)
         self.tagtree = self.make_tree(self.tag_sec)
         self.tagtree.config(selectmode="extended")   # Ctrl/Shift+클릭으로 태그 여러 개를 골라 한꺼번에 이름 변경·삭제
         self.tagtree.bind("<ButtonRelease-1>", self.on_tag_click)
@@ -818,8 +823,8 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         f = self.listf = tk.Frame(self.pane, bg=C["bg"])
         top = tk.Frame(f, bg=C["bg"])
         top.pack(fill="x", padx=14, pady=(14, 8))
-        Btn(top, "＋ 새 노트", self.new_note, kind="primary", bold=True, pady=6).pack(side="right", padx=(8, 0))
-        Btn(top, "검색", self.search_now, pady=6).pack(side="right", padx=(8, 0))   # 치는 즉시 검색하지만, 눌러서 바로 다시 검색할 수도 있다
+        Btn(top, tr("＋ 새 노트"), self.new_note, kind="primary", bold=True, pady=6).pack(side="right", padx=(8, 0))
+        Btn(top, tr("검색"), self.search_now, pady=6).pack(side="right", padx=(8, 0))   # 치는 즉시 검색하지만, 눌러서 바로 다시 검색할 수도 있다
         box = tk.Frame(top, bg=C["panel"], highlightthickness=1, highlightbackground=C["line"], highlightcolor=C["accent"])
         box.pack(side="left", fill="x", expand=True)
         self.q = tk.StringVar()
@@ -833,31 +838,31 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         self.clear_btn.bind("<Enter>", lambda e: self.clear_btn.config(fg=C["text"]))
         self.clear_btn.bind("<Leave>", lambda e: self.clear_btn.config(fg=C["muted"]))
         self.search_entry.bind("<Return>", self.search_now)
-        self.ph =tk.Label(box, text="검색", bg=C["panel"], fg=C["muted"], font=(self.ui, 10))
+        self.ph =tk.Label(box, text=tr("검색"), bg=C["panel"], fg=C["muted"], font=(self.ui, 10))
         self.ph.bind("<Button-1>", lambda e: self.search_entry.focus_set())
         self.search_entry.bind("<FocusIn>", lambda e: self.update_placeholder())    # 안내 문구가 커서를 가리지 않게
         self.search_entry.bind("<FocusOut>", lambda e: self.update_placeholder())
         self.ac_init()
         bar = tk.Frame(f, bg=C["bg"])
         bar.pack(fill="x", padx=10, pady=(0, 2))
-        self.sort_names = {"relevance": "관련도순", "time": "수정순", "ctime": "생성순", "title": "제목순"}
+        self.sort_names = {"relevance": tr("관련도순"), "time": tr("수정순"), "ctime": tr("생성순"), "title": tr("제목순")}
         self.sort_btns = {k: Btn(bar, v, lambda k=k: self.sort_by(k), padx=6, pady=3) for k, v in self.sort_names.items()}
-        self.b_date = Btn(bar, "기간", self.toggle_date, padx=6, pady=3)
+        self.b_date = Btn(bar, tr("기간"), self.toggle_date, padx=6, pady=3)
         for b in (*self.sort_btns.values(), self.b_date):
             b.pack(side="left", padx=1)
         # 가져온 파일의 '문서 안 글'까지 찾을지(끄면 이름·경로·태그·메모만 찾아서 빠르고 결과가 짧다). 가져온 폴더가 있을 때만 보인다
         self.v_content = tk.BooleanVar(value=self.docs.content_search)
         self.opt_row = tk.Frame(f, bg=C["bg"])      # 정렬 줄이 이미 꽉 차서 체크박스는 아래 줄에 둔다
-        self.cb_content = tk.Checkbutton(self.opt_row, text="문서 안 글 포함", variable=self.v_content, command=self.on_content_toggle, relief="flat",
+        self.cb_content = tk.Checkbutton(self.opt_row, text=tr("문서 안 글 포함"), variable=self.v_content, command=self.on_content_toggle, relief="flat",
                                          bd=0, takefocus=False, bg=C["bg"], fg=C["sub"], activebackground=C["soft"], selectcolor=C["bg"],
                                          cursor="hand2", font=(self.ui, 9))
         self.cb_content.pack(side="left")
-        self.tip(self.cb_content, "켜면 가져온 pdf·txt 등의 본문까지 찾고, 끄면 파일 이름·경로·태그·메모만 찾습니다")
-        b_save = Btn(bar, "저장", self.save_search, padx=6, pady=3)   # 지금의 검색식·기간·태그·정렬을 '저장된 검색'으로
+        self.tip(self.cb_content, tr("켜면 가져온 pdf·txt 등의 본문까지 찾고, 끄면 파일 이름·경로·태그·메모만 찾습니다"))
+        b_save = Btn(bar, tr("저장"), self.save_search, padx=6, pady=3)   # 지금의 검색식·기간·태그·정렬을 '저장된 검색'으로
         b_save.pack(side="right", padx=1)
-        self.tip(b_save, "지금의 검색을 왼쪽 '저장된 검색'에 이름을 붙여 저장합니다(스마트 폴더)")
-        self.tip(self.sort_btns["time"], "마지막으로 고친 시각 순 (조플린 내보내기 노트는 머리말의 updated)")
-        self.tip(self.sort_btns["ctime"], "만든 시각 순 (조플린 내보내기 노트는 머리말의 created)")
+        self.tip(b_save, tr("지금의 검색을 왼쪽 '저장된 검색'에 이름을 붙여 저장합니다(스마트 폴더)"))
+        self.tip(self.sort_btns["time"], tr("마지막으로 고친 시각 순 (조플린 내보내기 노트는 머리말의 updated)"))
+        self.tip(self.sort_btns["ctime"], tr("만든 시각 순 (조플린 내보내기 노트는 머리말의 created)"))
         self.date_row = tk.Frame(f, bg=C["bg"])
         self.d_from, self.d_to = tk.StringVar(), tk.StringVar()
         for v in (self.d_from, self.d_to):
@@ -868,8 +873,8 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
                      font=(self.ui, 9)).pack(side="left", padx=(14 if var is self.d_from else 4, 0), ipady=3)
             if var is self.d_from:
                 tk.Label(self.date_row, text="~", bg=C["bg"], fg=C["muted"]).pack(side="left", padx=(4, 0))
-        Btn(self.date_row, "지우기", lambda: (self.d_from.set(""), self.d_to.set("")), padx=8, pady=2).pack(side="left", padx=6)
-        tk.Label(self.date_row, text="예) 2021.01.01", bg=C["bg"], fg=C["muted"], font=(self.ui, 8)).pack(side="left")
+        Btn(self.date_row, tr("지우기"), lambda: (self.d_from.set(""), self.d_to.set("")), padx=8, pady=2).pack(side="left", padx=6)
+        tk.Label(self.date_row, text=tr("예) 2021.01.01"), bg=C["bg"], fg=C["muted"], font=(self.ui, 8)).pack(side="left")
         self.count = tk.Label(f, text="", anchor="w", bg=C["bg"], fg=C["muted"], font=(self.ui, 9), padx=16)
         self.count.pack(fill="x", pady=(6, 4))
         self.update_content_check()
@@ -970,37 +975,37 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
     # -- 3단: 에디터 (위키나루 방식: 제목 + 보기 탭, 납작한 아이콘 툴바, 머리글이 있는 두 패널)
     def build_editor(self):
         f = self.editf = tk.Frame(self.pane, bg=C["bg"])
-        self.empty = tk.Label(f, text="노트를 선택하거나 새로 만드세요\nCtrl+N", bg=C["bg"], fg=C["muted"], font=(self.ui, 11), justify="center")
+        self.empty = tk.Label(f, text=tr("노트를 선택하거나 새로 만드세요\nCtrl+N"), bg=C["bg"], fg=C["muted"], font=(self.ui, 11), justify="center")
         self.main = tk.Frame(f, bg=C["bg"])
         head = tk.Frame(self.main, bg=C["bg"])
         head.pack(fill="x", padx=18, pady=(14, 6))
         self.title_var = tk.StringVar()
         # 문법 체크박스(위키나루처럼): 제목줄 맨 오른쪽, 노트 속성(ⓘ) 아이콘의 오른쪽
-        sb = tk.Checkbutton(head, text="문법", variable=self.v["syntax"], command=self.on_view_toggle, relief="flat", bd=0,
+        sb = tk.Checkbutton(head, text=tr("문법"), variable=self.v["syntax"], command=self.on_view_toggle, relief="flat", bd=0,
                             takefocus=False, bg=C["bg"], fg=C["text"], activebackground=C["soft"], selectcolor=C["bg"],
                             cursor="hand2", font=(self.ui, 10))
         sb.pack(side="right", padx=(2, 2))
         sb.bind("<Enter>", lambda e: sb.config(bg=C["soft"]), add="+")
         sb.bind("<Leave>", lambda e: sb.config(bg=C["bg"]), add="+")
-        self.tip(sb, "문법 해설 사이드바 보이기/숨기기 (Ctrl+/)")
+        self.tip(sb, tr("문법 해설 사이드바 보이기/숨기기 (Ctrl+/)"))
         info = Btn(head, "ⓘ", self.show_properties, kind="icon", padx=8, pady=2, font=(self.ui, 13))
         info.pack(side="right", padx=(6, 0))
-        self.tip(info, "노트 속성")
+        self.tip(info, tr("노트 속성"))
         # 보기 탭 (좌우 분할 / 렌더링만 / 원문만)
         seg = tk.Frame(head, bg=C["line"], padx=1, pady=1)
         seg.pack(side="right", padx=(8, 0))
         self.mode_anchor = tk.Frame(head, width=0, height=0, bg=C["bg"])   # 아웃라이너 노트에서 보기 탭을 숨겼다가 같은 자리에 되돌리는 기준점
         self.mode_anchor.pack(side="right", before=seg)
         self.mode_btns = {}
-        for m, label, hint in (("split", "좌우 분할", "마크다운과 렌더링을 나란히"), ("view", "렌더링만", "렌더링 결과만 크게"),
-                               ("edit", "원문만", "마크다운 원문만 크게(집중 편집)")):
+        for m, label, hint in (("split", tr("좌우 분할"), tr("마크다운과 렌더링을 나란히")), ("view", tr("렌더링만"), tr("렌더링 결과만 크게")),
+                               ("edit", tr("원문만"), tr("마크다운 원문만 크게(집중 편집)"))):
             b = Btn(seg, label, lambda m=m: self.set_mode(m), kind="tab", padx=9, pady=3)
             b.pack(side="left")
             self.tip(b, hint)
             self.mode_btns[m] = b
         self.mode_seg = seg
         self.doc_toggle = Btn(head, "", self.toggle_doc_view, kind="tab", padx=9, pady=3)   # 가져온 문서: 원본 미리보기 ↔ 뽑은 글(찾기). 평소엔 숨김
-        self.memo_btn = Btn(head, "메모", self.edit_memo, kind="tab", padx=9, pady=3)       # 가져온 문서: 메모 붙이기. 평소엔 숨김
+        self.memo_btn = Btn(head, tr("메모"), self.edit_memo, kind="tab", padx=9, pady=3)       # 가져온 문서: 메모 붙이기. 평소엔 숨김
         self.title_entry =tk.Entry(head, textvariable=self.title_var, relief="flat", bd=0, font=self.fonts["title"],
                                     bg=C["bg"], fg=C["text"], insertbackground=C["accent"], width=8)
         self.title_entry.pack(side="left", fill="x", expand=True, ipady=3)
@@ -1028,7 +1033,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         self.findbar = tk.Frame(self.main, bg=C["soft"])
         self.find_var = tk.StringVar()
         self.find_hits, self.find_i, self.find_job = [], -1, None
-        tk.Label(self.findbar, text="문서에서 찾기", bg=C["soft"], fg=C["sub"], font=(self.ui, 9), padx=14).pack(side="left")
+        tk.Label(self.findbar, text=tr("문서에서 찾기"), bg=C["soft"], fg=C["sub"], font=(self.ui, 9), padx=14).pack(side="left")
         self.find_entry = tk.Entry(self.findbar, textvariable=self.find_var, width=30, relief="flat", bg=C["bg"], fg=C["text"],
                                    insertbackground=C["accent"], highlightthickness=1, highlightbackground=C["line"],
                                    highlightcolor=C["accent"], font=(self.ui, 10))
@@ -1037,7 +1042,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         self.find_count.pack(side="left")
         for label, cmd in (("▲", lambda: self.find_step(-1)), ("▼", lambda: self.find_step(1)), ("✕", self.hide_find)):
             Btn(self.findbar, label, cmd, padx=8, pady=1).pack(side="left", padx=1)
-        tk.Label(self.findbar, text="Enter 다음 · Shift+Enter 이전 · Esc 닫기", bg=C["soft"], fg=C["muted"], font=(self.ui, 8), padx=12).pack(side="left")
+        tk.Label(self.findbar, text=tr("Enter 다음 · Shift+Enter 이전 · Esc 닫기"), bg=C["soft"], fg=C["muted"], font=(self.ui, 8), padx=12).pack(side="left")
         self.find_var.trace_add("write", lambda *a: self.find_run())
         self.find_entry.bind("<Return>", lambda e: self.find_step(1))
         self.find_entry.bind("<Shift-Return>", lambda e: self.find_step(-1))
@@ -1045,14 +1050,33 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         ring = dict(highlightthickness=2, highlightbackground=C["line"], highlightcolor=C["accent"], relief="flat", bd=0)
 
         self.edit_frame = tk.Frame(self.body, bg=C["panel"])
-        self.pane_head(self.edit_frame, "마크다운", "편집")
+        self.pane_head(self.edit_frame, tr("마크다운"), tr("편집"))
         box = tk.Frame(self.edit_frame, bg=C["panel"])
         box.pack(fill="both", expand=True, padx=8, pady=(0, 8))
         self.text = tk.Text(box, wrap="word", undo=True, maxundo=-1, font=(self.mono, self.size) + (("bold",) if self.note_bold else ()), padx=14, pady=10,
                             tabs=("1c",), bg=C["bg"], fg=C["text"], insertbackground=C["accent"],
                             selectbackground=C["sel"], selectforeground=C["text"], spacing2=3, **ring)
         sb1 = ttk.Scrollbar(box, orient="vertical", command=self.text.yview)
-        self.text.config(yscrollcommand=autohide(sb1, self.text))
+        ed_hide = autohide(sb1, self.text)
+        self._typed_at, self._ed_job = 0.0, None
+
+        def ed_flush():
+            """입력을 멈춘 뒤에 막대를 한 번만 맞춘다"""
+            self._ed_job = None
+            if time.time() - self._typed_at < 0.45:
+                self._ed_job = self.root.after(450, ed_flush)
+            else:
+                ed_hide(*self.text.yview())
+
+        def ed_scroll(lo, hi):
+            """글을 치는 동안은 막대를 가만히 둔다: Tk 가 줄 높이를 늦게 계산해 글자마다 막대 크기가 출렁이기 때문"""
+            if time.time() - self._typed_at < 0.45:
+                if not self._ed_job:
+                    self._ed_job = self.root.after(450, ed_flush)
+            else:
+                ed_hide(lo, hi)
+        self.text.config(yscrollcommand=ed_scroll)
+        self.text.bind("<Key>", lambda e: setattr(self, "_typed_at", time.time()), add="+")
         self.text.pack(side="left", fill="both", expand=True)
         self.text.bind("<<Modified>>", self.on_modified)
 
@@ -1064,7 +1088,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         self.pv_frame.bind("<Configure>", lambda e: self.pv_active and self.pv.resize(e.width, e.height))
 
         self.view_frame = tk.Frame(self.body, bg=C["panel"])
-        self.pane_head(self.view_frame, "렌더링", "읽기 전용")
+        self.pane_head(self.view_frame, tr("렌더링"), tr("읽기 전용"))
         box2 = self.box2 = tk.Frame(self.view_frame, bg=C["panel"])
         box2.pack(fill="both", expand=True, padx=8, pady=(0, 8))
         self.ow = OutlineEditor(self.view_frame, C, self.fonts["base"], self.outline_changed, lambda: self.title_var.get())   # 아웃라이너 폴더 노트용
@@ -1177,7 +1201,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         if due:
             for t in due:
                 self.planner.mark_notified(t["id"], today)
-            self.toast("오늘 할일\n" + "\n".join("· " + t["text"] for t in due[:5]) + (f"\n… 외 {len(due) - 5}개" if len(due) > 5 else ""))
+            self.toast(tr("오늘 할일\n") + "\n".join("· " + t["text"] for t in due[:5]) + (tr('\n… 외 {0}개').format(len(due) - 5) if len(due) > 5 else ""))
             if self.planner_view is not None:
                 self.planner_view.refresh()
 
@@ -1231,10 +1255,10 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         hd.pack(fill="x", pady=(12, 0))
         close = Btn(hd, "✕", self.toggle_syntax, kind="icon", padx=8, pady=1)
         close.pack(side="right", padx=8)
-        self.tip(close, "문법 해설 닫기 (Ctrl+/)")
-        tk.Label(hd, text="문법 해설", anchor="w", font=(self.ui, 11, "bold"), padx=16, bg=C["bg"], fg=C["text"]).pack(side="left")
-        tk.Label(f, text="마크다운", anchor="w", font=(self.ui, 9), padx=16, bg=C["bg"], fg=C["muted"]).pack(fill="x", pady=(0, 8))
-        tk.Label(f, text="누르면 커서 자리에 넣고, 글을 고르고 누르면 감쌉니다.\nCtrl+B 굵게 · Ctrl+I 기울임 · Ctrl+K 링크",
+        self.tip(close, tr("문법 해설 닫기 (Ctrl+/)"))
+        tk.Label(hd, text=tr("문법 해설"), anchor="w", font=(self.ui, 11, "bold"), padx=16, bg=C["bg"], fg=C["text"]).pack(side="left")
+        tk.Label(f, text=tr("마크다운"), anchor="w", font=(self.ui, 9), padx=16, bg=C["bg"], fg=C["muted"]).pack(fill="x", pady=(0, 8))
+        tk.Label(f, text=tr("누르면 커서 자리에 넣고, 글을 고르고 누르면 감쌉니다.\nCtrl+B 굵게 · Ctrl+I 기울임 · Ctrl+K 링크"),
                  justify="left", fg=C["muted"], bg=C["bg"], font=(self.ui, 8), padx=16, pady=8, anchor="w").pack(side="bottom", fill="x")
         tk.Frame(f, height=1, bg=C["line"]).pack(side="bottom", fill="x")
         wrap = tk.Frame(f, bg=C["bg"])
@@ -1253,8 +1277,9 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         for g, name, example, action in syntax_entries():
             if g != group:
                 group = g
-                parent = self.tree.insert("", "end", text=g, open=True, values=("",), tags=("group",))
-            self.actions[self.tree.insert(parent, "end", text=example, values=(name,), tags=("item",))] = action
+                parent = self.tree.insert("", "end", text=i18n.group(g), open=True, values=("",), tags=("group",))
+            shown = tr("제목 {n}").format(n=name[3:]) if name.startswith("제목 ") else tr(name)   # 이름·예시는 보이기만 한다(넣는 글은 action 이 만든다)
+            self.actions[self.tree.insert(parent, "end", text=i18n.example(example), values=(shown,), tags=("item",))] = action
 
     def toggle_syntax(self):
         self.v["syntax"].set(not self.show["syntax"])
@@ -1270,23 +1295,23 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
     def nb_label(self, key):
         """노트북 경로 → 보여 줄 이름 (하위 노트북은 '업무 › 프로젝트')"""
         if key == QUICK:
-            return "바로가기"
+            return tr("바로가기")
         if key == TRASH:
-            return "휴지통"
+            return tr("휴지통")
         if key == CAL:
-            return "달력·할일"
+            return tr("달력·할일")
         if key == FAVS:
-            return "즐겨찾기"
+            return tr("즐겨찾기")
         if key == "@docs":
-            return "가져온 폴더"
+            return tr("가져온 폴더")
         if key.startswith("@smart"):
             s = next((x for x in self.smart_list() if "@smart:" + x["id"] == key), None)
-            return s["name"] if s else "저장된 검색"
+            return s["name"] if s else tr("저장된 검색")
         if key.startswith("@doc:"):
             f = next((f for f in self.docs.folders() if f["id"] == key[5:]), None)
-            return f.get("name") or f["path"] if f else "가져온 폴더"
+            return f.get("name") or f["path"] if f else tr("가져온 폴더")
         if not key or key == ALL:
-            return self.store.root_name if key == "" else "모든 파일"
+            return self.store.root_name if key == "" else tr("모든 파일")
         return " › ".join(wikiconv.markdown.md_title(p + ".md") for p in key.split("/"))
 
     def nb_short(self, key):
@@ -1308,7 +1333,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         """지금의 검색(검색어·기간·태그·정렬)을 저장한다. overwrite 는 덮어쓸 저장된 검색의 id"""
         q, f, t, tag = self.q.get().strip(), self.d_from.get().strip(), self.d_to.get().strip(), self.tag
         if not (q or f or t or tag):
-            return messagebox.showinfo(APP, "저장할 검색이 없습니다. 검색어나 기간, 태그를 먼저 정하세요.", parent=self.root)
+            return messagebox.showinfo(APP, tr("저장할 검색이 없습니다. 검색어나 기간, 태그를 먼저 정하세요."), parent=self.root)
         lst = self.smart_list()
         cond = {"q": q, "d_from": f, "d_to": t, "tag": tag or "", "sort": self.sort, "asc": self.asc}
         if overwrite:
@@ -1317,7 +1342,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
                     s.update(cond)
             sid = overwrite
         else:
-            name = simpledialog.askstring("검색 저장", "이 검색의 이름:", initialvalue=q or (f"# {tag}" if tag else "검색"), parent=self.root)
+            name = simpledialog.askstring(tr("검색 저장"), tr("이 검색의 이름:"), initialvalue=q or (f"# {tag}" if tag else tr("검색")), parent=self.root)
             if not name or not name.strip():
                 return
             sid = secrets.token_hex(4)
@@ -1325,7 +1350,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         st.write_config(smart=lst)
         self.nb = "@smart:" + sid
         self.reload_notebooks()
-        self.status.config(text="검색을 저장했습니다 (왼쪽 '저장된 검색')")
+        self.status.config(text=tr("검색을 저장했습니다 (왼쪽 '저장된 검색')"))
 
     def open_smart(self, key):
         s = next((x for x in self.smart_list() if "@smart:" + x["id"] == key), None)
@@ -1351,7 +1376,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             return
 
         def rename():
-            name = simpledialog.askstring("이름 바꾸기", "저장된 검색의 이름:", initialvalue=s["name"], parent=self.root)
+            name = simpledialog.askstring(tr("이름 바꾸기"), tr("저장된 검색의 이름:"), initialvalue=s["name"], parent=self.root)
             if name and name.strip():
                 lst = self.smart_list()
                 for x in lst:
@@ -1361,7 +1386,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
                 self.reload_notebooks()
 
         def delete():
-            if not messagebox.askyesno(APP, f"저장된 검색 「{s['name']}」을(를) 지울까요?\n(노트와 파일은 그대로입니다)", parent=self.root):
+            if not messagebox.askyesno(APP, tr('저장된 검색 「{0}」을(를) 지울까요?\n(노트와 파일은 그대로입니다)').format(s['name']), parent=self.root):
                 return
             st.write_config(smart=[x for x in self.smart_list() if x["id"] != sid])
             if self.nb == key:
@@ -1369,7 +1394,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
                 self.apply_loaded(self.all_notes)
             else:
                 self.reload_notebooks()
-        return [("이름 바꾸기…", rename), ("지금의 검색으로 덮어쓰기", lambda: self.save_search(overwrite=sid)), ("삭제", delete)]
+        return [(tr("이름 바꾸기…"), rename), (tr("지금의 검색으로 덮어쓰기"), lambda: self.save_search(overwrite=sid)), (tr("삭제"), delete)]
 
     def in_nb(self, n):
         """지금 고른 노트북에 속한 노트인가 (하위 노트북의 노트 포함)"""
@@ -1419,29 +1444,29 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         idx = {key: i for i, key in enumerate(self.nb_keys)}
         for i, key in enumerate(self.nb_keys):
             if key == QUICK:
-                label, count, parent = "바로가기", None, ""
+                label, count, parent = tr("바로가기"), None, ""
             elif key == FAVS:
-                label, count, parent = "즐겨찾기", sum(1 for n in self.all_notes if self.is_fav(n)), f"nb{idx[QUICK]}"
+                label, count, parent = tr("즐겨찾기"), sum(1 for n in self.all_notes if self.is_fav(n)), f"nb{idx[QUICK]}"
             elif key == OUTL:
-                label, count, parent = "아웃라이너", total(key), f"nb{idx[QUICK]}"
+                label, count, parent = tr("아웃라이너"), total(key), f"nb{idx[QUICK]}"
             elif key == TRASH:
                 try:
                     n_trash = len(os.listdir(self.store.trash_dir))
                 except OSError:
                     n_trash = 0
-                label, count, parent = "🗑 휴지통", n_trash, ""
+                label, count, parent = tr("🗑 휴지통"), n_trash, ""
             elif key == CAL:
-                label, count, parent = "달력·할일", sum(1 for t in self.planner.todos if not t["done"]), f"nb{idx[QUICK]}"
+                label, count, parent = tr("달력·할일"), sum(1 for t in self.planner.todos if not t["done"]), f"nb{idx[QUICK]}"
             elif key == ALL:
-                label, count, parent = "모든 파일", len(self.all_notes) + sum(dcounts.values()), ""   # 노트 + 가져온 문서
+                label, count, parent = tr("모든 파일"), len(self.all_notes) + sum(dcounts.values()), ""   # 노트 + 가져온 문서
             elif key == "":
                 label, count, parent = self.store.root_name, None, ""   # 저장 폴더 줄에는 숫자를 달지 않는다(아래 노트북들이 실제 내용)
             elif key == "@docs":
-                label, count, parent = "가져온 폴더", sum(dcounts.values()), ""
+                label, count, parent = tr("가져온 폴더"), sum(dcounts.values()), ""
             elif key.startswith("@doc:"):
                 label, count, parent = self.nb_label(key), dcounts.get(key[5:], 0), f"nb{idx['@docs']}"
             elif key == "@smarts":
-                label, count, parent = "저장된 검색", None, ""
+                label, count, parent = tr("저장된 검색"), None, ""
             elif key.startswith("@smart:"):
                 label, count, parent = self.nb_label(key), None, f"nb{idx['@smarts']}"
             else:
@@ -1529,25 +1554,25 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             return
         if key.startswith("@smart"):   # 저장된 검색
             if key == "@smarts":
-                m.add_command(label="지금의 검색 저장…", command=self.save_search)
+                m.add_command(label=tr("지금의 검색 저장…"), command=self.save_search)
             else:
                 for label, cmd in self.smart_menu(key) or []:
                     m.add_command(label=label, command=cmd)
             return m.tk_popup(e.x_root, e.y_root)
         if key.startswith("@doc"):   # 가져온 폴더: 원본 파일은 건드리지 않는다
             if key.startswith("@doc:"):
-                m.add_command(label="다시 읽기", command=lambda: self.scan_docs(key[5:]))
-                m.add_command(label="목록에서 빼기 (원본 파일은 그대로)", command=lambda: self.remove_doc_folder(key[5:]))
+                m.add_command(label=tr("다시 읽기"), command=lambda: self.scan_docs(key[5:]))
+                m.add_command(label=tr("목록에서 빼기 (원본 파일은 그대로)"), command=lambda: self.remove_doc_folder(key[5:]))
             else:
-                m.add_command(label="모두 다시 읽기", command=lambda: self.scan_docs())
-            m.add_command(label="가져오기 설정…", command=lambda: self.show_options("imports"))
+                m.add_command(label=tr("모두 다시 읽기"), command=lambda: self.scan_docs())
+            m.add_command(label=tr("가져오기 설정…"), command=lambda: self.show_options("imports"))
             return m.tk_popup(e.x_root, e.y_root)
         if key == ALL:   # '모든 노트'는 노트북이 아니므로 최상위에 새 노트북을 만든다
-            m.add_command(label="새 노트북 만들기", command=self.add_notebook)
+            m.add_command(label=tr("새 노트북 만들기"), command=self.add_notebook)
         else:            # 저장 폴더(최상위)도 노트북처럼 상위가 될 수 있다
-            m.add_command(label="하위 노트북 만들기", command=lambda: self.add_notebook(parent=key, show_parent=True))
+            m.add_command(label=tr("하위 노트북 만들기"), command=lambda: self.add_notebook(parent=key, show_parent=True))
         if key != ALL:
-            m.add_command(label="저장 폴더 전체 삭제(휴지통)" if key == "" else "노트북 삭제(휴지통)", command=self.delete_notebook)
+            m.add_command(label=tr("저장 폴더 전체 삭제(휴지통)") if key == "" else tr("노트북 삭제(휴지통)"), command=self.delete_notebook)
         m.tk_popup(e.x_root, e.y_root)
 
     def add_subnotebook(self):
@@ -1556,14 +1581,14 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         self.add_notebook(parent=parent, show_parent=not (self.nb == ALL or self.nb.startswith("@")))
 
     def add_notebook(self, parent="", show_parent=False):
-        where = f"\n상위: {self.nb_label(parent)}" if (parent or show_parent) else ""
-        name = simpledialog.askstring("새 하위 노트북" if (parent or show_parent) else "새 노트북", "노트북 이름" + where, parent=self.root)
+        where = tr('\n상위: {0}').format(self.nb_label(parent)) if (parent or show_parent) else ""
+        name = simpledialog.askstring(tr("새 하위 노트북") if (parent or show_parent) else tr("새 노트북"), tr("노트북 이름") + where, parent=self.root)
         if not name or not name.strip():
             return
         try:
             folder = self.store.create_notebook(name, parent)
         except OSError as ex:
-            return messagebox.showerror(APP, f"노트북을 만들지 못했습니다.\n{ex}")
+            return messagebox.showerror(APP, tr('노트북을 만들지 못했습니다.\n{0}').format(ex))
         self.flush()
         self.close_note()
         self.nb = folder
@@ -1579,7 +1604,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             return
         if key == "":
             return self.delete_root()
-        if not messagebox.askyesno(APP, f"노트북 \"{self.nb_label(key)}\"을(를) 휴지통으로 보낼까요?\n(하위 노트북과 안의 노트도 함께 가며, {self.store.trash_days}일 동안 보관합니다)", parent=self.root):
+        if not messagebox.askyesno(APP, tr('노트북 "{0}"을(를) 휴지통으로 보낼까요?\n(하위 노트북과 안의 노트도 함께 가며, {1}일 동안 보관합니다)').format(self.nb_label(key), self.store.trash_days), parent=self.root):
             return
         self.flush()
         try:
@@ -1596,11 +1621,10 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         root = self.store.root
         books = self.store.notebooks()
         inside = os.path.normcase(os.path.abspath(self.store.media_dir)).startswith(os.path.normcase(os.path.abspath(root)) + os.sep)
-        msg = (f"저장 폴더 \"{self.store.root_name}\" 전체를 휴지통으로 보낼까요?\n\n{root}\n\n"
-               f"안의 노트 {len(self.all_notes)}개, 노트북 {len(books)}개"
-               + (", 리소스 폴더(그림)" if inside else "") + ", 노트 버전 기록이 모두 함께 갑니다.\n"
-               + ("" if inside else "(리소스 폴더는 저장 폴더 밖에 있어서 그대로 남습니다.)\n")
-               + f"\n앱의 휴지통에서 {self.store.trash_days}일 동안 보관하며 복원할 수 있습니다.")
+        msg = (tr('저장 폴더 "{0}" 전체를 휴지통으로 보낼까요?\n\n{1}\n\n안의 노트 {2}개, 노트북 {3}개').format(self.store.root_name, root, len(self.all_notes), len(books))
+               + (tr(", 리소스 폴더(그림)") if inside else "") + tr(", 노트 버전 기록이 모두 함께 갑니다.\n")
+               + ("" if inside else tr("(리소스 폴더는 저장 폴더 밖에 있어서 그대로 남습니다.)\n"))
+               + tr('\n앱의 휴지통에서 {0}일 동안 보관하며 복원할 수 있습니다.').format(self.store.trash_days))
         if not messagebox.askyesno(APP, msg, icon="warning", parent=self.root):
             return
         self.flush()
@@ -1614,11 +1638,11 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             self.nb, self.tag = ALL, None
             self.close_note()
             self.reload_notes()
-            self.status.config(text="저장 폴더의 내용을 휴지통으로 보냈습니다. (파일 → 휴지통에서 복원)")
-        self.checkpoint("저장 폴더 삭제 전", go)
+            self.status.config(text=tr("저장 폴더의 내용을 휴지통으로 보냈습니다. (파일 → 휴지통에서 복원)"))
+        self.checkpoint(tr("저장 폴더 삭제 전"), go)
 
     def choose_root(self):
-        d = filedialog.askdirectory(parent=self.root, initialdir=self.store.root, title="노트를 저장할 폴더")
+        d = filedialog.askdirectory(parent=self.root, initialdir=self.store.root, title=tr("노트를 저장할 폴더"))
         if not d:
             return False
         self.flush()
@@ -1645,9 +1669,9 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         def done(res):
             read, gone, total = res
             self.after_docs_changed()
-            self.status.config(text=f"가져온 폴더: 파일 {total:,}개 (새로 읽은 것 {read:,}, 사라진 것 {gone:,})")
-        self.run_task("가져온 폴더 읽는 중", lambda prog, cancel: self.docs.scan(prog, cancel, only), done,
-                      text="가져온 폴더의 문서를 읽는 중… (처음 한 번은 오래 걸립니다)")
+            self.status.config(text=tr('가져온 폴더: 파일 {0:,}개 (새로 읽은 것 {1:,}, 사라진 것 {2:,})').format(total, read, gone))
+        self.run_task(tr("가져온 폴더 읽는 중"), lambda prog, cancel: self.docs.scan(prog, cancel, only), done,
+                      text=tr("가져온 폴더의 문서를 읽는 중… (처음 한 번은 오래 걸립니다)"))
 
     def auto_scan_docs(self):
         """조용히(창 없이 뒤에서) 가져온 폴더에서 바뀐 파일만 다시 읽는다. 시작하고 20초 뒤에 한 번, 그 뒤로는 앱을 열어 두는 동안 5분마다 되풀이"""
@@ -1676,7 +1700,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
 
     def remove_doc_folder(self, fid):
         f = next((f for f in self.docs.folders() if f["id"] == fid), None)
-        if not f or not messagebox.askyesno(APP, f"「{f['path']}」을(를) 가져온 폴더 목록에서 뺄까요?\n(원본 파일은 그대로 두고, 이 앱의 색인만 지웁니다)", parent=self.root):
+        if not f or not messagebox.askyesno(APP, tr('「{0}」을(를) 가져온 폴더 목록에서 뺄까요?\n(원본 파일은 그대로 두고, 이 앱의 색인만 지웁니다)').format(f['path']), parent=self.root):
             return
         self.docs.remove_folder(fid)
         if self.nb == "@doc:" + fid:
@@ -1691,7 +1715,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         gen = self.load_gen
         if not background:
             return self.apply_loaded(self.read_all_notes(), keep_scroll)
-        self.count.config(text="노트를 불러오는 중…")
+        self.count.config(text=tr("노트를 불러오는 중…"))
         q = queue.Queue()
 
         def work():
@@ -1707,14 +1731,14 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             except queue.Empty:
                 d, t = self.load_prog
                 if t:
-                    self.count.config(text=f"처음 한 번 색인을 만드는 중… {d:,} / {t:,}")
+                    self.count.config(text=tr('처음 한 번 색인을 만드는 중… {0:,} / {1:,}').format(d, t))
                 return self.root.after(80, poll)
             if gen != self.load_gen:
                 return    # 그 사이에 다른 읽기가 있었으면 버린다
             if kind == "ok":
                 self.apply_loaded(val)
             else:
-                self.count.config(text="노트를 불러오지 못했습니다: " + val)
+                self.count.config(text=tr("노트를 불러오지 못했습니다: ") + val)
         self.root.after(80, poll)
 
     def read_all_notes(self):
@@ -1793,16 +1817,16 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             lb.bind("<Enter>", lambda e, lb=lb: lb.config(bg=C["soft"]))
             lb.bind("<Leave>", lambda e, lb=lb: lb.config(bg=C["bg"]))
         if len(kids) > 12:
-            tk.Label(box, text=f"… 외 폴더 {len(kids) - 12}개 (왼쪽 노트북 목록에서 고르세요)", anchor="w", bg=C["bg"], fg=C["muted"], font=(self.ui, 9), padx=18).pack(fill="x")
+            tk.Label(box, text=tr('… 외 폴더 {0}개 (왼쪽 노트북 목록에서 고르세요)').format(len(kids) - 12), anchor="w", bg=C["bg"], fg=C["muted"], font=(self.ui, 9), padx=18).pack(fill="x")
 
     def draw_list(self, keep_scroll=False):
         self.update_folder_rows()
         total = len(self.results)
         searching = self.q.get().strip() or self.d_from.get().strip() or self.d_to.get().strip() or self.tag
-        unit = "파일" if self.scope_all() or self.nb.startswith("@doc") else "노트"
-        text = f"{len(self.notes):,}개 중 {total:,}개 찾음" if searching else f"{total:,}개의 {unit}"
+        unit = i18n.unit("파일") if self.scope_all() or self.nb.startswith("@doc") else i18n.unit("노트")
+        text = tr('{0:,}개 중 {1:,}개 찾음').format(len(self.notes), total) if searching else tr('{0:,}개의 {1}').format(total, unit)
         if getattr(self, "bad_dates", None):
-            text = "날짜를 읽을 수 없습니다: " + ", ".join(self.bad_dates) + "  (예: date:20200202-20221231)"
+            text = tr("날짜를 읽을 수 없습니다: ") + ", ".join(self.bad_dates) + tr("  (예: date:20200202-20221231)")
         if self.tag:
             text += f"  ·  # {self.tag}"
         self.count.config(text=text)
@@ -1818,6 +1842,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         L.config(state="disabled")
         self.cards, self.card_starts, self.rendered, self.next_line = [], [], 0, 1
         self.append_cards(want)
+        L.tk.call(L._w, "sync")   # Tk 가 줄 높이를 다 잰 뒤에 막대를 맞춘다(안 그러면 추정값으로 그렸다가 잠시 뒤 크기가 바뀌어 막대가 출렁인다)
         L.yview_moveto(top)
         if top_line:
             L.yview(top_line)
@@ -1846,7 +1871,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             shown_t = n.get("ctime", n["mtime"]) if self.sort == "ctime" else n["mtime"]   # 생성순이면 생성 시각을 보여 준다
             meta = time.strftime("%Y.%m.%d %H:%M", time.localtime(shown_t))
             if n.get("trash"):
-                meta += "   " + ("삭제까지 %d일" % n["left"] if n["left"] is not None else "자동 삭제 안 함") + "   ← " + n["orig"]
+                meta += "   " + (tr("삭제까지 %d일") % n["left"] if n["left"] is not None else tr("자동 삭제 안 함")) + "   ← " + n["orig"]
             elif self.scope_all() or n["nb"] != self.nb:   # 모든 노트이거나 하위 노트북의 노트면 어느 노트북인지 보여 준다
                 meta += "   " + self.nb_label(n["nb"])
             if self.words:   # 검색 중일 때만 일치한 부분을 보여 준다
@@ -1917,7 +1942,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         items = [n for n in items if not isinstance(n, docidx.Doc)]
         self.multi = {n["path"]: n for n in items} if len(items) > 1 else {}
         self.mark_selected()
-        self.status.config(text=f"노트 {len(self.multi)}개 선택됨 (우클릭: 휴지통·이동, Esc: 해제)" if self.multi else "")
+        self.status.config(text=tr('노트 {0}개 선택됨 (우클릭: 휴지통·이동, Esc: 해제)').format(len(self.multi)) if self.multi else "")
 
     def select_range(self, n):
         """Shift+클릭: 시작 노트(anchor)부터 클릭한 노트까지 모두 고른다"""
@@ -1942,7 +1967,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
 
     def trash_multi(self):
         items = list(self.multi.values())
-        if not items or not messagebox.askyesno(APP, f"고른 노트 {len(items)}개를 휴지통으로 보낼까요?\n({self.store.trash_days}일 동안 보관하며 복원할 수 있습니다)", parent=self.root):
+        if not items or not messagebox.askyesno(APP, tr('고른 노트 {0}개를 휴지통으로 보낼까요?\n({1}일 동안 보관하며 복원할 수 있습니다)').format(len(items), self.store.trash_days), parent=self.root):
             return
         self.multi.clear()
         self.trash_notes([n["path"] for n in items])
@@ -1962,7 +1987,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             self.cur = None
         self.reload_notes()
         if fail:
-            messagebox.showerror(APP, f"{fail}개 노트를 옮기지 못했습니다.", parent=self.root)
+            messagebox.showerror(APP, tr('{0}개 노트를 옮기지 못했습니다.').format(fail), parent=self.root)
 
     def card_at(self, e):
         line = int(self.lst.index(f"@{e.x},{e.y}").split(".")[0])
@@ -2006,18 +2031,18 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         try:
             os.startfile(n["path"])
         except OSError as ex:
-            messagebox.showerror(APP, f"파일을 열지 못했습니다.\n{ex}", parent=self.root)
+            messagebox.showerror(APP, tr('파일을 열지 못했습니다.\n{0}').format(ex), parent=self.root)
 
     def doc_menu(self, e, n):
         self.open_note(n)
         lm = self.listmenu
         lm.delete(0, "end")
-        lm.add_command(label="기본 프로그램으로 열기", command=lambda: self.open_doc_file(n))
-        lm.add_command(label="태그 추가·고치기…", command=self.edit_tags)
-        lm.add_command(label="메모…", command=self.edit_memo)
+        lm.add_command(label=tr("기본 프로그램으로 열기"), command=lambda: self.open_doc_file(n))
+        lm.add_command(label=tr("태그 추가·고치기…"), command=self.edit_tags)
+        lm.add_command(label=tr("메모…"), command=self.edit_memo)
         lm.add_separator()
-        lm.add_command(label="파일 위치 열기", command=lambda: subprocess.Popen(["explorer", "/select,", os.path.normpath(n["path"])]))
-        lm.add_command(label="경로 복사", command=lambda: (self.root.clipboard_clear(), self.root.clipboard_append(n["path"])))
+        lm.add_command(label=tr("파일 위치 열기"), command=lambda: subprocess.Popen(["explorer", "/select,", os.path.normpath(n["path"])]))
+        lm.add_command(label=tr("경로 복사"), command=lambda: (self.root.clipboard_clear(), self.root.clipboard_append(n["path"])))
         lm.tk_popup(e.x_root, e.y_root)
         return "break"
 
@@ -2037,7 +2062,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         if not n or isinstance(n, docidx.Doc):
             return
         on = self.fav.toggle(self.fav_rel(n))
-        self.status.config(text=("즐겨찾기에 넣었습니다: " if on else "즐겨찾기에서 뺐습니다: ") + n["title"])
+        self.status.config(text=(tr("즐겨찾기에 넣었습니다: ") if on else tr("즐겨찾기에서 뺐습니다: ")) + n["title"])
         if self.nb == FAVS:   # 즐겨찾기 목록을 보는 중이면 빠진 노트는 목록에서도 빠진다
             self.notes = [x for x in self.all_notes if self.is_fav(x)]
         self.reload_notebooks()
@@ -2054,25 +2079,25 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             try:
                 self.store.restore_trash(n["trash"])
             except OSError as ex:
-                return messagebox.showerror(APP, f"복원하지 못했습니다.\n{ex}", parent=self.root)
+                return messagebox.showerror(APP, tr('복원하지 못했습니다.\n{0}').format(ex), parent=self.root)
             self.close_note()
             self.reload_notes()
 
         def remove():
-            if messagebox.askyesno(APP, f"「{n['title']}」을(를) 완전히 지울까요? 되돌릴 수 없습니다.", parent=self.root):
+            if messagebox.askyesno(APP, tr('「{0}」을(를) 완전히 지울까요? 되돌릴 수 없습니다.').format(n['title']), parent=self.root):
                 self.store.delete_trash(n["trash"])
                 self.close_note()
                 self.reload_notes()
 
         def empty():
-            if messagebox.askyesno(APP, f"휴지통의 {len(self.notes):,}개를 모두 완전히 지울까요? 되돌릴 수 없습니다.", parent=self.root):
+            if messagebox.askyesno(APP, tr('휴지통의 {0:,}개를 모두 완전히 지울까요? 되돌릴 수 없습니다.').format(len(self.notes)), parent=self.root):
                 self.store.empty_trash()
                 self.close_note()
                 self.reload_notes()
-        m.add_command(label="복원", command=restore)
-        m.add_command(label="완전히 삭제", command=remove)
+        m.add_command(label=tr("복원"), command=restore)
+        m.add_command(label=tr("완전히 삭제"), command=remove)
         m.add_separator()
-        m.add_command(label="휴지통 비우기", command=empty)
+        m.add_command(label=tr("휴지통 비우기"), command=empty)
         m.tk_popup(e.x_root, e.y_root)
 
     def on_list_menu(self, e):
@@ -2096,16 +2121,16 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         for key in [""] + self.visible_notebooks():
             label = ("    " * key.count("/") + (self.nb_short(key) if key else self.store.root_name))
             mm.add_command(label=label, command=lambda k=key: self.move_note(n, k), state="disabled" if key == n["nb"] else "normal")
-        lm.add_cascade(label="노트북으로 이동", menu=mm)
-        lm.add_command(label="즐겨찾기 해제" if self.is_fav(n) else "즐겨찾기 추가", accelerator="Ctrl+D", command=lambda: self.toggle_favorite(n))
-        lm.add_command(label="연결된 노트 보기…", command=lambda: self.show_links(n))
-        lm.add_command(label="태그 추가…", command=lambda: self.tag_new([n]))
-        lm.add_command(label="노트 링크 복사", command=lambda: (self.root.clipboard_clear(), self.root.clipboard_append(f"[[{n['title']}]]")))
-        lm.add_command(label="노트 속성…", command=self.show_properties)
-        lm.add_command(label="노트 버전…", command=self.show_versions)
-        lm.add_command(label="파일 위치 열기", command=lambda: subprocess.Popen(["explorer", "/select,", os.path.normpath(n["path"])]))
+        lm.add_cascade(label=tr("노트북으로 이동"), menu=mm)
+        lm.add_command(label=tr("즐겨찾기 해제") if self.is_fav(n) else tr("즐겨찾기 추가"), accelerator="Ctrl+D", command=lambda: self.toggle_favorite(n))
+        lm.add_command(label=tr("연결된 노트 보기…"), command=lambda: self.show_links(n))
+        lm.add_command(label=tr("태그 추가…"), command=lambda: self.tag_new([n]))
+        lm.add_command(label=tr("노트 링크 복사"), command=lambda: (self.root.clipboard_clear(), self.root.clipboard_append(f"[[{n['title']}]]")))
+        lm.add_command(label=tr("노트 속성…"), command=self.show_properties)
+        lm.add_command(label=tr("노트 버전…"), command=self.show_versions)
+        lm.add_command(label=tr("파일 위치 열기"), command=lambda: subprocess.Popen(["explorer", "/select,", os.path.normpath(n["path"])]))
         lm.add_separator()
-        lm.add_command(label="삭제", command=self.delete_note)
+        lm.add_command(label=tr("삭제"), command=self.delete_note)
         lm.tk_popup(e.x_root, e.y_root)
         return "break"
 
@@ -2116,11 +2141,11 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         for key in [""] + self.visible_notebooks():
             label = ("    " * key.count("/") + (self.nb_short(key) if key else self.store.root_name))
             mm.add_command(label=label, command=lambda k=key: self.move_multi(k))
-        lm.add_cascade(label=f"노트 {len(self.multi)}개를 노트북으로 이동", menu=mm)
-        lm.add_command(label=f"노트 {len(self.multi)}개에 태그 추가…", command=lambda: self.tag_new(list(self.multi.values())))
-        lm.add_command(label=f"노트 {len(self.multi)}개 휴지통으로", command=self.trash_multi)
+        lm.add_cascade(label=tr("노트 {n}개를 노트북으로 이동").format(n=len(self.multi)), menu=mm)
+        lm.add_command(label=tr("노트 {n}개에 태그 추가…").format(n=len(self.multi)), command=lambda: self.tag_new(list(self.multi.values())))
+        lm.add_command(label=tr("노트 {n}개 휴지통으로").format(n=len(self.multi)), command=self.trash_multi)
         lm.add_separator()
-        lm.add_command(label="선택 해제", command=self.clear_multi)
+        lm.add_command(label=tr("선택 해제"), command=self.clear_multi)
         lm.tk_popup(e.x_root, e.y_root)
         return "break"
 
@@ -2129,7 +2154,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         try:
             new = self.store.move(n["path"], nb)
         except OSError as ex:
-            return messagebox.showerror(APP, f"노트를 옮기지 못했습니다.\n{ex}")
+            return messagebox.showerror(APP, tr('노트를 옮기지 못했습니다.\n{0}').format(ex))
         if self.cur and self.cur["path"] == n["path"]:
             self.cur = None
         self.reload_notes()
@@ -2199,31 +2224,31 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             self.pv_active = self.pv.show(self.pv_frame.winfo_id(), n["path"], self.pv_frame.winfo_width(), self.pv_frame.winfo_height())
         if self.pv_active:
             self.hide_find(focus=False)
-            self.status.config(text=f"원본 미리보기 (윈도 기본 프로그램)   ·   {n['path']}   ·   글로 바꾸면 Ctrl+F 로 찾을 수 있습니다")
+            self.status.config(text=tr('원본 미리보기 (윈도 기본 프로그램)   ·   {0}   ·   글로 바꾸면 Ctrl+F 로 찾을 수 있습니다').format(n['path']))
         else:
             self.apply_layout("edit")
             body = n.read()
             if not body.strip():
-                body = ("(이 파일에서 뽑은 글이 없습니다.)\n\n" if n["ext"] not in docidx.AUDIO_EXT else "") + "위치: " + n["path"]
+                body = (tr("(이 파일에서 뽑은 글이 없습니다.)\n\n") if n["ext"] not in docidx.AUDIO_EXT else "") + tr("위치: ") + n["path"]
             if n.get("memo"):
-                body = "[메모]\n" + n["memo"] + "\n\n" + "─" * 24 + "\n\n" + body
+                body = tr("[메모]\n") + n["memo"] + "\n\n" + "─" * 24 + "\n\n" + body
             n["body"] = body
             self.text.config(state="normal", wrap="word")
             self.set_text(body)
             self.text.config(state="disabled")
             self.text.yview_moveto(0)
-            self.status.config(text=f"가져온 파일 (읽기 전용)   ·   {n['path']}   ·   더블클릭이나 우클릭 → 기본 프로그램으로 열기")
+            self.status.config(text=tr('가져온 파일 (읽기 전용)   ·   {0}   ·   더블클릭이나 우클릭 → 기본 프로그램으로 열기').format(n['path']))
             if self.findbar.winfo_ismapped():
                 self.find_run()
         if can:
             if not self.doc_toggle.winfo_ismapped():
                 self.doc_toggle.pack(side="right", padx=(8, 0), before=self.mode_seg if self.mode_seg.winfo_manager() else self.mode_anchor)
-            self.doc_toggle.config(text="뽑은 글로 보기" if self.pv_active else "원본으로 보기")
+            self.doc_toggle.config(text=tr("뽑은 글로 보기") if self.pv_active else tr("원본으로 보기"))
         else:
             self.doc_toggle.pack_forget()
         if not self.memo_btn.winfo_ismapped():
             self.memo_btn.pack(side="right", padx=(8, 0), before=self.doc_toggle if self.doc_toggle.winfo_ismapped() else (self.mode_seg if self.mode_seg.winfo_manager() else self.mode_anchor))
-        self.memo_btn.config(text="메모 ●" if n.get("memo") else "메모")
+        self.memo_btn.config(text=tr("메모 ●") if n.get("memo") else tr("메모"))
         self.update_status()
 
     def toggle_doc_view(self):
@@ -2276,7 +2301,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         if n.get("trash"):               # 휴지통의 노트: 읽기 전용(우클릭 → 복원 · 완전히 삭제)
             self.text.config(state="disabled")
             self.title_entry.config(state="readonly")
-            self.status.config(text="휴지통의 노트 — 읽기 전용입니다. 목록에서 우클릭 → 복원 · 완전히 삭제")
+            self.status.config(text=tr("휴지통의 노트 — 읽기 전용입니다. 목록에서 우클릭 → 복원 · 완전히 삭제"))
         if self.is_outline_note() or self._outl_on:
             self._outl_path = None
             self.apply_layout(self.mode)
@@ -2291,8 +2316,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         if self.cur is not n:
             return
         self.declined.add(n["path"])
-        msg = (f"이 노트에는 그림 {count}개({size / 1_000_000:.1f}MB)가 글자로 본문에 박혀 있어 열 때 느립니다.\n\n"
-               "그림을 리소스 폴더의 파일로 분리할까요?\n(그림은 그대로 보이고 노트는 작아집니다)")
+        msg = (tr('이 노트에는 그림 {0}개({1:.1f}MB)가 글자로 본문에 박혀 있어 열 때 느립니다.\n\n그림을 리소스 폴더의 파일로 분리할까요?\n(그림은 그대로 보이고 노트는 작아집니다)').format(count, size / 1_000_000))
         if not messagebox.askyesno(APP, msg, parent=self.root):
             return
         body, moved = self.store.extract_images(self.text.get("1.0", "end-1c"), n["nb"])
@@ -2301,7 +2325,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         self.dirty = True
         self.flush()
         self.render()
-        self.status.config(text=f"그림 {moved}개를 리소스 폴더로 옮겼습니다")
+        self.status.config(text=tr('그림 {0}개를 리소스 폴더로 옮겼습니다').format(moved))
 
     def go(self, step):
         """이동 > 뒤로 / 앞으로 (본 노트 기록)"""
@@ -2329,6 +2353,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         if not self.text.edit_modified():
             return
         self.text.edit_modified(False)
+        self._typed_at = time.time()   # 한글 입력기가 확정해 넣은 글자도 '입력 중'(막대 고정)으로 친다
         if self.loading or not self.cur:
             return
         self.dirty = True
@@ -2379,7 +2404,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             # 노트를 연 뒤 첫 저장은 간격과 상관없이 이전 내용을 버전으로 남긴다
             written = self.store.save(self.cur["path"], body, force=not self.snap_done)
         except OSError as ex:
-            return self.status.config(text="저장 실패: " + str(ex))
+            return self.status.config(text=tr("저장 실패: ") + str(ex))
         self.snap_done = True
         self.dirty = False
         old_tags = self.cur.get("tags", set())
@@ -2390,22 +2415,21 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         if self.cur["tags"] != old_tags:
             self.reload_tags()
         self.refresh(keep_page=True)
-        self.update_status("저장됨 " + time.strftime("%H:%M:%S"))
+        self.update_status(tr("저장됨 ") + time.strftime("%H:%M:%S"))
 
     def update_status(self, extra=""):
         if self.cur and self.doc_open:   # 가져온 파일: 아랫줄 상태 글은 그대로 두고 태그만 갱신
             if not self.tag_edit:
                 tags = sorted(self.cur.get("tags", ()))
                 shown = "   ".join("# " + t for t in tags[:6]) + (f"   … +{len(tags) - 6}" if len(tags) > 6 else "")
-                self.tagbtn.config(text=shown or "# 태그 추가", fg=C["accent"] if tags else C["muted"])
+                self.tagbtn.config(text=shown or tr("# 태그 추가"), fg=C["accent"] if tags else C["muted"])
             return
         if self.cur:
-            self.status.config(text=f"{self.nb_label(self.cur['nb'])}/{os.path.basename(self.cur['path'])}   ·   "
-                                    f"{len(self.cur['body']):,}자" + (f"   ·   {extra}" if extra else "") + "   ·")
+            self.status.config(text=tr('{0}/{1}   ·   {2:,}자').format(self.nb_label(self.cur['nb']), os.path.basename(self.cur['path']), len(self.cur['body'])) + (f"   ·   {extra}" if extra else "") + "   ·")
             if not self.tag_edit:
                 tags = sorted(self.cur.get("tags", ()))
                 shown = "   ".join("# " + t for t in tags[:6]) + (f"   … +{len(tags) - 6}" if len(tags) > 6 else "")
-                self.tagbtn.config(text=shown or "# 태그 추가", fg=C["accent"] if tags else C["muted"])
+                self.tagbtn.config(text=shown or tr("# 태그 추가"), fg=C["accent"] if tags else C["muted"])
 
     def commit_title(self):
         if not self.cur or self.doc_open:
@@ -2417,13 +2441,13 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             return                                  # 새 노트는 제목을 비워 둘 수 있다(나갈 때 본문 첫 줄이 제목이 된다)
         if self.wiki_on() and new and wikilinks.taken(new, self.store.titles(), own=self.store.key_of(self.cur["path"])):
             self.title_var.set(self.cur["title"])
-            return messagebox.showinfo(APP, f"\"{new}\" 제목의 노트가 이미 있습니다.\n위키 링크([[제목]])를 쓰는 동안은 같은 제목을 만들 수 없어서 제목을 바꾸지 않았습니다.\n(옵션 → 일반에서 위키 링크를 끄면 같은 제목도 쓸 수 있습니다)", parent=self.root)
+            return messagebox.showinfo(APP, tr('"{0}" 제목의 노트가 이미 있습니다.\n위키 링크([[제목]])를 쓰는 동안은 같은 제목을 만들 수 없어서 제목을 바꾸지 않았습니다.\n(옵션 → 일반에서 위키 링크를 끄면 같은 제목도 쓸 수 있습니다)').format(new), parent=self.root)
         self.flush()
         try:
             title, path = self.store.rename(self.cur["path"], new)
         except OSError as ex:
             self.title_var.set(self.cur["title"])
-            return messagebox.showerror(APP, f"제목을 바꾸지 못했습니다.\n{ex}")
+            return messagebox.showerror(APP, tr('제목을 바꾸지 못했습니다.\n{0}').format(ex))
         self.title_var.set(title)
         if getattr(self, "fresh", None) == self.cur["path"]:
             self.fresh = None                       # 제목이 정해졌다
@@ -2444,7 +2468,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         try:
             made = self.store.create_note(nb)
         except OSError as ex:
-            return messagebox.showerror(APP, f"노트를 만들지 못했습니다.\n{ex}")
+            return messagebox.showerror(APP, tr('노트를 만들지 못했습니다.\n{0}').format(ex))
         self.close_note()
         self.reload_notes()
         n = next((x for x in self.notes if x["path"] == made["path"]), None)
@@ -2456,8 +2480,8 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
 
     def delete_note(self):
         if self.doc_open:
-            return messagebox.showinfo(APP, "가져온 파일은 여기서 지우지 않습니다(원본 파일은 그대로 둡니다).\n목록에서 빼려면 노트북 칸의 가져온 폴더를 우클릭하세요.", parent=self.root)
-        if not self.cur or not messagebox.askyesno(APP, f"이 노트를 휴지통으로 보낼까요?\n({self.store.trash_days}일 동안 보관하며 파일 → 휴지통에서 복원할 수 있습니다)", parent=self.root):
+            return messagebox.showinfo(APP, tr("가져온 파일은 여기서 지우지 않습니다(원본 파일은 그대로 둡니다).\n목록에서 빼려면 노트북 칸의 가져온 폴더를 우클릭하세요."), parent=self.root)
+        if not self.cur or not messagebox.askyesno(APP, tr('이 노트를 휴지통으로 보낼까요?\n({0}일 동안 보관하며 파일 → 휴지통에서 복원할 수 있습니다)').format(self.store.trash_days), parent=self.root):
             return
         if self.save_job:
             self.root.after_cancel(self.save_job)
@@ -2579,7 +2603,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             doc = wikiconv.parse(src, bulk.SYNTAX[FMT], title)
             segs = preview.layout(doc)
         except Exception as ex:  # noqa: BLE001  (읽기 도구가 못 읽은 글도 편집은 계속할 수 있게)
-            return self.status.config(text="렌더링 오류: " + str(ex))
+            return self.status.config(text=tr("렌더링 오류: ") + str(ex))
         self.draw_view(segs)
 
     # ---- 아웃라이너 보기(렌더링 화면): 목록은 점(●) 계층으로, 그 밖의 글은 '메모' 카드로 따로 보이고, 점을 누르면 줌인
@@ -2785,12 +2809,12 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         path = self.local_file(target)
         if not path:
             raw = self.find_local_image(target)
-            msg = "보안을 위해 실행 파일은 열지 않습니다. 파일 위치 열기로 직접 여세요." if raw else "연결된 파일을 찾을 수 없습니다."
+            msg = tr("보안을 위해 실행 파일은 열지 않습니다. 파일 위치 열기로 직접 여세요.") if raw else tr("연결된 파일을 찾을 수 없습니다.")
             return messagebox.showinfo(APP, msg, parent=self.root)
         try:
             os.startfile(path) if sys.platform == "win32" else webbrowser.open("file://" + path)
         except OSError as ex:
-            messagebox.showerror(APP, f"파일을 열 수 없습니다: {ex}", parent=self.root)
+            messagebox.showerror(APP, tr('파일을 열 수 없습니다: {0}').format(ex), parent=self.root)
 
     def link_at(self, e):
         """렌더링 화면 (x, y) 에 있는 링크의 (종류, 주소) — 링크가 아니면 None"""
@@ -2812,21 +2836,21 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         name = self.image_at(e)
         if name is not None:
             path = self.img_files.get(name)
-            m.add_command(label="파일 위치 열기", command=lambda: self.reveal_file(path), state="normal" if path else "disabled")
+            m.add_command(label=tr("파일 위치 열기"), command=lambda: self.reveal_file(path), state="normal" if path else "disabled")
             m.add_separator()
         else:
             lk = self.link_at(e)
             fpath = self.local_file(lk[1]) if lk and lk[0] == "url" else None
             if fpath:
-                m.add_command(label="열기", command=lambda: self.open_local_file(lk[1]))
-                m.add_command(label="파일 위치 열기", command=lambda: self.reveal_file(fpath))
+                m.add_command(label=tr("열기"), command=lambda: self.open_local_file(lk[1]))
+                m.add_command(label=tr("파일 위치 열기"), command=lambda: self.reveal_file(fpath))
                 m.add_separator()
-        m.add_command(label="복사", command=lambda: v.event_generate("<<Copy>>"), state="normal" if v.tag_ranges("sel") else "disabled")
-        m.add_command(label="모두 선택", command=lambda: v.tag_add("sel", "1.0", "end-1c"))
+        m.add_command(label=tr("복사"), command=lambda: v.event_generate("<<Copy>>"), state="normal" if v.tag_ranges("sel") else "disabled")
+        m.add_command(label=tr("모두 선택"), command=lambda: v.tag_add("sel", "1.0", "end-1c"))
         m.add_separator()
         if name is not None:
-            m.add_command(label="그림 삭제", command=lambda: self.delete_view_image(e))
-        m.add_command(label="삭제", command=self.delete_view_selection, state="normal" if v.tag_ranges("sel") else "disabled")
+            m.add_command(label=tr("그림 삭제"), command=lambda: self.delete_view_image(e))
+        m.add_command(label=tr("삭제"), command=self.delete_view_selection, state="normal" if v.tag_ranges("sel") else "disabled")
         m.tk_popup(e.x_root, e.y_root)
 
     # ---- 렌더링 화면 ↔ 원문 맞추기(블록 단위): 우클릭 삭제와 좌우 분할 짝 강조가 함께 쓴다
@@ -2992,14 +3016,14 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
                 old = self.text.get("1.0", "end-1c")
                 self.apply_text_change(old, old[:off] + new_src)
                 v.tag_remove("sel", "1.0", "end")
-                self.status.config(text="선택한 부분을 지웠습니다 (Ctrl+Z 로 되돌립니다)")
+                self.status.config(text=tr("선택한 부분을 지웠습니다 (Ctrl+Z 로 되돌립니다)"))
                 return self.render()
         sel = v.get("sel.first", "sel.last")
         before = v.get("1.0", "sel.first")
         old = self.text.get("1.0", "end-1c")
         new = viewdelete.delete(old, sel, before)
         if new is None:
-            return self.status.config(text="고른 글을 원문에서 정확히 찾지 못해 지우지 않았습니다. ‘마크다운만’ 보기에서 지워 주세요.")
+            return self.status.config(text=tr("고른 글을 원문에서 정확히 찾지 못해 지우지 않았습니다. ‘마크다운만’ 보기에서 지워 주세요."))
         p, s = viewdelete.minimal_change(old, new)
         self.text.edit_separator()
         self.text.delete(f"1.0+{p}c", f"1.0+{len(old) - s}c")
@@ -3008,7 +3032,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             self.text.insert(f"1.0+{p}c", mid)
         self.text.edit_separator()
         v.tag_remove("sel", "1.0", "end")
-        self.status.config(text="선택한 글을 지웠습니다 (Ctrl+Z 로 되돌립니다)")
+        self.status.config(text=tr("선택한 글을 지웠습니다 (Ctrl+Z 로 되돌립니다)"))
         self.render()
 
     def on_text_menu(self, e):
@@ -3016,14 +3040,14 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         t.focus_set()
         has_sel = bool(t.tag_ranges("sel"))
         m = tk.Menu(self.root, tearoff=0)
-        m.add_command(label="실행 취소", command=lambda: t.event_generate("<<Undo>>"))
-        m.add_command(label="다시 실행", command=lambda: t.event_generate("<<Redo>>"))
+        m.add_command(label=tr("실행 취소"), command=lambda: t.event_generate("<<Undo>>"))
+        m.add_command(label=tr("다시 실행"), command=lambda: t.event_generate("<<Redo>>"))
         m.add_separator()
-        m.add_command(label="잘라내기", command=lambda: t.event_generate("<<Cut>>"), state="normal" if has_sel else "disabled")
-        m.add_command(label="복사", command=lambda: t.event_generate("<<Copy>>"), state="normal" if has_sel else "disabled")
-        m.add_command(label="붙여넣기", command=lambda: t.event_generate("<<Paste>>"))
+        m.add_command(label=tr("잘라내기"), command=lambda: t.event_generate("<<Cut>>"), state="normal" if has_sel else "disabled")
+        m.add_command(label=tr("복사"), command=lambda: t.event_generate("<<Copy>>"), state="normal" if has_sel else "disabled")
+        m.add_command(label=tr("붙여넣기"), command=lambda: t.event_generate("<<Paste>>"))
         m.add_separator()
-        m.add_command(label="모두 선택", command=lambda: t.tag_add("sel", "1.0", "end-1c"))
+        m.add_command(label=tr("모두 선택"), command=lambda: t.tag_add("sel", "1.0", "end-1c"))
         m.tk_popup(e.x_root, e.y_root)
 
     def remote_image(self, url):
@@ -3120,7 +3144,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
                 self.nb = ALL
                 self.reload_notes()
             return self.open_note(next(n for n in self.notes if n["path"] == path))
-        if messagebox.askyesno(APP, f"\"{target}\" 노트가 없습니다. 새로 만들까요?", parent=self.root):
+        if messagebox.askyesno(APP, tr('"{0}" 노트가 없습니다. 새로 만들까요?').format(target), parent=self.root):
             nb = self.cur["nb"] if self.cur else ""
             made = self.store.create_note(nb, want or "제목 없음")
             self.reload_notes()
@@ -3245,7 +3269,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             return
         self.srv, self.port = clipserver.start(self.store, st.clipper_token, lambda: self.clip_q.put(1))
         if self.srv and self.port != clipserver.DEFAULT_PORT:   # 확장은 보통 기본 포트(41184)에 맞춰 두므로, 밀렸으면 알려 준다(비면 자동으로 돌아간다)
-            self.status.config(text=f"웹 클리퍼가 {self.port}번 포트로 열렸습니다({clipserver.DEFAULT_PORT}번을 다른 프로그램이 쓰는 중). 비면 자동으로 {clipserver.DEFAULT_PORT}번으로 옮깁니다.")
+            self.status.config(text=tr('웹 클리퍼가 {0}번 포트로 열렸습니다({1}번을 다른 프로그램이 쓰는 중). 비면 자동으로 {2}번으로 옮깁니다.').format(self.port, clipserver.DEFAULT_PORT, clipserver.DEFAULT_PORT))
 
     def retake_default_port(self):
         """기본 포트(41184)를 다른 프로그램(예: 조플린, 아직 안 닫힌 앱의 옛 창)이 쓰고 있어서 옆 포트로 밀려 열렸다면, 비는 대로 기본 포트로 옮긴다.
@@ -3261,7 +3285,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         except Exception:  # noqa: BLE001
             pass
         self.srv, self.port = srv, port
-        self.status.config(text=f"웹 클리퍼가 {port}번 포트로 돌아왔습니다.")
+        self.status.config(text=tr('웹 클리퍼가 {0}번 포트로 돌아왔습니다.').format(port))
 
     def stop_clipper(self):
         if self.srv:
@@ -3282,7 +3306,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             pass
         if got:
             self.reload_notes()
-            self.status.config(text="웹 클리퍼에서 새 노트가 들어왔습니다 " + time.strftime("%H:%M:%S"))
+            self.status.config(text=tr("웹 클리퍼에서 새 노트가 들어왔습니다 ") + time.strftime("%H:%M:%S"))
         self.clip_tick = getattr(self, "clip_tick", 0) + 1
         if self.clip_tick % 8 == 0:   # 약 5초마다
             self.retake_default_port()
@@ -3300,7 +3324,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         self.reload_tags()
         self.refresh(keep_page=True)
         self.render()
-        self.update_status("복원됨 " + time.strftime("%H:%M:%S"))
+        self.update_status(tr("복원됨 ") + time.strftime("%H:%M:%S"))
 
     def rebuild_ui(self):
         """색을 바꾼 뒤 화면을 다시 만든다. 열어 둔 노트·검색어·보기 설정은 그대로 둔다."""
@@ -3330,6 +3354,15 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         n = next((x for x in self.notes if x["path"] == cur_path), None) if cur_path else None
         if n:
             self.open_note(n, record=False)
+
+    def set_language(self, code):
+        """Language 메뉴: 언어를 바꾸고 화면(메뉴줄 포함)을 다시 그린다"""
+        if code == i18n.lang():
+            return
+        i18n.set_lang(code)
+        st.write_config(lang=code)
+        self.build_menu()
+        self.rebuild_ui()
 
     def set_theme(self, name, custom="keep"):
         """name 을 쓴다. 내 테마의 색(custom = {bg, accent})을 같이 바꿀 수 있다(주지 않으면 저장돼 있던 색)"""
