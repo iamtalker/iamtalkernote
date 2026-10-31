@@ -226,6 +226,17 @@ for _ in range(60):
     app.root.update()
     time.sleep(0.02)
 check("달력·할일을 고르면 노트 목록에 달력 파일들이 뜸", any(n["title"] == "2026년 11월" for n in app.notes) and app.cards)
+app.open_note(next(n for n in app.notes if n["title"] == "2026년 11월"))
+for _ in range(10):
+    app.root.update()
+check("달력 파일을 열면 달력 화면이 닫힘", not pv.winfo_ismapped() and app.cur is not None)
+iid_ = f"nb{app.nb_keys.index(notes.CAL)}"
+bb_ = app.nbtree.bbox(iid_)
+ev_ = type("E", (), {"x": 10, "y": (bb_[1] + 5) if bb_ else 5})()
+app.on_nb_click(ev_)
+for _ in range(10):
+    app.root.update()
+check("'달력·할일'을 다시 누르면 달력으로 돌아옴", pv.winfo_ismapped() and app.cur is None)
 app.nb = notes.ALL
 app.reload_notes()
 app.close_note()
