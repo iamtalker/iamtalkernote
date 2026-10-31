@@ -135,9 +135,10 @@ def save(vault, plan):
 
 def ignore_lines(plan, released):
     """폰이 아직 받지 않을 파일을 가리는 무시 목록: released 단계 수(1이면 1단계만 받음) 뒤의 단계 파일 전부.
-    Syncthing 무시 패턴에서 특수 문자(\\ * ? [ { 등)는 앞에 \\ 를 붙여 글자 그대로 맞춘다."""
+    무시 패턴에서 뜻이 있는 글자(* ? [ ] { } 와 역슬래시)는 '아무 글자 하나'(?)로 바꾼다(윈도 Syncthing 은 역슬래시 이스케이프를 못 쓴다).
+    폰 앱 Stages.kt 와 같은 규칙."""
     out = []
     for t in plan["tiers"][released:]:
         for r in t["files"]:
-            out.append("/" + re.sub(r"([\\*?\[\]{}!#])", r"\\\1", r))
+            out.append("/" + re.sub(r"[\\*?\[\]{}]", "?", r))
     return out

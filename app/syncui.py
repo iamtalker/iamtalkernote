@@ -1,11 +1,14 @@
 """옵션의 '동기화' 탭과, 앱이 켜질 때 동기화를 이어 주는 코드. 정책 계산은 syncpolicy, Syncthing 제어는 syncengine 이 맡는다."""
+import os
 import threading
+import time
 import webbrowser
 import tkinter as tk
 from tkinter import messagebox, ttk
 
 import store as st
 import syncengine as se
+import stages
 import syncpolicy as sp
 
 
@@ -41,7 +44,28 @@ def apply_now(app, policy=None):
     """정책을 저장하고 Syncthing 설정에 맞춘다. (만든·고친 수, 지운 수)"""
     policy = policy or sp.load(app.store.root)
     sp.save(app.store.root, policy)
+    refresh_stages(app.store.root, policy)
     return app.sync.apply(current_plans(app, policy))
+
+
+STAGES_MAX_AGE = 6 * 3600
+
+
+def refresh_stages(root, policy):
+    """폰이 최근 것부터 받을 수 있게 단계 목록(.sync/stages.json)을 만든다. 없거나 6시간이 지났을 때만 새로 계산한다(1.4만 노트에 약 10초)"""
+    if not sp.is_simple(policy):
+        return
+    path = os.path.join(root, ".sync", "stages.json")
+    try:
+        if time.time() - os.path.getmtime(path) < STAGES_MAX_AGE:
+            return
+    except OSError:
+        pass
+    media = bool((policy.get("simple", {}).get("include") or {}).get("media"))
+    try:
+        stages.save(root, stages.build(root, media=media))
+    except OSError:
+        pass
 
 
 def resume(app):
