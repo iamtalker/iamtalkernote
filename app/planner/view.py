@@ -147,9 +147,7 @@ class PlannerView(tk.Frame):
 
     def click(self, i, e):
         d = self.days[i]
-        self.sel = M.iso(d)
-        if (d.year, d.month) != (self.year, self.month):
-            self.year, self.month = d.year, d.month
+        self.sel = M.iso(d)                                # 다른 달 칸을 눌러도 달은 바뀌지 않는다(달은 위의 ◀ ▶ 로만)
         self.refresh()
         cfg = self.get_cfg()
         m = tk.Menu(self, tearoff=0)
