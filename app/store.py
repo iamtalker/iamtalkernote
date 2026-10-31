@@ -14,6 +14,7 @@ import time
 from urllib.parse import unquote
 
 from wikiconv.markdown import md_name, md_title
+import wikilinks
 
 APP_NAME = "iamtalkernote"
 HISTORY_DIR = ".history"   # 노트별 이전 버전(숨김 폴더라 노트북으로 보이지 않는다)
@@ -29,6 +30,11 @@ def config_path():
     d = os.path.join(base, APP_NAME)
     os.makedirs(d, exist_ok=True)
     return os.path.join(d, "config.json")
+
+
+def wiki_enabled():
+    """위키 링크 기능(기본 켜짐). 켜져 있으면 같은 제목의 노트를 만들지 못하게 한다"""
+    return bool(read_config().get("wikiEnabled", True))
 
 
 def read_config():
@@ -831,9 +837,21 @@ class Store:
             for key in sorted(gone):
                 self.journal("external", key, detail="앱 밖에서 사라짐(지우기·이름 바꿈·이동)")
 
+    def titles(self):
+        """색인에 있는 모든 노트의 [(제목, 경로키)] (위키: 같은 제목 막기)"""
+        conn = self._db()
+        try:
+            return [(md_title(os.path.basename(k)), k) for (k,) in conn.execute("SELECT path FROM notes")]
+        except sqlite3.Error:
+            return []
+        finally:
+            conn.close()
+
     def create_note(self, nb, title="제목 없음", body=""):
         d = self.nb_dir(nb)
         os.makedirs(d, exist_ok=True)
+        if wiki_enabled():   # 노트북이 달라도 같은 제목이 없게
+            title = wikilinks.free_title(title, self.titles())
         name, i = title, 2
         while os.path.exists(os.path.join(d, md_name(name))):
             name = f"{title} ({i})"
@@ -888,6 +906,8 @@ class Store:
         target = os.path.join(d, md_name(base))
         if os.path.normcase(target) == os.path.normcase(path):
             return md_title(os.path.basename(path)), path
+        if wiki_enabled():
+            base = wikilinks.free_title(base, self.titles(), own=self.key_of(path))
         n, i = base, 2
         while os.path.exists(os.path.join(d, md_name(n))):
             n = f"{base} ({i})"

@@ -48,6 +48,7 @@ import wikiconv  # noqa: E402
 import viewdelete  # noqa: E402
 import tagac  # noqa: E402
 import favorites  # noqa: E402
+import wikilinks  # noqa: E402
 import outline  # noqa: E402
 import inlineedit  # noqa: E402
 import syncsettings  # noqa: E402
@@ -2279,6 +2280,7 @@ class App:
         v.tag_configure("chip", foreground="#92400e", background="#fef3c7")
         v.tag_configure("muted", foreground=C["muted"])
         v.tag_configure("link", underline=True, foreground=C["accent"])
+        v.tag_configure("linkmiss", foreground=C["danger"])   # 위키 링크인데 그 제목의 노트가 없음
         v.tag_configure("fnref")
         v.tag_configure("quote", foreground=C["muted"])
         v.tag_configure("hr", foreground=C["line"])
@@ -2296,6 +2298,7 @@ class App:
         for n in range(0, 7):          # 아웃라이너 들여쓰기: 한 단계 16px, 6단계까지만(더 깊은 항목은 같은 자리에 두고 줌인으로 본다)
             v.tag_configure(f"ol{n}", lmargin1=12 + 16 * n, lmargin2=28 + 16 * n, spacing1=2, spacing3=2)
         v.tag_raise("link")
+        v.tag_raise("linkmiss")
         v.tag_raise("code")
         v.tag_bind("link", "<Enter>", lambda e: v.config(cursor="hand2"))
         v.tag_bind("link", "<Leave>", lambda e: v.config(cursor="arrow"))
@@ -3591,6 +3594,9 @@ class App:
         new = self.title_var.get().strip()
         if new == self.cur["title"]:
             return
+        if self.wiki_on() and new and wikilinks.taken(new, self.store.titles(), own=self.store.key_of(self.cur["path"])):
+            self.title_var.set(self.cur["title"])
+            return messagebox.showinfo(APP, f"\"{new}\" 제목의 노트가 이미 있습니다.\n위키 링크([[제목]])를 쓰는 동안은 같은 제목을 만들 수 없어서 제목을 바꾸지 않았습니다.\n(옵션 → 일반에서 위키 링크를 끄면 같은 제목도 쓸 수 있습니다)", parent=self.root)
         self.flush()
         try:
             title, path = self.store.rename(self.cur["path"], new)
@@ -4013,10 +4019,19 @@ class App:
         self.photos.clear()
         self.img_files.clear()
         vmap, w_off, s_off = [], 0, 0        # 화면 위치(w) ↔ 렌더링 글 위치(s): 렌더링만으로는 원문 위치를 몰라서 블록 맞추기에 쓴다
+        wiki, widx = self.wiki_on(), None
         for t, tags, extra in segs:
             tg = list(tags)
             if "b" in tg and "i" in tg:
                 tg.append("bi")
+            if extra and extra[0] == "link" and extra[1] == "page":
+                if not wiki:   # 위키를 끄면 [[ ]] 는 그냥 글자
+                    tg = [x for x in tg if x != "link"]
+                    extra = None
+                else:
+                    widx = widx or self.wiki_index()
+                    if wikilinks.norm(wikilinks.split_target(extra[2])[0]) not in widx:
+                        tg.append("linkmiss")
             if extra and extra[0] == "link":
                 key = "L%d" % len(self.links)
                 self.links[key] = extra[1:]
@@ -4426,6 +4441,16 @@ class App:
                     return
         webbrowser.open(url)
 
+    def wiki_on(self):
+        return st.wiki_enabled()
+
+    def wiki_index(self):
+        """제목(정규화) → 가장 최근 노트. 노트 목록이 바뀔 때만 다시 만든다"""
+        key = (id(self.all_notes), len(self.all_notes))
+        if getattr(self, "_wiki_key", None) != key:
+            self._wiki_key, self._wiki_idx = key, wikilinks.index(self.all_notes)
+        return self._wiki_idx
+
     def follow(self, kind, target):
         if kind == "outline":
             return self.outline_zoom_to(target)
@@ -4434,18 +4459,19 @@ class App:
                 self.open_url(target)
             return
         # 위키 링크 [[문서]] → 같은 노트북의 같은 이름 노트
-        want = target.split("#")[0].strip().lower()
-        pool = [n for n in self.all_notes if n["title"].lower() == want]
-        pool.sort(key=lambda n: n["nb"] != (self.cur["nb"] if self.cur else ""))
-        if pool:
-            path = pool[0]["path"]
-            if pool[0] not in self.notes:
+        if not self.wiki_on():
+            return
+        want = wikilinks.split_target(target)[0]
+        found = self.wiki_index().get(wikilinks.norm(want))   # 같은 제목이 여럿이면 가장 최근 노트
+        if found:
+            path = found["path"]
+            if found not in self.notes:
                 self.nb = ALL
                 self.reload_notes()
             return self.open_note(next(n for n in self.notes if n["path"] == path))
         if messagebox.askyesno(APP, f"\"{target}\" 노트가 없습니다. 새로 만들까요?", parent=self.root):
             nb = self.cur["nb"] if self.cur else ""
-            made = self.store.create_note(nb, target.split("#")[0].strip() or "제목 없음")
+            made = self.store.create_note(nb, want or "제목 없음")
             self.reload_notes()
             n = next((x for x in self.notes if x["path"] == made["path"]), None)
             if n:
@@ -4892,6 +4918,18 @@ class App:
                 tk.Radiobutton(p, text=label, value=key, variable=ca, command=lambda: st.write_config(closeAction=ca.get()),
                                bg=C["bg"], activebackground=C["bg"], font=(self.ui, 10), selectcolor=C["bg"]).pack(anchor="w")
             lab(p, "트레이 아이콘을 누르면 창이 다시 열리고, 우클릭 → 종료로 끕니다. 파일 → 종료(와 트레이의 종료)는 언제나 바로 끕니다.",
+                fg=C["muted"], font=(self.ui, 9), wraplength=500).pack(anchor="w", pady=(2, 0))
+            hr(p)
+            lab(p, "위키 링크", font=(self.ui, 10, "bold")).pack(anchor="w")
+            wk = tk.BooleanVar(value=st.wiki_enabled())
+
+            def set_wiki():
+                st.write_config(wikiEnabled=wk.get())
+                if self.cur:
+                    self.render()
+            tk.Checkbutton(p, text="[[노트 제목]] 을 노트 사이 링크로 연결하고, 같은 제목의 노트는 만들지 못하게 합니다", variable=wk, command=set_wiki,
+                           bg=C["bg"], activebackground=C["bg"], font=(self.ui, 10), selectcolor=C["bg"]).pack(anchor="w")
+            lab(p, "같은 제목이 이미 있으면 [[제목]] 은 가장 최근에 고친 노트로 연결됩니다. 없는 제목의 링크는 붉게 보이고, 누르면 새로 만들 수 있습니다. 끄면 [[ ]] 는 그냥 글자입니다.",
                 fg=C["muted"], font=(self.ui, 9), wraplength=500).pack(anchor="w", pady=(2, 0))
             hr(p)
             lab(p, "화면 구성", font=(self.ui, 10, "bold")).pack(anchor="w")
