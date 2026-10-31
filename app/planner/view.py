@@ -57,7 +57,8 @@ class PlannerView(tk.Frame):
             lb = tk.Label(grid, text="", bg=C["bg"], fg=C["text"], font=(ui, 9), anchor="nw", justify="left", padx=4, pady=2, height=3, cursor="hand2",
                           highlightthickness=1, highlightbackground=C["bg"])
             lb.grid(row=1 + i // 7, column=i % 7, sticky="nsew", padx=(0, 1), pady=(0, 1))
-            lb.bind("<Button-1>", lambda e, i=i: self.click(i, e))
+            lb.bind("<Button-1>", lambda e, i=i: self.select(i))         # 왼쪽 클릭: 그 날을 고른다
+            lb.bind("<Button-3>", lambda e, i=i: self.click(i, e))       # 오른쪽 클릭: 메뉴(공수·할일 추가·삭제), 왼쪽으로 고른다
             self.cells.append(lb)
         mid = tk.Frame(bottom, bg=C["bg"])
         mid.pack(fill="x", padx=18, pady=(12, 4))
@@ -149,6 +150,10 @@ class PlannerView(tk.Frame):
             self.set_cfg(key, v)
             self.rate_vars[key].set(f"{v:,}" if v else "")
             self.refresh(keep_rate=True)
+
+    def select(self, i):
+        self.sel = M.iso(self.days[i])                     # 다른 달 칸을 눌러도 달은 바뀌지 않는다(달은 위의 ◀ ▶ 로만)
+        self.refresh()
 
     def click(self, i, e):
         d = self.days[i]
