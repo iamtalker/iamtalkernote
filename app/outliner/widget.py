@@ -21,6 +21,7 @@ class OutlineEditor(tk.Frame):
         self.C, self.font, self.on_change, self.get_title = colors, font, on_change, get_title
         self.family = tkfont.Font(root=master, font=font).actual("family")
         self.items = [M.Item(0, "")]
+        self._last = M.dump(self.items)     # 내가 마지막으로 읽었거나 알린 원문
         self.zoom = None                    # 줌인한 항목 번호(없으면 노트 전체)
         self.vis = []                       # 화면 줄 → 항목 번호
         self.undo, self.redo = [], []
@@ -65,6 +66,7 @@ class OutlineEditor(tk.Frame):
     # ---------------------------------------------------------------- 불러오기·내보내기
     def load(self, body):
         self.items = M.parse(body) or [M.Item(0, "")]
+        self._last = M.dump(self.items)
         self.zoom = None
         self.undo.clear()
         self.redo.clear()
@@ -75,19 +77,24 @@ class OutlineEditor(tk.Frame):
 
     def reload_if_changed(self, body):
         """밖(다른 편집·되돌리기)에서 원문이 바뀌었으면 다시 읽는다. 내가 바꾼 것이면 그대로 둔다"""
+        new = M.parse(body) or [M.Item(0, "")]
+        if M.dump(new) == self._last or (not body.strip() and len(self.items) == 1 and not self.items[0].text):
+            return                                           # 내가 알린 원문이 돌아온 것(또는 빈 노트)
         self.pull()
-        if M.dump(M.parse(body)) != M.dump(self.items) and not (not body.strip() and len(self.items) == 1 and not self.items[0].text):
-            z = self.zoom
-            self.items = M.parse(body) or [M.Item(0, "")]
-            self.zoom = z if z is not None and z < len(self.items) else None
-            self.redraw(self.vis[0] if self.vis else 0, 0)
+        k, col = self._pos() if self.vis else (0, 0)
+        z = self.zoom
+        self.items = new
+        self._last = M.dump(new)
+        self.zoom = z if z is not None and z < len(self.items) else None
+        self.redraw(min(k, len(self.items) - 1), col)       # 커서는 있던 자리 근처에 둔다
 
     def flush(self):
         if self._change_job:
             self.after_cancel(self._change_job)
             self._change_job = None
         self.pull()
-        self.on_change(self.body())
+        self._last = self.body()
+        self.on_change(self._last)
 
     # ---------------------------------------------------------------- 그리기
     def _floor(self):

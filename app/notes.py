@@ -514,6 +514,8 @@ class App:
         self.tray_hidden = self.tray_was_zoomed = False
         for cls in ("Entry", "Text"):    # 어느 칸에서 한글을 쳐도 조합 중인 글자가 그 칸 글꼴로 보이게
             self.root.bind_class(cls, "<FocusIn>", self.match_ime_font, add="+")
+            self.root.bind_class(cls, "<KeyPress>", self.ime_keep_font, add="+")
+            self.root.bind_class(cls, "<KeyRelease>", self.ime_keep_font, add="+")
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.bind_keys()
         self.set_mode(self.mode)
@@ -1790,11 +1792,16 @@ class App:
         sb = ttk.Scrollbar(body, orient="vertical", command=self.lst.yview)
         hide = autohide(sb, self.lst)
 
+        self.sb_frozen = False
+
         def on_scroll(lo, hi):
+            if self.sb_frozen:
+                return
             hide(lo, hi)
             if self.rendered < len(self.results) and (1 - float(hi)) < MORE_SCREENS * (float(hi) - float(lo)):
                 self.root.after_idle(self.more_cards)
         self.lst.config(yscrollcommand=on_scroll)
+        self.lst_scroll = on_scroll
         self.lst.pack(side="left", fill="both", expand=True)
         L = self.lst
         L.tag_configure("title", font=self.fonts["card"], lmargin1=18, lmargin2=18, spacing1=10, rmargin=14)
@@ -1860,6 +1867,13 @@ class App:
         if not getattr(self, "ac_polling", False):
             self.ac_polling = True
             self.ac_poll()
+
+    def ime_keep_font(self, ev):
+        """조합이 새로 시작될 때마다(조합 중인 글자가 없다가 생길 때) 입력기 글꼴을 그 칸 글꼴에 맞춘다"""
+        comp = bool(ime.composing())
+        if comp and not getattr(self, "_ime_on", False):
+            self.match_ime_font(ev)
+        self._ime_on = comp
 
     def match_ime_font(self, ev=None, widget=None):
         """한글 입력기의 조합 글꼴을 지금 칸(입력칸·편집 칸 …)의 글꼴과 같게 맞춘다 — 안 맞추면 치는 글자가 잠깐 더 크게 보인다"""
@@ -2801,6 +2815,7 @@ class App:
         top = L.yview()[0] if keep_scroll else 0.0   # 자동 저장·삭제 때만 스크롤을 유지하고, 정렬·검색·노트북을 바꾸면 맨 위부터
         top_line = L.index("@0,0") if keep_scroll else None   # 목록이 줄어도 같은 자리에 머물도록 맨 위 줄로 되돌린다
         want = max(LIST_CHUNK, self.rendered) if keep_scroll else LIST_CHUNK
+        self.sb_frozen = True
         L.config(state="normal")
         L.delete("1.0", "end")
         L.config(state="disabled")
@@ -2809,6 +2824,8 @@ class App:
         L.yview_moveto(top)
         if top_line:
             L.yview(top_line)
+        self.sb_frozen = False
+        self.lst_scroll(*L.yview())
         self.mark_selected()
         self.update_star()   # 폰에서 바꾼 즐겨찾기도 편집기의 별에 반영
         for k, b in self.sort_btns.items():

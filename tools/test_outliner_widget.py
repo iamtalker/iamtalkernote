@@ -109,6 +109,15 @@ check("여러 줄 붙여넣기: 항목 구조 유지", saved[-1] == "- ap\n    -
 
 w.load("")
 check("빈 노트는 빈 항목 하나", lines() == [""])
+w.load("- a\n- b\n- c\n")
+at(2, 1)
+t.insert("insert", "Z")                                    # 아직 알리지 않은(0.35초 전) 글
+w.reload_if_changed("- a\n- b\n- c\n")                    # 낡은 원문이 돌아와도
+root.update()
+check("타이핑 중 낡은 원문이 와도 글·커서가 그대로", lines() == ["a", "b", "cZ"] and t.index("insert") == "3.4")
+w.reload_if_changed("- a\n- X\n- cZ\n")                   # 진짜 바깥 변경
+check("바깥 변경은 다시 읽되 커서는 맨 위로 가지 않음", lines() == ["a", "X", "cZ"] and t.index("insert").startswith("3."))
+
 root.destroy()
 print("실패 %d" % fails if fails else "전부 통과")
 sys.exit(1 if fails else 0)
