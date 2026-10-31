@@ -225,6 +225,28 @@ app.reload_notes()
 app.close_note()
 check("다른 항목을 고르면 달력이 사라짐", not pv.winfo_ismapped())
 
+# --- 달력 위의 단가·일비 입력칸
+app.nb = notes.CAL
+app.close_note()
+app.reload_notes()
+for _ in range(20):
+    app.root.update()
+    time.sleep(0.02)
+pv = app.planner_view
+check("공수달력을 켜면 달력 위에 단가·일비 칸이 보임", pv.rate.winfo_ismapped() and pv.rate_vars["wage"].get() == "150,000")
+pv.rate_vars["wage"].set("200,000")
+pv.rate_vars["meal"].set("30000")
+pv.save_rate("wage")
+pv.save_rate("meal")
+check("칸에서 고치면 설정에 저장되고 요약이 바뀜", st.read_config().get("cal_wage") == 200000 and st.read_config().get("cal_meal") == 30000 and "일비 30,000원" in pv.sumlab.cget("text"))
+app.feat["gongsu"] = False
+st.write_config(cal_gongsu=False)
+pv.refresh()
+check("공수달력을 끄면 단가·일비 칸이 사라짐", not pv.rate.winfo_ismapped())
+app.nb = notes.ALL
+app.reload_notes()
+app.close_note()
+
 # --- 휴지통(노트북 목록 맨 아래): 다른 노트북과 같은 목록, 삭제까지 남은 날 표시, 읽기 전용
 put("지울노트.md", "지워질 본문입니다", now)
 app.nb = notes.ALL

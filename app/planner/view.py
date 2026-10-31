@@ -9,10 +9,10 @@ WEEK = "일월화수목금토"
 
 
 class PlannerView(tk.Frame):
-    def __init__(self, master, colors, ui, planner, get_cfg, tip=None):
-        """get_cfg() → {'gongsu': bool, 'wage': 원, 'meal': 원} (설정에서 읽는다)"""
+    def __init__(self, master, colors, ui, planner, get_cfg, set_cfg=None):
+        """get_cfg() → {'gongsu': bool, 'wage': 원, 'meal': 원} (설정에서 읽는다). set_cfg(키, 값) 은 달력 위의 단가·일비 칸에서 고친 값을 설정에 적는다"""
         super().__init__(master, bg=colors["bg"])
-        self.C, self.ui, self.pl, self.get_cfg = colors, ui, planner, get_cfg
+        self.C, self.ui, self.pl, self.get_cfg, self.set_cfg = colors, ui, planner, get_cfg, set_cfg
         today = datetime.date.today()
         self.year, self.month, self.sel = today.year, today.month, M.iso(today)
         self.only_sel = tk.BooleanVar(value=False)
@@ -30,10 +30,24 @@ class PlannerView(tk.Frame):
         today_b = tk.Label(head, text="오늘", bg=C["bg"], fg=C["accent"], font=(ui, 10), cursor="hand2", padx=10)
         today_b.bind("<Button-1>", lambda e: self.goto(datetime.date.today()))
         today_b.pack(side="left")
+        self.rate = tk.Frame(self, bg=C["bg"])         # 공수달력을 켰을 때만: 단가·일비를 달력에서 바로 입력
+        self.rate_vars = {}
+        for key, label in (("wage", "단가(1공수)"), ("meal", "일비(하루)")):
+            tk.Label(self.rate, text=label, bg=C["bg"], fg=C["muted"], font=(ui, 9)).pack(side="left", padx=(0, 4))
+            var = tk.StringVar()
+            e = tk.Entry(self.rate, textvariable=var, width=10, justify="right", relief="flat", bd=0, bg=C["panel"], fg=C["text"], insertbackground=C["text"],
+                         highlightthickness=1, highlightbackground=C["line"], highlightcolor=C["accent"], font=(ui, 10))
+            e.pack(side="left", ipady=3)
+            tk.Label(self.rate, text="원", bg=C["bg"], fg=C["muted"], font=(ui, 9)).pack(side="left", padx=(2, 14))
+            e.bind("<Return>", lambda ev, k=key: self.save_rate(k))
+            e.bind("<FocusOut>", lambda ev, k=key: self.save_rate(k))
+            self.rate_vars[key] = var
         self.sumlab = tk.Label(self, text="", bg=C["bg"], fg=C["text"], font=(ui, 10), anchor="w", justify="left", padx=18)
         self.sumlab.pack(fill="x")
+        bottom = tk.Frame(self, bg=C["bg"])            # 할일 입력칸·목록은 창이 낮아도 가려지지 않게 먼저 아래에 자리를 잡는다(달력이 남는 만큼만 쓴다)
+        bottom.pack(side="bottom", fill="x")
         grid = tk.Frame(self, bg=C["line"])
-        grid.pack(fill="x", padx=18, pady=(8, 0))
+        grid.pack(fill="both", expand=True, padx=18, pady=(8, 0))
         for c in range(7):
             grid.grid_columnconfigure(c, weight=1, uniform="d")
             tk.Label(grid, text=WEEK[c], bg=C["panel"], fg=C["danger"] if c == 0 else (C["accent"] if c == 6 else C["muted"]),
@@ -44,12 +58,12 @@ class PlannerView(tk.Frame):
             lb.grid(row=1 + i // 7, column=i % 7, sticky="nsew", padx=(0, 1), pady=(0, 1))
             lb.bind("<Button-1>", lambda e, i=i: self.click(i, e))
             self.cells.append(lb)
-        mid = tk.Frame(self, bg=C["bg"])
+        mid = tk.Frame(bottom, bg=C["bg"])
         mid.pack(fill="x", padx=18, pady=(12, 4))
         tk.Label(mid, text="할일", bg=C["bg"], fg=C["text"], font=(ui, 11, "bold")).pack(side="left")
         tk.Checkbutton(mid, text="선택한 날만", variable=self.only_sel, command=self.draw_todos, bg=C["bg"], activebackground=C["bg"],
                        selectcolor=C["bg"], font=(ui, 9), fg=C["muted"]).pack(side="right")
-        bar = tk.Frame(self, bg=C["bg"])
+        bar = tk.Frame(bottom, bg=C["bg"])
         bar.pack(fill="x", padx=18)
         self.entry = tk.Entry(bar, relief="flat", bd=0, bg=C["panel"], fg=C["text"], insertbackground=C["text"], font=(ui, 10),
                               highlightthickness=1, highlightbackground=C["line"], highlightcolor=C["accent"])
@@ -59,9 +73,9 @@ class PlannerView(tk.Frame):
             b = tk.Label(bar, text=text, bg=C["panel"], fg=C["text"], font=(ui, 9), cursor="hand2", padx=8, pady=5)
             b.bind("<Button-1>", lambda e, fn=fn: fn())
             b.pack(side="left", padx=(6, 0))
-        wrap = tk.Frame(self, bg=C["bg"])
-        wrap.pack(fill="both", expand=True, padx=18, pady=(6, 14))
-        self.tree = ttk.Treeview(wrap, style="Flat.Treeview", columns=("date",), show="tree", selectmode="browse")
+        wrap = tk.Frame(bottom, bg=C["bg"])
+        wrap.pack(fill="x", padx=18, pady=(6, 14))
+        self.tree = ttk.Treeview(wrap, style="Flat.Treeview", columns=("date",), show="tree", selectmode="browse", height=6)
         self.tree.column("#0", stretch=True, width=300)
         self.tree.column("date", width=90, anchor="e", stretch=False)
         sb = ttk.Scrollbar(wrap, orient="vertical", command=self.tree.yview)
@@ -105,12 +119,29 @@ class PlannerView(tk.Frame):
             lb.config(text="\n".join(lines), fg=fg, bg=C["soft"] if s == self.sel else C["bg"],
                       highlightbackground=C["accent"] if s == today else (C["soft"] if s == self.sel else C["bg"]))
         if cfg["gongsu"]:
+            if not self.rate.winfo_ismapped():
+                self.rate.pack(fill="x", padx=18, pady=(0, 4), before=self.sumlab)
+            for k in ("wage", "meal"):
+                if self.focus_get() is not None and str(self.focus_get()).startswith(str(self.rate)):
+                    break                                  # 입력 중이면 칸을 덮어쓰지 않는다
+                self.rate_vars[k].set(f"{cfg[k]:,}" if cfg[k] else "")
             r = self.pl.summary(self.year, self.month, cfg["wage"], cfg["meal"])
             self.sumlab.config(text=(f"공수 합계 {M.fmt_gongsu(r['gongsu'])}  ·  출근 {r['days']}일  ·  일당 {r['pay']:,}원  +  일비 {r['meal']:,}원"
                                      f"  =  총 {r['sum']:,}원"))
         else:
+            self.rate.pack_forget()
             self.sumlab.config(text="")
         self.draw_todos()
+
+    def save_rate(self, key):
+        s = self.rate_vars[key].get().replace(",", "").strip()
+        try:
+            v = int(float(s)) if s else 0
+        except ValueError:
+            return
+        if self.set_cfg and self.get_cfg()[key] != v:
+            self.set_cfg(key, v)
+            self.refresh()
 
     def click(self, i, e):
         d = self.days[i]

@@ -2351,7 +2351,8 @@ class App:
             if self.nb == CAL and self.feat["cal"]:        # 달력·할일을 골랐으면 노트 자리에 달력과 할일
                 self.empty.pack_forget()
                 if self.planner_view is None:
-                    self.planner_view = PlannerView(self.editf, C, self.ui, self.planner, self.planner_cfg)
+                    self.planner_view = PlannerView(self.editf, C, self.ui, self.planner, self.planner_cfg,
+                                                   lambda k, v: st.write_config(**{"cal_" + k: v}))
                 self.planner_view.refresh()
                 self.planner_view.pack(fill="both", expand=True)
             else:
