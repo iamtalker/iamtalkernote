@@ -213,38 +213,35 @@ class PlannerView(tk.Frame):
                              tags=("done",) if t["done"] else ())
 
     def on_tree_menu(self, e):
-        """할일 목록에서 오른쪽 클릭: 어느 칸이든 '할일 만들기'(날짜 없이 만들고 나중에 날짜 지정), 할일 위면 칸에 따라
-        글 칸 = 내용 바꾸기·삭제, 추가한 날 칸 = 날짜 지정·변경·없애기, 완료한 날 칸 = 완료한 날 변경·완료 취소"""
+        """할일 목록에서 오른쪽 클릭. 칸마다 메뉴는 이것뿐이다.
+        할일 칸: 할일 생성 · 할일 변경 · 할일 삭제 / 추가한 날·완료한 날 칸: 날짜 만들기 · 날짜 변경 · 날짜 삭제 (여러 개를 고른 채면 고른 것 모두에)"""
         row, col = self.tree.identify_row(e.y), self.tree.identify_column(e.x)
         t = self.pl.find(row) if row else None
         m = tk.Menu(self, tearoff=0)
-        picked = [x for x in (self.pl.find(i) for i in self.tree.selection()) if x]
-        if t and len(picked) > 1 and row in self.tree.selection():      # 여러 개를 고른 채 그 안에서 오른쪽 클릭: 한꺼번에
-            n = len(picked)
-            m.add_command(label=f"선택한 {n}개 오늘 날짜로 완료", command=lambda: self.bulk(picked, "done"))
-            m.add_command(label=f"선택한 {n}개 완료 취소", command=lambda: self.bulk(picked, "undone"))
-            m.add_command(label=f"선택한 {n}개 날짜 지정…", command=lambda: self.bulk(picked, "date"))
-            m.add_command(label=f"선택한 {n}개 날짜 없애기", command=lambda: self.bulk(picked, "nodate"))
-            m.add_separator()
-            m.add_command(label=f"선택한 {n}개 삭제", command=lambda: self.bulk(picked, "delete"))
-            m.tk_popup(e.x_root, e.y_root)
-            return
-        if t:
+        if not t:                                            # 빈 곳: 만들기만
+            m.add_command(label="할일 생성", command=self.new_todo)
+            return m.tk_popup(e.x_root, e.y_root)
+        if row not in self.tree.selection():
             self.tree.selection_set(row)
-            if col == "#3":
-                m.add_command(label="내용 바꾸기…", command=lambda: self.rename_todo(t))
-                m.add_command(label="삭제", command=lambda: self.delete_todo(t))
-            elif col == "#1":
-                m.add_command(label="추가한 날 바꾸기…" if t.get("date") else "날짜 지정…", command=lambda: self.ask_date(t, "date"))
-                if t.get("date"):
-                    m.add_command(label="날짜 없애기", command=lambda: (self.pl.update(t["id"], date=None), self.changed()))
-            elif col == "#2":
-                m.add_command(label="완료한 날 바꾸기…" if t["done"] else "완료한 날을 정해 완료로…", command=lambda: self.ask_date(t, "done_on"))
-                if t["done"]:
-                    m.add_command(label="완료 취소", command=lambda: (self.pl.update(t["id"], done=False), self.changed()))
-            m.add_separator()
-        m.add_command(label="할일 만들기…", command=self.new_todo)
+        picked = [x for x in (self.pl.find(i) for i in self.tree.selection()) if x] or [t]
+        many = len(picked) > 1
+        if col == "#3":
+            m.add_command(label="할일 생성", command=self.new_todo)
+            if not many:
+                m.add_command(label="할일 변경", command=lambda: self.rename_todo(t))
+            m.add_command(label="할일 삭제" + (f" ({len(picked)}개)" if many else ""), command=lambda: self.bulk(picked, "delete"))
+        elif col in ("#1", "#2"):
+            field = "date" if col == "#1" else "done_on"
+            has = bool(t.get("date")) if col == "#1" else bool(t["done"])
+            m.add_command(label="날짜 변경" if has and not many else "날짜 만들기", command=lambda: self.bulk(picked, field))
+            if many or has:
+                m.add_command(label="날짜 삭제", command=lambda: self.bulk(picked, "nodate" if col == "#1" else "undone"))
+        else:
+            return
         m.tk_popup(e.x_root, e.y_root)
+
+    def ask_date(self, t, field):
+        self.bulk([t], field)
 
     def bulk(self, todos, op):
         """고른 할일 여러 개를 한꺼번에: 완료·완료 취소·날짜 지정·날짜 없애기·삭제"""
@@ -254,15 +251,25 @@ class PlannerView(tk.Frame):
                 return
             for t in todos:
                 self.pl.remove(t["id"])
-        elif op == "date":
-            s = simpledialog.askstring("날짜 지정", f"고른 {len(todos)}개의 추가한 날  (예: 2026-09-14, 20260914)", initialvalue=today, parent=self)
+        elif op in ("date", "done_on"):
+            first = todos[0]
+            cur = (first.get("date") if op == "date" else first.get("done_on")) or today
+            s = simpledialog.askstring("날짜", ("추가한 날" if op == "date" else "완료한 날") + (f" ({len(todos)}개)" if len(todos) > 1 else "") + "  (예: 2026-09-14, 20260914)",
+                                       initialvalue=cur, parent=self)
             d = M.parse_loose(s) if s else None
             if s and not d:
-                return messagebox.showinfo("날짜 지정", "날짜를 읽을 수 없습니다. 예: 2026-09-14 또는 20260914", parent=self)
+                return messagebox.showinfo("날짜", "날짜를 읽을 수 없습니다. 예: 2026-09-14 또는 20260914", parent=self)
             if not d:
                 return
             for t in todos:
-                self.pl.update(t["id"], date=d)
+                if op == "date":
+                    if t["done"] and t.get("done_on") and d > t["done_on"]:
+                        return messagebox.showinfo("날짜", "추가한 날이 완료한 날보다 늦을 수 없습니다.", parent=self)
+                    self.pl.update(t["id"], date=d)
+                else:
+                    if t.get("date") and d < t["date"]:
+                        return messagebox.showinfo("날짜", "완료한 날이 추가한 날보다 빠를 수 없습니다.", parent=self)
+                    self.pl.set_done_on(t["id"], d)
         else:
             for t in todos:
                 if op == "done" and not t["done"]:
@@ -284,24 +291,6 @@ class PlannerView(tk.Frame):
         s = simpledialog.askstring("할일 만들기", "할일 내용", parent=self)
         if s and self.pl.add(s):
             self.changed()
-
-    def ask_date(self, t, field):
-        cur = (t.get("date") or M.iso(datetime.date.today())) if field == "date" else (t.get("done_on") or M.iso(datetime.date.today()))
-        s = simpledialog.askstring("날짜 바꾸기", ("추가한 날" if field == "date" else "완료한 날") + "  (예: 2026-09-14, 20260914)", initialvalue=cur or "", parent=self)
-        if not s:
-            return
-        d = M.parse_loose(s)
-        if not d:
-            return messagebox.showinfo("날짜 바꾸기", "날짜를 읽을 수 없습니다. 예: 2026-09-14 또는 20260914", parent=self)
-        if field == "date":
-            if t["done"] and t.get("done_on") and d > t["done_on"]:
-                return messagebox.showinfo("날짜 바꾸기", "추가한 날이 완료한 날보다 늦을 수 없습니다.", parent=self)
-            self.pl.update(t["id"], date=d)
-        else:
-            if t.get("date") and d < t["date"]:
-                return messagebox.showinfo("날짜 바꾸기", "완료한 날이 추가한 날보다 빠를 수 없습니다.", parent=self)
-            self.pl.set_done_on(t["id"], d)
-        self.changed()
 
     def toggle_hide_done(self):
         if self.set_cfg:
