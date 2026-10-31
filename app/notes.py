@@ -1873,17 +1873,30 @@ class App:
         hist = [h for h in self.search_history() if h != q and not q.lower().startswith(h.lower())]   # 치다 만 앞부분은 같이 쌓지 않는다
         st.write_config(searchHist=([q] + hist)[:30])
 
+    AC_TAGS_TTL = 60   # 태그 개수를 다시 세는 간격(초)
+
     def ac_tags(self):
-        """{태그: 개수} (노트 + 가져온 파일). 자주 만들지 않게 5초 동안 기억"""
+        """{태그: 개수} (노트 + 가져온 파일). 키를 칠 때마다 불리므로 **기다리지 않고** 마지막으로 센 값을 바로 돌려주고,
+        오래됐으면 뒤에서(다른 쓰레드) 다시 센다. 가져온 문서(DB)까지 세는 데 오래 걸려 화면이 멈추고 친 글자가 한꺼번에 들어오던 문제가 있었다."""
         t0, counts = self.ac_tagc
-        if time.time() - t0 > 5:
-            counts = {}
-            for n in self.all_notes:
-                for t in n["tags"]:
-                    counts[t] = counts.get(t, 0) + 1
-            for t, c in self.docs.tag_counts().items():
-                counts[t] = counts.get(t, 0) + c
-            self.ac_tagc = (time.time(), counts)
+        if time.time() - t0 > self.AC_TAGS_TTL and not getattr(self, "_ac_busy", False):
+            self._ac_busy = True
+            notes = list(self.all_notes)
+
+            def work():
+                try:
+                    c = {}
+                    for n in notes:
+                        for t in list(n["tags"]):
+                            c[t] = c.get(t, 0) + 1
+                    for t, k in self.docs.tag_counts().items():
+                        c[t] = c.get(t, 0) + k
+                    self.ac_tagc = (time.time(), c)
+                except Exception:  # noqa: BLE001  (센 도중 목록이 바뀌어도 다음에 다시 센다)
+                    pass
+                finally:
+                    self._ac_busy = False
+            threading.Thread(target=work, daemon=True).start()
         return counts
 
     def ac_candidates(self):
@@ -3204,6 +3217,8 @@ class App:
         if not self.cur or self.tag_edit:
             return
         self.flush()
+        self.ac_tagc = (0.0, self.ac_tagc[1])   # 박스를 여는 순간 뒤에서 태그 개수를 세기 시작한다(열린 뒤 키 입력은 기다리지 않는다)
+        self.ac_tags()
         box = tagac.TagBox(self.main, sorted(self.cur.get("tags", ())), self.ac_tags, C, (self.ui, 9),
                            lambda tags: self.finish_tags(True, tags), lambda: self.finish_tags(False), Btn, ime.composing, ime.cancel)
         box.pack(side="bottom", fill="x", after=self.status_sep)   # 맨 아래 상태줄 바로 위
