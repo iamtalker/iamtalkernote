@@ -175,22 +175,9 @@ def tab(app, p, kit):
         lk.pack(side="left")
         lk.bind("<Button-1>", lambda e, u=url: webbrowser.open(u))
         Btn(r_, "복사", lambda u=url: copy(u), padx=8, pady=0).pack(side="left", padx=6)
-    # 내용이 창보다 길어서 이 탭만 스크롤되게 한다
-    canvas = tk.Canvas(p, bg=C["bg"], highlightthickness=0, bd=0)
-    sb = ttk.Scrollbar(p, orient="vertical", command=canvas.yview)
-    canvas.configure(yscrollcommand=sb.set)
-    sb.pack(side="right", fill="y")
-    canvas.pack(side="left", fill="both", expand=True)
-    body = tk.Frame(canvas, bg=C["bg"])
-    win = canvas.create_window((0, 0), window=body, anchor="nw")
-    body.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-    canvas.bind("<Configure>", lambda e: canvas.itemconfigure(win, width=e.width - 4))
-
-    def wheel(e):
-        if body.winfo_height() > canvas.winfo_height():
-            canvas.yview_scroll(-1 if e.delta > 0 else 1, "units")
-    canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", wheel))
-    canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
+    # 옵션 창 전체가 스크롤되므로(notes.show_options) 이 탭은 따로 스크롤 칸을 두지 않는다(안 그러면 창을 키워도 이 칸만 작게 남았다)
+    body = tk.Frame(p, bg=C["bg"])
+    body.pack(fill="both", expand=True)
     alive = {"on": True}
     body.bind("<Destroy>", lambda e: alive.update(on=False) if e.widget is body else None)
     state = {"policy": sp.load(root), "dirty": False}
