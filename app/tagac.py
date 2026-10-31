@@ -46,11 +46,11 @@ def complete(text, start, tag):
 class TagComplete:
     """tk.Entry 위에 띄우는 태그 후보 목록. on_pick(tag) 를 주면 고른 태그를 입력칸 글이 아니라 그 함수로 넘긴다(칩 추가용)."""
 
-    def __init__(self, entry, get_counts, colors, font, get_extra=lambda: "", get_have=lambda: (), on_pick=None):
+    def __init__(self, entry, get_counts, colors, font, get_extra=lambda: "", get_have=lambda: (), on_pick=None, cancel_ime=lambda: None):
         self.ent, self.get_counts, self.C, self.font, self.get_extra = entry, get_counts, colors, font, get_extra
-        self.get_have, self.on_pick = get_have, on_pick
-        self.pop = None
-        self.lb = None
+        self.get_have, self.on_pick, self.cancel_ime = get_have, on_pick, cancel_ime
+        self.lb = None          # 후보 목록: 별도 창이 아니라 앱 창 안에 띄운다(별도 창은 뜨고 닫힐 때마다 입력칸의 키보드 포커스를 가져가 글자가 늦게 들어갔다)
+        self._shown = False
         self.items = []
         self.clicking = False
         entry.bind("<KeyRelease>", self._typed, add="+")
@@ -60,7 +60,7 @@ class TagComplete:
 
     # ---- 보이기
     def visible(self):
-        return self.pop is not None
+        return self._shown
 
     def _typed(self, e=None):
         if e is not None and e.keysym in ("Up", "Down", "Return", "KP_Enter", "Escape", "Tab", "Shift_L", "Shift_R", "Control_L", "Control_R"):
@@ -73,15 +73,12 @@ class TagComplete:
         self.items = suggest(self.get_counts(), tok, list(tags_in(text[:start])) + list(self.get_have()), limit=40 if everything else 8)
         if not self.items:
             return self.close()
-        if self.pop is None:
-            self.pop = tk.Toplevel(self.ent)
-            self.pop.overrideredirect(True)
-            self.pop.attributes("-topmost", True)
-            self.lb = tk.Listbox(self.pop, relief="flat", bd=0, highlightthickness=1, highlightbackground=self.C["line"], bg=self.C["panel"], fg=self.C["text"],
-                                 selectbackground=self.C["soft"], selectforeground=self.C["text"], activestyle="none", exportselection=False,
+        if self.lb is None:
+            self.lb = tk.Listbox(self.ent.winfo_toplevel(), relief="flat", bd=0, highlightthickness=1, highlightbackground=self.C["line"], bg=self.C["panel"],
+                                 fg=self.C["text"], selectbackground=self.C["soft"], selectforeground=self.C["text"], activestyle="none", exportselection=False,
                                  font=self.font, takefocus=0)
-            self.lb.pack(fill="both", expand=True)
-            self.lb.bind("<ButtonPress-1>", lambda e: setattr(self, "clicking", True))
+            # 누르기는 우리가 처리한다(기본 동작은 목록이 포커스를 가져간다). 떼는 순간 그 줄을 고른다
+            self.lb.bind("<ButtonPress-1>", lambda e: (setattr(self, "clicking", True), "break")[1])
             self.lb.bind("<ButtonRelease-1>", self._clicked)
         self.lb.delete(0, "end")
         counts = self.get_counts()
@@ -89,10 +86,15 @@ class TagComplete:
             self.lb.insert("end", f"#{t}   ({counts.get(t, 0):,})")
         self.lb.configure(height=min(len(self.items), 12))
         self.lb.selection_clear(0, "end")
-        self.pop.update_idletasks()
+        self.lb.update_idletasks()
+        top = self.ent.winfo_toplevel()
         w = max(self.ent.winfo_width(), self.lb.winfo_reqwidth(), 220)
         h = self.lb.winfo_reqheight()
-        self.pop.geometry(f"{w}x{h}+{self.ent.winfo_rootx()}+{self.ent.winfo_rooty() - h - 2}")   # 입력칸 바로 위(맨 아래 줄이라 아래는 화면 밖)
+        x = self.ent.winfo_rootx() - top.winfo_rootx()
+        y = self.ent.winfo_rooty() - top.winfo_rooty() - h - 2          # 입력칸 바로 위(맨 아래 줄이라 아래는 화면 밖)
+        self.lb.place(x=x, y=max(0, y), width=w, height=h)
+        self.lb.lift()
+        self._shown = True
 
     def toggle_all(self):
         """▾ 버튼: 모든 태그 목록을 펼치거나 접는다"""
@@ -103,12 +105,9 @@ class TagComplete:
             self.refresh(everything=True)
 
     def close(self):
-        if self.pop is not None:
-            try:
-                self.pop.destroy()
-            except tk.TclError:
-                pass
-        self.pop = self.lb = None
+        if self._shown and self.lb is not None:
+            self.lb.place_forget()
+        self._shown = False
         self.items = []
 
     # ---- 고르기
@@ -138,6 +137,8 @@ class TagComplete:
         start, _tok = current_token(text)
         if self.on_pick:                     # 칩으로 추가: 치던 낱말은 지우고 태그만 넘긴다
             self.ent.delete(start, "end")
+            if self.get_extra():             # 한글 조합 중이던 글자가 입력칸에 되살아나지 않게 버린다
+                self.cancel_ime()
             self.on_pick(tag)
         else:
             self.ent.delete(0, "end")
@@ -146,6 +147,12 @@ class TagComplete:
         self.ent.focus_set()
         self.refresh()
         return True
+
+    def destroy_list(self):
+        if self.lb is not None:
+            self.lb.destroy()
+            self.lb = None
+        self._shown = False
 
     def _tab(self):
         if self.visible() and self.accept(self._selected() or self.items[0]):
@@ -173,12 +180,13 @@ class TagBox(tk.Frame):
     initial 태그들이 칩으로 먼저 보이고(× 로 뺄 수 있다), 새 태그는 Enter(또는 공백·쉼표)로 칩이 된다.
     [확인] → on_confirm(태그 목록), [취소]·Esc → on_cancel(). 빈 입력칸에서 Enter 도 확인이다."""
 
-    def __init__(self, parent, initial, get_counts, colors, font, on_confirm, on_cancel, make_button, get_extra=lambda: ""):
+    def __init__(self, parent, initial, get_counts, colors, font, on_confirm, on_cancel, make_button, get_extra=lambda: "", cancel_ime=lambda: None):
         C = self.C = colors
         super().__init__(parent, bg=C["bg"])
         self.font = font
         self.tags = []
         self.on_confirm, self.on_cancel = on_confirm, on_cancel
+        self.get_extra, self.cancel_ime = get_extra, cancel_ime
         self._chips = {}
         tk.Frame(self, height=1, bg=C["line"]).pack(fill="x")
         row = tk.Frame(self, bg=C["bg"])
@@ -197,7 +205,7 @@ class TagBox(tk.Frame):
         make_button(btns, "취소", self.cancel, padx=14, pady=3).pack(side="right")
         make_button(btns, "확인", self.confirm, kind="primary", padx=14, pady=3).pack(side="right", padx=(0, 6))
         tk.Label(btns, text="Enter: 태그 추가 · 빈 칸에서 Enter: 확인 · Esc: 취소", bg=C["bg"], fg=C["muted"], font=(font[0], max(font[1] - 1, 7))).pack(side="left")
-        self.ac = TagComplete(self.ent, get_counts, colors, font, get_extra, get_have=lambda: self.tags, on_pick=self.add)
+        self.ac = TagComplete(self.ent, get_counts, colors, font, get_extra, get_have=lambda: self.tags, on_pick=self.add, cancel_ime=cancel_ime)
         arrow.bind("<Button-1>", lambda e: self.ac.toggle_all())
         self.ent.bind("<Return>", lambda e: self._enter())
         self.ent.bind("<KP_Enter>", lambda e: self._enter())
@@ -265,12 +273,17 @@ class TagBox(tk.Frame):
     def _enter(self):
         if self.ac.on_return():
             return "break"
-        text = self.ent.get().strip()
+        extra = self.get_extra()                    # 한글을 치는 중이면 마지막 글자는 아직 입력칸 값에 없다(예: '만화' 의 '화')
+        text = (self.ent.get() + extra).strip()
         if text:
             for tok in re.split(r"[,\s]+", text):
                 self.add(tok)
             self.ent.delete(0, "end")
+            if extra:
+                self.cancel_ime()                   # 조합 중이던 글자가 비운 입력칸에 다시 붙지 않게
             self.ac.close()
+            self.focus_entry()
+            self.after_idle(self.focus_entry)       # 칩이 놓이며 화면이 다시 그려진 뒤에도 한 번 더
         else:
             self.confirm()
         return "break"
@@ -290,7 +303,7 @@ class TagBox(tk.Frame):
 
     # ---- 끝내기
     def confirm(self):
-        text = self.ent.get().strip()               # 치다 만 낱말도 버리지 않고 함께 넣는다
+        text = (self.ent.get() + self.get_extra()).strip()   # 치다 만 낱말(조합 중인 글자 포함)도 버리지 않고 함께 넣는다
         for tok in re.split(r"[,\s]+", text):
             self.add(tok, refresh=False)
         self.on_confirm(list(self.tags))
@@ -300,3 +313,9 @@ class TagBox(tk.Frame):
 
     def close(self):
         self.ac.close()
+        self.ac.destroy_list()
+
+    def focus_entry(self):
+        """칩을 더하거나 뺀 직후에도 입력칸이 키보드 포커스와 깜빡이는 커서를 갖게 한다"""
+        self.ent.focus_set()
+        self.ent.icursor("end")

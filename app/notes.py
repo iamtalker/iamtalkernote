@@ -3205,7 +3205,7 @@ class App:
             return
         self.flush()
         box = tagac.TagBox(self.main, sorted(self.cur.get("tags", ())), self.ac_tags, C, (self.ui, 9),
-                           lambda tags: self.finish_tags(True, tags), lambda: self.finish_tags(False), Btn, ime.composing)
+                           lambda tags: self.finish_tags(True, tags), lambda: self.finish_tags(False), Btn, ime.composing, ime.cancel)
         box.pack(side="bottom", fill="x", after=self.status_sep)   # 맨 아래 상태줄 바로 위
         self.tagbtn.pack_forget()
         self.tag_edit = box
