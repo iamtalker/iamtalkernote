@@ -120,7 +120,7 @@ class PlannerView(tk.Frame):
             fg = C["danger"] if red else (C["accent"] if d.weekday() == 5 else C["text"])
             if d.month != self.month:
                 fg = C["muted"]
-            lines = [str(d.day) + (" " + hol[s] if s in hol else "")]
+            lines = [str(d.day) + (" " + tr(hol[s]) if s in hol else "")]
             todos = self.pl.on(s)                           # 달력에는 쓴 날에만 표시한다(이어서 밀린 것은 아래 할일 목록에 며칠째로 나온다)
             for t in todos[:2]:
                 lines.append(("✓ " if t["done"] else "● ") + t["text"][:8] + ("…" if len(t["text"]) > 8 else ""))
