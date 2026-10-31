@@ -1564,6 +1564,9 @@ class App:
     def help_search(self):
         messagebox.showinfo("검색 문법", "공백 = AND\n회의록 AND (예산 OR 일정) NOT 취소\n\"정확한 구절\"\n"
                             "& | ! 기호도 AND OR NOT 으로 쓸 수 있습니다(대문자만 연산자로 인식).\n\n"
+                            "기간: date:20101011-20240104 만화&아이유  → 그 기간에 고친(생성순이면 만든) 글 중 만화와 아이유가 함께 든 글\n"
+                            "   date:20240101(그 날) · date:202401(그 달) · date:2024(그 해) · date:20240101-(그날부터) · date:-20240104(그날까지)\n"
+                            "   날짜:·기간: 으로 써도 됩니다. 아래 '기간' 칸과 함께 쓰면 겹치는 부분만 찾습니다.\n\n"
                             "태그는 본문의 #태그, 또는 '태그: a, b' 줄에서 모읍니다.", parent=self.root)
 
     def text_do(self, name):
@@ -1732,6 +1735,7 @@ class App:
         top = tk.Frame(f, bg=C["bg"])
         top.pack(fill="x", padx=14, pady=(14, 8))
         Btn(top, "＋ 새 노트", self.new_note, kind="primary", bold=True, pady=6).pack(side="right", padx=(8, 0))
+        Btn(top, "검색", self.search_now, pady=6).pack(side="right", padx=(8, 0))   # 치는 즉시 검색하지만, 눌러서 바로 다시 검색할 수도 있다
         box = tk.Frame(top, bg=C["panel"], highlightthickness=1, highlightbackground=C["line"], highlightcolor=C["accent"])
         box.pack(side="left", fill="x", expand=True)
         self.q = tk.StringVar()
@@ -1744,7 +1748,8 @@ class App:
         self.clear_btn.bind("<Button-1>", lambda e: self.clear_search())
         self.clear_btn.bind("<Enter>", lambda e: self.clear_btn.config(fg=C["text"]))
         self.clear_btn.bind("<Leave>", lambda e: self.clear_btn.config(fg=C["muted"]))
-        self.ph =tk.Label(box, text="검색  (예: 회의록 AND 예산)", bg=C["panel"], fg=C["muted"], font=(self.ui, 10))
+        self.search_entry.bind("<Return>", self.search_now)
+        self.ph =tk.Label(box, text="검색  (예: 만화&아이유 date:20240101-20241231)", bg=C["panel"], fg=C["muted"], font=(self.ui, 10))
         self.ph.bind("<Button-1>", lambda e: self.search_entry.focus_set())
         self.search_entry.bind("<FocusIn>", lambda e: self.update_placeholder())    # 안내 문구가 커서를 가리지 않게
         self.search_entry.bind("<FocusOut>", lambda e: self.update_placeholder())
@@ -2792,6 +2797,13 @@ class App:
         self.reload_notebooks()
         self.reload_tags()
         self.refresh(keep_page=keep_scroll)
+
+    def search_now(self, e=None):
+        """검색 단추·Enter: 기다리지 않고 지금 검색(날짜 칸이 덜 쓰인 채여도 읽히는 만큼으로)"""
+        if self.search_job:
+            self.root.after_cancel(self.search_job)
+        self.refresh()
+        self.search_entry.focus_set()
 
     def schedule_search(self):
         if self.search_job:

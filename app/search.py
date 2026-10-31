@@ -1,5 +1,6 @@
 """폴더검색(folder-search)의 검색 엔진 이식.
 AND / OR / NOT + 괄호, & | ! 기호, "정확한 구절", 관련도(밀도)순·최신순, 수정일 기간, 일치 단어 강조."""
+import calendar
 import re
 import time
 
@@ -141,18 +142,42 @@ def snippet(body, words, radius=70):
     return ("…" if a > 0 else "") + flat[a:b] + ("…" if b < len(flat) else "")
 
 
+DATE_RE = re.compile(r"^(\d{4})(?:[.\-/]?(\d{1,2})(?:[.\-/]?(\d{1,2}))?)?$")
+DATE_TOKEN = re.compile(r"(?<!\S)(?:date|날짜|기간):(\S*)", re.I)
+
+
 def parse_date(s, end=False):
-    """'2021.01.01' / '2021-1-1' / '2021/1/1' → 하루의 시작·끝 (epoch 초). 안 읽히면 None"""
-    m = re.match(r"^(\d{4})[.\-/](\d{1,2})[.\-/](\d{1,2})$", (s or "").strip())
+    """'2021.01.01' / '2021-1-1' / '2021/1/1' / '20210101' / '202101'(그 달) / '2021'(그 해) → 그 날의 시작·끝 (epoch 초). 안 읽히면 None"""
+    m = DATE_RE.match((s or "").strip())
     if not m:
         return None
-    y, mo, d = map(int, m.groups())
+    y = int(m.group(1))
+    mo = int(m.group(2)) if m.group(2) else (12 if end else 1)
+    if m.group(3):
+        d = int(m.group(3))
+    else:
+        d = calendar.monthrange(y, mo)[1] if end and 1 <= mo <= 12 else 1
     if not (1 <= mo <= 12 and 1 <= d <= 31):
         return None
     try:
         return time.mktime((y, mo, d, 23 if end else 0, 59 if end else 0, 59 if end else 0, 0, 0, -1))
     except (OverflowError, ValueError):
         return None
+
+
+def split_date(query):
+    """검색식 속의 'date:20101011-20240104' (또는 date:20240101 · date:20240101- · date:-20240104, 날짜:·기간: 도 같음)를 떼어 낸다
+    → (남은 검색식, 시작 epoch 또는 None, 끝 epoch 또는 None). 날짜 형식은 parse_date 와 같다"""
+    f = t = None
+    for m in DATE_TOKEN.finditer(query):
+        a, sep, b = m.group(1).partition("-") if re.fullmatch(r"\d{8}(-\d{8})?|\d{8}-|-\d{8}", m.group(1)) else (m.group(1), "", "")
+        if not sep:                                   # 하나만 쓰면 그 날(달·해)
+            lo, hi = parse_date(a), parse_date(a, True)
+        else:
+            lo, hi = (parse_date(a) if a else None), (parse_date(b, True) if b else None)
+        f = lo if f is None else (f if lo is None else max(f, lo))
+        t = hi if t is None else (t if hi is None else min(t, hi))
+    return DATE_TOKEN.sub(" ", query).strip(), f, t
 
 
 def title_bonus(title, q):
@@ -167,10 +192,12 @@ def title_bonus(title, q):
 def run(notes, query="", sort="relevance", asc=False, date_from="", date_to="", index=None):
     """notes: [{title, mtime, ...}] → (정렬된 일치 목록, 강조할 단어들).
     index(색인 DB, store.Store)가 있으면 본문 검색을 DB 안에서 하고, 없으면 메모리의 본문으로 한다."""
-    q = query.strip()
+    q, qf, qt = split_date(query.strip())             # 검색식 속의 date:기간
     node = parse(q) if q else None
     words = positive_words(node)
     f, t = parse_date(date_from), parse_date(date_to, True)
+    f = qf if f is None else (f if qf is None else max(f, qf))
+    t = qt if t is None else (t if qt is None else min(t, qt))
     dkey = "ctime" if sort == "ctime" else "mtime"   # 기간 필터는 지금 정렬 기준의 날짜에 건다
     hits = None
     if node is not None and index is not None:
