@@ -4946,9 +4946,9 @@ class App:
                 st.write_config(wikiEnabled=wk.get())
                 if self.cur:
                     self.render()
-            tk.Checkbutton(p, text="[[노트 제목]] 을 노트 사이 링크로 연결하고, 같은 제목의 노트는 만들지 못하게 합니다", variable=wk, command=set_wiki,
+            tk.Checkbutton(p, text="위키 링크 사용  ([[노트 제목]] 으로 노트 연결)", variable=wk, command=set_wiki,
                            bg=C["bg"], activebackground=C["bg"], font=(self.ui, 10), selectcolor=C["bg"]).pack(anchor="w")
-            lab(p, "같은 제목이 이미 있으면 [[제목]] 은 가장 최근에 고친 노트로 연결됩니다. 없는 제목의 링크는 붉게 보이고, 누르면 새로 만들 수 있습니다. 끄면 [[ ]] 는 그냥 글자입니다.",
+            lab(p, "켜 두면 같은 제목의 노트는 만들 수 없고, [[제목]] 은 가장 최근에 고친 노트로 연결됩니다. 없는 제목의 링크는 붉게 보이고 누르면 새로 만들 수 있습니다. 끄면 [[ ]] 는 그냥 글자입니다.",
                 fg=C["muted"], font=(self.ui, 9), wraplength=500).pack(anchor="w", pady=(2, 0))
             hr(p)
             lab(p, "편집기 보기", font=(self.ui, 10, "bold")).pack(anchor="w")
