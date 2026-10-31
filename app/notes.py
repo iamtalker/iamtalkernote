@@ -242,8 +242,6 @@ class App(DialogsMixin):
         mb.add_cascade(label="이동", menu=m)
 
         m = tk.Menu(mb, tearoff=0)
-        m.add_command(label="옵션…", accelerator="Ctrl+,", command=lambda: self.show_options("general"))
-        m.add_separator()
         m.add_command(label="복원 지점…", command=self.show_snapshots)
         m.add_command(label="전체 변경 이력…", command=self.show_journal)
         m.add_separator()
@@ -251,6 +249,18 @@ class App(DialogsMixin):
         m.add_command(label="스크랩 군더더기 정리…", command=self.show_cleanup)
         m.add_command(label="안 쓰는 미디어 파일 정리…", command=self.show_unused_media)
         mb.add_cascade(label="도구", menu=m)
+
+        m = tk.Menu(mb, tearoff=0)
+        m.add_command(label="옵션…", accelerator="Ctrl+,", command=lambda: self.show_options("general"))
+        m.add_separator()
+        m.add_command(label="폴더 설정… (노트·리소스 폴더)", command=lambda: self.show_options("folders"))
+        m.add_separator()
+        m.add_command(label="글꼴·크기…", command=lambda: self.show_options("fonts"))
+        m.add_command(label="테마·색상…", command=lambda: self.show_options("theme"))
+        m.add_command(label="노트 버전 설정…", command=lambda: self.show_options("versions"))
+        m.add_command(label="동기화 설정…", command=lambda: self.show_options("sync"))
+        m.add_command(label="웹 클리퍼 설정…", command=lambda: self.show_options("clipper"))
+        mb.add_cascade(label="설정", menu=m)
 
         m = tk.Menu(mb, tearoff=0)
         m.add_command(label="사용 설명서 (GitHub)…", accelerator="F1", command=self.open_manual)
