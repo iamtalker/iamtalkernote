@@ -9,6 +9,7 @@ from tkinter import messagebox, ttk
 import store as st
 import syncengine as se
 import stages
+import stagesync
 import syncpolicy as sp
 
 
@@ -37,7 +38,7 @@ def current_plans(app, policy=None):
     """이 컴퓨터에서 만들 Syncthing 폴더 목록. 외부 폴더의 경로는 '가져오기' 에 등록된 폴더에서 가져온다"""
     policy = policy or sp.load(app.store.root)
     ext = {f["id"]: f["path"] for f in app.docs.folders()}
-    return sp.plan(policy, app.store.root, "pc", ext)
+    return stagesync.apply_plans(sp.plan(policy, app.store.root, "pc", ext), app.store.root, policy)   # 아직 열지 않은 단계는 가린다
 
 
 def apply_now(app, policy=None):
@@ -68,6 +69,24 @@ def refresh_stages(root, policy):
         pass
 
 
+def start_stage_watcher(app):
+    """최근부터 단계별로 보내기: 5초마다 폰이 지금 단계를 다 받았는지 보고 다음 단계를 연다(앱이 켜져 있는 동안)"""
+    if getattr(app, "_stage_watch", False):
+        return
+    app._stage_watch = True
+
+    def loop():
+        while True:
+            time.sleep(5)
+            try:
+                if app.sync.running() and sp.exists(app.store.root):
+                    pol = sp.load(app.store.root)
+                    stagesync.tick(app.sync, app.store.root, pol, lambda: current_plans(app, pol))
+            except Exception:  # noqa: BLE001
+                pass
+    threading.Thread(target=loop, daemon=True).start()
+
+
 def resume(app):
     """앱을 켤 때: 동기화를 켜 둔 경우 Syncthing 을 띄우고 정책을 맞춘다(화면을 막지 않게 백그라운드에서)"""
     if not (app.sync.enabled() and se.installed()):
@@ -78,6 +97,7 @@ def resume(app):
             app.sync.start()
             if sp.exists(app.store.root):
                 apply_now(app)
+            start_stage_watcher(app)
         except Exception as e:  # noqa: BLE001
             app.sync_error = str(e)
     threading.Thread(target=work, daemon=True).start()
@@ -184,7 +204,7 @@ def tab(app, p, kit):
                     if not err:
                         refresh_id()
                     poll()
-                bg(lambda: (eng.start(), sp.save(root, state["policy"]) if not sp.exists(root) else None, apply_now(app, state["policy"])), done)
+                bg(lambda: (eng.start(), sp.save(root, state["policy"]) if not sp.exists(root) else None, apply_now(app, state["policy"]), start_stage_watcher(app)), done)
             else:
                 bg(eng.stop, lambda *_: poll())
         check(body, "동기화 사용 (앱을 켤 때 함께 시작하고, 끌 때 함께 멈춥니다)", on, toggle).pack(anchor="w")
