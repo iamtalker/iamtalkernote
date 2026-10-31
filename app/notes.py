@@ -1933,6 +1933,19 @@ class App:
             self.match_ime_font(ev)
         self._ime_on = comp
 
+    def ime_family(self, f):
+        """입력기 조합 글자를 그릴 글꼴 이름. 칸 글꼴(Consolas 같은 영문 전용)에 한글이 없으면 Tk 는 한글을 대체 글꼴로 그리는데, 입력기는 다른 대체 글꼴을
+        골라 한글이 작게 보였다 확정되면 커졌다. 그래서 한글이 칸에서 앱 글꼴(self.ui, 한글 글꼴)과 같은 폭으로 그려지면 입력기에도 앱 글꼴을 쓴다"""
+        fam = f.actual("family")
+        try:
+            if fam != self.ui:
+                ref = tkfont.Font(root=self.root, family=self.ui, size=f.actual("size"), weight=f.actual("weight"))
+                if abs(f.measure("가") - ref.measure("가")) <= 2:
+                    return self.ui
+        except tk.TclError:
+            pass
+        return fam
+
     def match_ime_font(self, ev=None, widget=None):
         """한글 입력기의 조합 글꼴을 지금 칸(입력칸·편집 칸 …)의 글꼴과 같게 맞춘다 — 안 맞추면 치는 글자가 잠깐 더 크게 보인다"""
         w = widget or (ev.widget if ev is not None else None)
@@ -1940,7 +1953,7 @@ class App:
             f = tkfont.Font(root=self.root, font=w.cget("font"))
             size = f.actual("size")
             px = size if size < 0 else -round(size * float(self.root.tk.call("tk", "scaling")))   # 음수 = 글자 높이 픽셀
-            return ime.set_font(f.actual("family"), px, f.actual("weight") == "bold")
+            return ime.set_font(self.ime_family(f), px, f.actual("weight") == "bold")
         except (tk.TclError, AttributeError):
             return False
 
