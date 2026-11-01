@@ -582,7 +582,15 @@ def tab(app, p, kit):
                 ids = [x["id"] for x in current_plans(app, state["policy"])]
                 pol = state["policy"]
                 pp = eng.peer_progress(sp.folder_id(pol, "markdown")) if sp.is_simple(pol) else None
-                return eng.overview(ids), eng.pending_devices(), eng.upgrade_info(), pp
+                # 외부 폴더(음악·PDF 등)마다 폰이 얼마나 받았는지: 노트 폴더만 보이던 것을 같이 보인다
+                exts = []
+                for mid, m in pol["modules"].items():
+                    if m.get("kind") == "external" and m.get("direction") != sp.OFF:
+                        try:
+                            exts.append((mid, m.get("label", mid), eng.peer_progress(sp.folder_id(pol, mid))))
+                        except Exception:  # noqa: BLE001
+                            exts.append((mid, m.get("label", mid), None))
+                return eng.overview(ids), eng.pending_devices(), eng.upgrade_info(), pp, exts
 
             def done(r, err):
                 if not alive["on"]:
@@ -591,9 +599,15 @@ def tab(app, p, kit):
                     status.config(text=tr("꺼져 있음") if not eng.enabled() else tr("시작하지 못했거나 아직 시작 중입니다"), fg=C["muted"])
                     show_pending([])
                 else:
-                    ov, pending, up, pp = r
+                    ov, pending, up, pp, exts = r
+                    ext_text = ""
+                    for mid, label, ep in exts:
+                        if ep is None:
+                            ext_text += chr(10) + label + ": " + tr("폰이 연결되면 받기 시작합니다")
+                        else:
+                            ext_text += chr(10) + label + chr(10) + syncprogress.line(ep[0], ep[1], ep[2], ep[3], etas.setdefault("x:" + mid, syncprogress.Eta()).update(ep[3]))
                     if pp is None:
-                        prog.config(text="")
+                        prog.config(text=ext_text.strip(chr(10)))
                     else:
                         plan = stagesync.load_plan(app.store.root)
                         stage = ""
@@ -603,9 +617,9 @@ def tab(app, p, kit):
                         ph = syncprogress.read_phone(syncsettings.control_dir())
                         if ph:   # 폰이 자기 저장소에서 직접 센 값이 있으면 그것을 쓴다(컴퓨터 Syncthing 이 세는 값은 가린 파일의 묵은 기록이 섞인다)
                             rates = etas["c"].update(ph["updated"], ph["notesHave"], ph["mediaHave"])
-                            prog.config(text=syncprogress.phone_block(ph, rates, stage, (pp[2], pp[3]), etas["e"].update(pp[3])))
+                            prog.config(text=syncprogress.phone_block(ph, rates, stage, (pp[2], pp[3]), etas["e"].update(pp[3])) + ext_text)
                         else:
-                            prog.config(text=stage + tr("폰 받기: ") + syncprogress.line(pp[0], pp[1], pp[2], pp[3], etas["e"].update(pp[3]), all_n))
+                            prog.config(text=stage + tr("폰 받기: ") + syncprogress.line(pp[0], pp[1], pp[2], pp[3], etas["e"].update(pp[3]), all_n) + ext_text)
                     states = [s for s, _ in ov["folders"].values()]
                     busy = sum(1 for s in states if s not in ("idle", "?"))
                     status.config(text=(tr("실행 중 · ") + (tr('기기 {0}대 연결됨').format(ov['connected']) if ov["connected"] else tr("연결된 기기 없음")) + tr(' (등록 {0}대)').format(ov['peers'])) + (tr(' · 맞추는 중 {0}개').format(busy) if busy else tr(" · 모두 최신")), fg="#15803d")
