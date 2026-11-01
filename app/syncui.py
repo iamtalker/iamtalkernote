@@ -40,13 +40,19 @@ def draw_qr(canvas, text, size):
 def current_plans(app, policy=None):
     """이 컴퓨터에서 만들 Syncthing 폴더 목록. 외부 폴더의 경로는 '가져오기' 에 등록된 폴더에서 가져온다"""
     policy = policy or sp.load(app.store.root)
+    sp.apply_remembered_ext(policy, st.read_config().get("extDirections"))   # 어느 경로로 계산하든 확정한 외부 폴더 방향으로
     ext = {f["id"]: f["path"] for f in app.docs.folders()}
     return stagesync.apply_plans(sp.plan(policy, app.store.root, "pc", ext, syncsettings.control_dir()), app.store.root, policy)   # 아직 열지 않은 단계는 가린다
 
 
 def apply_now(app, policy=None):
     """정책을 저장하고 Syncthing 설정에 맞춘다. (만든·고친 수, 지운 수)"""
+    explicit = policy is not None   # 사용자가 [적용] 으로 확정한 정책이면 외부 폴더 방향을 기억해 둔다
     policy = policy or sp.load(app.store.root)
+    if explicit:
+        st.write_config(extDirections=sp.remembered_ext(policy))
+    else:
+        sp.apply_remembered_ext(policy, st.read_config().get("extDirections"))   # 디스크 정책이 낡은 값이어도 확정한 방향으로
     sp.save(app.store.root, policy)
     refresh_stages(app.store.root, policy)
     return app.sync.apply(current_plans(app, policy))
@@ -249,7 +255,7 @@ def tab(app, p, kit):
                     if not err:
                         refresh_id()
                     poll()
-                bg(lambda: (eng.start(), sp.save(root, state["policy"]) if not sp.exists(root) else None, apply_now(app, state["policy"]), start_stage_watcher(app)), done)
+                bg(lambda: (eng.start(), sp.save(root, state["policy"]) if not sp.exists(root) else None, apply_now(app), start_stage_watcher(app)), done)
             else:
                 bg(eng.stop, lambda *_: poll())
         check(body, tr("동기화 사용 (앱을 켤 때 함께 시작하고, 끌 때 함께 멈춥니다)"), on, toggle).pack(anchor="w")

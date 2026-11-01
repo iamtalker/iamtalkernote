@@ -1,4 +1,5 @@
 """동기화 정책(app/syncpolicy.py) 시험 — 엔진·화면 없이 순수 계산만 확인한다. 실행: py -3 tools/test_syncpolicy.py"""
+import json
 import os
 import shutil
 import sys
@@ -88,6 +89,18 @@ try:
     assert "/.trash" in plans[0]["ignore"] and "/.history" not in plans[0]["ignore"]
     sp.set_simple(old, direction=sp.BOTH)
     assert sp.plan(old, root, "pc")[0]["type"] == "sendreceive"
+    # ---- 확정한 외부 폴더 방향 기억: 낡은 정책(옵션 창을 열 때 읽은 값)이 저장돼도 확정한 방향으로 되돌린다
+    pe = sp.load(root)
+    sp.add_external(pe, "x1", "이멋세", sp.PC2MOBILE)
+    saved = sp.remembered_ext(pe)
+    mid = [k for k, m in pe["modules"].items() if m["kind"] == "external"][0]
+    assert saved == {mid: sp.PC2MOBILE}
+    stale = json.loads(json.dumps(pe))
+    stale["modules"][mid]["direction"] = sp.OFF
+    assert sp.apply_remembered_ext(stale, saved) == 1 and stale["modules"][mid]["direction"] == sp.PC2MOBILE
+    assert sp.apply_remembered_ext(stale, saved) == 0   # 이미 같으면 바꾸지 않음
+    assert sp.apply_remembered_ext(stale, {"ext:없는것": sp.BOTH, mid: "엉터리"}) == 0   # 없는 모듈·잘못된 값은 무시
+    assert sp.apply_remembered_ext(stale, None) == 0
     print("정책 시험 통과")
 finally:
     shutil.rmtree(root, ignore_errors=True)

@@ -159,6 +159,22 @@ def set_direction(policy, mid, direction):
         policy["modules"][mid]["direction"] = direction
 
 
+def remembered_ext(policy):
+    """사용자가 확정한 외부 폴더 방향들 {모듈 id: 방향}. 설정(config.json)의 extDirections 로 저장해 둔다"""
+    return {mid: m.get("direction") for mid, m in policy["modules"].items() if m.get("kind") == "external" and m.get("direction") in DIRECTIONS}
+
+
+def apply_remembered_ext(policy, saved):
+    """기억해 둔 외부 폴더 방향을 정책에 다시 입힌다. 옵션 창을 열 때 읽어 둔 낡은 정책이 저장돼 방향이 되돌아가는 것을 막는다. 바뀐 모듈 수를 돌려준다"""
+    n = 0
+    for mid, d in (saved or {}).items():
+        m = policy["modules"].get(mid)
+        if m and m.get("kind") == "external" and d in DIRECTIONS and m.get("direction") != d:
+            m["direction"] = d
+            n += 1
+    return n
+
+
 def add_notebook(policy, rel, direction=BOTH):
     rel = rel.replace("\\", "/").strip("/")
     if not rel or is_simple(policy):   # 새 방식에서는 노트북을 따로 두지 않는다
