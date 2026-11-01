@@ -33,6 +33,8 @@ SERVER_ENDPOINTS = {"ping", "folders", "notes"}     # app/clipserver.py 가 흉�
 # 안드로이드 앱의 웹 클리퍼(assets/clip)가 쓰는 라이브러리 사본: 원본 lib/ 와 같아야 한다. webclip.js 는 폰용으로 따로 만든 것이라 가져오지 않는다
 PHONE = os.path.normpath(os.path.join(HERE, "..", "..", "iamtalkernote-android", "app", "src", "main", "assets", "clip"))
 PHONE_LIBS = ["Readability.js", "turndown.js", "turndown-plugin-gfm.js"]
+# 폰 웹 클리퍼가 쓰는 사이트별 규칙: 원본 content.js 의 표를 JSON(site-rules.json)으로 뽑아 폰 assets/clip 에 둔다(본문 위치·지울 것·제목 라벨·iframe)
+PHONE_RULE_TABLES = {"content": "SITE_CONTENT_SELECTORS", "cleanup": "SITE_CLEANUP_SELECTORS", "label": "SITE_LABEL_FROM_TITLE_SELECTORS", "iframe": "SITE_IFRAME_SELECTORS"}
 
 
 def read(path):
@@ -122,6 +124,27 @@ def plan(src, dst):
             "old_ver": version(os.path.join(dst, "manifest.json")), "new_ver": version(os.path.join(src, "manifest.json"))}
 
 
+def phone_rules(content_js):
+    """원본 content.js 의 사이트별 표를 읽어 JSON 바이트로 → (바이트, 못 찾은 표 이름 목록). 표는 `const NAME = {` 로 시작해 줄 맨 앞 `};` 로 끝나는 JS 객체라 node 로 계산한다"""
+    import json
+    import subprocess
+    text = content_js.decode("utf-8", "ignore").replace("\r\n", "\n")
+    out, missing = {}, []
+    for key, name in PHONE_RULE_TABLES.items():
+        m = re.search(r"^const " + name + r" = (\{.*?^\});", text, re.S | re.M)
+        if not m:
+            missing.append(name)
+            continue
+        r = subprocess.run(["node", "-e", "process.stdout.write(JSON.stringify(eval('(' + process.argv[1] + ')')))", m.group(1)],
+                           capture_output=True, text=True, encoding="utf-8")
+        if r.returncode != 0:
+            missing.append(name)
+            continue
+        out[key] = json.loads(r.stdout)
+    data = json.dumps(out, ensure_ascii=False, indent=1, sort_keys=True) + "\n"
+    return data.encode("utf-8"), missing
+
+
 def plan_phone(src, phone):
     """원본 lib/ 의 라이브러리를 폰 assets/clip/ 에 맞춘다 → {"files": {이름: 바이트}, "changed": [...], "warnings": [...]}.
     폰 폴더가 없으면(폰 저장소가 옆에 없을 때) 건너뛴다"""
@@ -138,7 +161,16 @@ def plan_phone(src, phone):
         if not os.path.isfile(dp) or norm(read(dp)) != norm(sb):
             out["files"][name] = sb
             out["changed"].append(name)
-    if out["changed"]:
+    cj = os.path.join(src, "content.js")
+    if os.path.isfile(cj):
+        data, missing = phone_rules(read(cj))
+        for n in missing:
+            out["warnings"].append("원본 content.js 에서 표를 읽지 못함: " + n)
+        dp = os.path.join(phone, "site-rules.json")
+        if not missing and (not os.path.isfile(dp) or norm(read(dp)) != norm(data)):
+            out["files"]["site-rules.json"] = data
+            out["changed"].append("site-rules.json")
+    if [c for c in out["changed"] if c in PHONE_LIBS]:
         out["warnings"].append("폰 라이브러리가 바뀜 → 폰 assets/THIRD_PARTY_NOTICES.md 의 Readability·Turndown 버전 표기와 폰 시험(공유 → 저장) 확인")
     return out
 
