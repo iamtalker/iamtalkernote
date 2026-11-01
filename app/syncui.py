@@ -255,6 +255,9 @@ def tab(app, p, kit):
         check(body, tr("동기화 사용 (앱을 켤 때 함께 시작하고, 끌 때 함께 멈춥니다)"), on, toggle).pack(anchor="w")
         status.pack(anchor="w", pady=(2, 0))
         err_lab.pack(anchor="w")
+        # 진행 표시: 맨 아래에 두면 창이 작을 때 잘려서 위(상태 줄 바로 아래)로 올렸다
+        prog = lab(body, "", fg=C["muted"], font=(app.ui, 9), wraplength=440, justify="left")
+        prog.pack(anchor="w", pady=(4, 2))
         # 동기화는 앱이 켜져 있어야 돌아가므로, 닫기(X) 버튼의 동작도 여기서 고를 수 있게 한다(옵션 → 일반과 같은 설정)
         lab(body, tr("창의 닫기(X) 버튼"), font=(app.ui, 10, "bold")).pack(anchor="w", pady=(12, 0))
         ca = tk.StringVar(value=app.close_action())
@@ -566,9 +569,7 @@ def tab(app, p, kit):
         hr(body)
         ver = lab(body, "", fg=C["muted"], font=(app.ui, 9), wraplength=440)
         ver.pack(anchor="w")
-        prog = lab(body, "", fg=C["muted"], font=(app.ui, 9), wraplength=440)
-        prog.pack(anchor="w", pady=(2, 0))
-        etas = {"e": syncprogress.Eta(), "f": syncprogress.Eta()}
+        etas = {"e": syncprogress.Eta(), "c": syncprogress.CountRate()}
 
         # ---- 주기적으로 상태 보기
         def poll():
@@ -601,8 +602,8 @@ def tab(app, p, kit):
                         all_n = sum(len(t["files"]) for t in plan["tiers"]) if plan else 0
                         ph = syncprogress.read_phone(syncsettings.control_dir())
                         if ph:   # 폰이 자기 저장소에서 직접 센 값이 있으면 그것을 쓴다(컴퓨터 Syncthing 이 세는 값은 가린 파일의 묵은 기록이 섞인다)
-                            left = ph["notesAll"] + ph["mediaAll"] - ph["notesHave"] - ph["mediaHave"]
-                            prog.config(text=stage + syncprogress.phone_line(ph, etas["f"].update(left)))
+                            rates = etas["c"].update(ph["updated"], ph["notesHave"], ph["mediaHave"])
+                            prog.config(text=syncprogress.phone_block(ph, rates, stage, (pp[2], pp[3]), etas["e"].update(pp[3])))
                         else:
                             prog.config(text=stage + tr("폰 받기: ") + syncprogress.line(pp[0], pp[1], pp[2], pp[3], etas["e"].update(pp[3]), all_n))
                     states = [s for s, _ in ov["folders"].values()]
