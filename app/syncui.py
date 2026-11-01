@@ -95,6 +95,7 @@ def start_stage_watcher(app):
                     if plan_:
                         syncsettings.write_totals(syncsettings.control_dir(), plan_)   # 폰이 전체 개수를 알 수 있게
                     if syncsettings.reconcile(pol, syncsettings.control_dir()) == "pull":   # 폰에서 더 최근에 바꿨다 → 정책에 받아들이고 적용
+                        st.write_config(extDirections=sp.remembered_ext(pol))   # 폰이 바꾼 외부 폴더 방향을 확정한 값으로 기억(안 하면 낡은 값으로 되돌린다)
                         sp.save(app.store.root, pol)
                         app.sync.apply(current_plans(app, pol))
             except Exception:  # noqa: BLE001

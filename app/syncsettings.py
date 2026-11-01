@@ -33,7 +33,14 @@ def now_ms():
 def snapshot(policy):
     sm = policy["simple"]
     return {"updated": int(sm.get("updated", 0)), "direction": sm.get("direction", sp.BOTH),
-            "include": {k: bool(sm.get("include", {}).get(k)) for k, _, _, _ in sp.SIMPLE_OPTIONS}}
+            "include": {k: bool(sm.get("include", {}).get(k)) for k, _, _, _ in sp.SIMPLE_OPTIONS},
+            "ext": ext_snapshot(policy)}
+
+
+def ext_snapshot(policy):
+    """외부 폴더별 방향 {Syncthing 폴더 ID: {direction, updated}} — 폰도 같은 ID 를 계산해 폴더마다 따로 고친다"""
+    return {sp.folder_id(policy, mid): {"direction": m.get("direction", sp.OFF), "updated": int(m.get("updated", 0))}
+            for mid, m in policy["modules"].items() if m.get("kind") == "external"}
 
 
 def read(directory):
@@ -67,6 +74,18 @@ def decide(local, remote):
     return None
 
 
+def adopt_ext(policy, remote):
+    """폰이 더 최근에 바꾼 외부 폴더 방향을 정책에 받아들인다. 바뀐 모듈이 있으면 True"""
+    got, changed = remote.get("ext") or {}, False
+    for mid, m in policy["modules"].items():
+        r = got.get(sp.folder_id(policy, mid)) if m.get("kind") == "external" else None
+        if (isinstance(r, dict) and r.get("direction") in sp.DIRECTIONS and isinstance(r.get("updated"), int)
+                and r["updated"] > int(m.get("updated", 0))):
+            m["direction"], m["updated"] = r["direction"], r["updated"]
+            changed = True
+    return changed
+
+
 def adopt(policy, remote):
     """상대의 설정을 정책에 받아들인다(시각도 상대 것 그대로)"""
     sm = policy["simple"]
@@ -82,8 +101,12 @@ def reconcile(policy, directory):
     what = decide(snapshot(policy), remote)
     if what == "pull":
         adopt(policy, remote)
-    elif what == "push":
-        write(directory, snapshot(policy))
+    if remote is not None and adopt_ext(policy, remote):
+        what = "pull"
+    snap = snapshot(policy)
+    if remote is None or snap != {k: remote.get(k) for k in snap}:
+        write(directory, snap)   # 합친 결과가 파일과 다르면(내 쪽이 더 최근이거나 폰에 없는 항목) 파일에 적는다
+        what = what or "push"
     return what
 
 

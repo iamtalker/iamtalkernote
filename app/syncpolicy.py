@@ -156,7 +156,10 @@ def set_direction(policy, mid, direction):
     if direction in DIRECTIONS and mid in policy["modules"]:
         if is_simple(policy) and policy["modules"][mid]["kind"] != "external":
             return   # 새 방식에서는 노트 폴더 방향 하나만 있다(set_simple)
-        policy["modules"][mid]["direction"] = direction
+        m = policy["modules"][mid]
+        if m["kind"] == "external" and m.get("direction") != direction:
+            m["updated"] = int(time.time() * 1000)   # 폰과 맞출 때 '더 최근에 바꾼 쪽'을 가리는 시각(syncsettings.py)
+        m["direction"] = direction
 
 
 def remembered_ext(policy):
