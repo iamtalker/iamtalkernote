@@ -1369,7 +1369,11 @@ class DialogsMixin:
             b.pack(fill="x", padx=8, pady=1)
             tabs[key] = b
         foot.pack(side="bottom", fill="x", padx=28, pady=(0, 16), before=outer)
-        Btn(foot, tr("닫기"), top.destroy, kind="primary", padx=22, pady=5).pack(side="right")
+        def close():   # 동기화 탭에 적용하지 않은 변경이 있으면 닫기 전에 묻는다(syncui.tab 이 top.can_close 를 단다)
+            if getattr(top, "can_close", lambda: True)():
+                top.destroy()
+        top.protocol("WM_DELETE_WINDOW", close)
+        Btn(foot, tr("닫기"), close, kind="primary", padx=22, pady=5).pack(side="right")
         select(tab)
 
     def conflict_dialog(self, n):

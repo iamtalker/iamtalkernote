@@ -63,4 +63,5 @@ EN_MSG = {
     "원본 두고 사본 지우기": "Keep original, delete copy",
     "사본으로 바꾸기": "Replace with copy",
     "원본 이름으로 되살리기": "Restore under original name",
+    "동기화 설정을 바꾸고 [적용]을 누르지 않았습니다.\n적용하지 않고 닫으면 바꾼 내용이 사라집니다. 닫을까요?": "You changed sync settings but did not press [Apply].\nIf you close now, the changes are lost. Close anyway?",
 }

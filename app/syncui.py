@@ -189,6 +189,9 @@ def tab(app, p, kit):
     alive = {"on": True}
     body.bind("<Destroy>", lambda e: alive.update(on=False) if e.widget is body else None)
     state = {"policy": sp.load(root), "dirty": False}
+    # 바꾸고 [적용]을 안 누른 채 옵션 창을 닫으면 변경이 사라진다(예: 뺀 외부 폴더가 그대로 동기화됨) → 닫기 전에 묻는다
+    top.can_close = lambda: not state["dirty"] or messagebox.askyesno(
+        tr("동기화"), tr("동기화 설정을 바꾸고 [적용]을 누르지 않았습니다.\n적용하지 않고 닫으면 바꾼 내용이 사라집니다. 닫을까요?"), parent=top)
 
     def bg(fn, done):
         def run():
