@@ -573,9 +573,7 @@ def tab(app, p, kit):
             bg(lambda: apply_now(app, state["policy"]), done)
         Btn(body, tr("적용"), apply_btn, kind="primary", bold=True, padx=22, pady=5).pack(anchor="w", pady=(10, 0))
         note.pack(anchor="w", pady=(6, 0))
-        lab(body, tr("방향은 노트 폴더 하나에 한 가지만 고릅니다. 기본은 ‘양방향’(어느 쪽에서 고치든 상대에게 갑니다, 삭제도 갑니다). "
-                  "‘PC → 모바일’은 컴퓨터가 보내기만 하고 폰에서 바꾼 내용은 컴퓨터에 반영되지 않으며(폰의 Syncthing 에서 ‘되돌리기’를 누르면 컴퓨터 상태로 맞춰집니다), ‘모바일 → PC’는 그 반대입니다. "
-                  "정책은 노트 폴더의 .sync/policy.json 에 저장돼 폰 앱도 읽을 수 있습니다."), fg=C["muted"], font=(app.ui, 9), wraplength=440).pack(anchor="w", pady=(8, 0))
+        lab(body, tr("방향은 노트 폴더와 외부 폴더마다 하나씩 고릅니다.\n· 양방향: 컴퓨터와 폰 어느 쪽에서 고쳐도 서로 맞춰집니다. 지운 것도 같이 지워집니다.\n· PC → 모바일: 컴퓨터의 내용이 폰으로 갑니다. 폰에서 고친 것은 컴퓨터에 가지 않습니다.\n· 모바일 → PC: 폰의 내용이 컴퓨터로 갑니다. 컴퓨터에서 고친 것은 폰에 가지 않습니다.\n· 동기화 안 함: 주고받지 않습니다.\n폰의 설정 → 동기화에서도 같은 방향을 바꿀 수 있고, 양쪽에서 바꾸면 가장 최근에 바꾼 쪽이 적용됩니다."), fg=C["muted"], font=(app.ui, 9), wraplength=440).pack(anchor="w", pady=(8, 0))
         hr(body)
         ver = lab(body, "", fg=C["muted"], font=(app.ui, 9), wraplength=440)
         ver.pack(anchor="w")
@@ -643,6 +641,15 @@ def tab(app, p, kit):
                         msg += tr(" (최신)")
                     ver.config(text=msg)
                     fill_peers()
+                # 폰이 바꾼 방향을 받아 정책 파일이 바뀌었으면 화면의 방향 표시도 따라간다(바꾸고 [적용]을 안 누른 것이 있으면 건드리지 않는다)
+                try:
+                    if not state["dirty"] and sp.exists(root):
+                        cur = sp.load(root)
+                        if sp.view(cur) != sp.view(state["policy"]):
+                            state["policy"] = cur
+                            draw_mods()
+                except Exception:  # noqa: BLE001
+                    pass
                 try:
                     app.root.after(4000, poll)
                 except Exception:  # noqa: BLE001

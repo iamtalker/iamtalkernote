@@ -167,6 +167,13 @@ def remembered_ext(policy):
     return {mid: m.get("direction") for mid, m in policy["modules"].items() if m.get("kind") == "external" and m.get("direction") in DIRECTIONS}
 
 
+def view(policy):
+    """화면에 보이는 방향들만 모은 값(노트 폴더 방향·함께 보낼 것·외부 폴더 이름과 방향). 정책이 바뀌었는지 가를 때 쓴다"""
+    sm = policy.get("simple") or {}
+    return (sm.get("direction"), tuple(sorted((sm.get("include") or {}).items())),
+            tuple(sorted((mid, m.get("direction")) for mid, m in policy["modules"].items() if m.get("kind") == "external")))
+
+
 def apply_remembered_ext(policy, saved):
     """기억해 둔 외부 폴더 방향을 정책에 다시 입힌다. 옵션 창을 열 때 읽어 둔 낡은 정책이 저장돼 방향이 되돌아가는 것을 막는다. 바뀐 모듈 수를 돌려준다"""
     n = 0
