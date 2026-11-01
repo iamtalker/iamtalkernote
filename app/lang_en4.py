@@ -51,4 +51,16 @@ EN_MSG = {
     "본문이 비슷함": "Similar text",
     "1/2단계 — 사이트 공통 줄 찾는 중…": "Step 1/2 — finding lines common to the site…",
     "2/2단계 — 노트마다 지울 줄 찾는 중…": "Step 2/2 — finding lines to delete in each note…",
+    # 동기화 충돌 사본
+    "{0} (충돌 {1})": "{0} (conflict {1})",
+    "동기화 충돌 해결…": "Resolve sync conflict…",
+    "동기화 충돌 — {0}": "Sync conflict — {0}",
+    "원본 노트가 없습니다. 이 사본을 원본 이름으로 되살릴 수 있습니다.": "The original note is gone. You can restore this copy under the original name.",
+    "원본과 내용이 같습니다. 사본은 지워도 됩니다.": "It is identical to the original. You can delete the copy.",
+    "빨간 줄은 원본에만 있는 내용, 초록 줄은 이 충돌 사본에만 있는 내용입니다.": "Red lines are only in the original; green lines are only in this conflict copy.",
+    "(차이 없음)": "(no differences)",
+    "원본을 이 사본의 내용으로 바꿀까요?\n(원본의 지금 내용은 이전 버전으로 남습니다)": "Replace the original with this copy's content?\n(The original's current content is kept as a previous version.)",
+    "원본 두고 사본 지우기": "Keep original, delete copy",
+    "사본으로 바꾸기": "Replace with copy",
+    "원본 이름으로 되살리기": "Restore under original name",
 }

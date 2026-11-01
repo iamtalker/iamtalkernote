@@ -293,6 +293,24 @@ def note_source(body, meta=None):
 INDEX_VERSION = 6   # 색인 DB 의 판(태그·색인 방식이 바뀌면 올리면 새로 만든다)
 
 
+CONFLICT_RE = re.compile(r"^(.+)\.sync-conflict-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})(?:-[A-Z0-9]+)?(\.md)$", re.I)
+
+
+def conflict_of(name):
+    """Syncthing 이 만든 충돌 사본 이름 → (원본 파일 이름, 'YYYY-MM-DD HH:MM'). 아니면 None"""
+    m = CONFLICT_RE.match(name)
+    if not m:
+        return None
+    g = m.groups()
+    return g[0] + g[7], "%s-%s-%s %s:%s" % g[1:6]
+
+
+def note_title(name):
+    """파일 이름 → 목록에 보일 제목. 충돌 사본은 '제목 (충돌 날짜)'"""
+    c = conflict_of(name)
+    return tr("{0} (충돌 {1})").format(md_title(c[0]), c[1]) if c else md_title(name)
+
+
 class Note(dict):
     """노트 한 개의 요약(제목·위치·날짜·태그). 본문은 처음 쓸 때 파일에서 읽는다(n["body"]).
     n.read() 는 읽기만 하고 기억하지 않는다(여러 개를 훑을 때 메모리가 불어나지 않게)."""
@@ -839,7 +857,7 @@ class Store:
             if full and key not in info:
                 continue   # 읽지 못한 파일
             upd, cre, tags = info.get(key, (None, None, set()))
-            out.append(Note(nb=s, key=key, title=md_title(name), path=path, size=stt.st_size, file_mtime=stt.st_mtime,
+            out.append(Note(nb=s, key=key, title=note_title(name), path=path, size=stt.st_size, file_mtime=stt.st_mtime,
                             mtime=upd or stt.st_mtime,                                  # 수정 시각: 머리말 updated, 없으면 파일
                             ctime=cre or getattr(stt, "st_birthtime", stt.st_ctime),    # 생성 시각: 머리말 created, 없으면 파일
                             tags=tags))
@@ -887,7 +905,7 @@ class Store:
         conn = self._db()
         try:
             return [(md_title(os.path.basename(k)), k) for (k,) in conn.execute("SELECT path FROM notes")
-                    if space is None or wikilinks.space(os.path.dirname(k)) == space]
+                    if not conflict_of(os.path.basename(k)) and (space is None or wikilinks.space(os.path.dirname(k)) == space)]
         except sqlite3.Error:
             return []
         finally:

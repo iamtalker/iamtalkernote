@@ -2153,6 +2153,9 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         for key in [""] + self.visible_notebooks():
             label = ("    " * key.count("/") + (self.nb_short(key) if key else self.store.root_name))
             mm.add_command(label=label, command=lambda k=key: self.move_note(n, k), state="disabled" if key == n["nb"] else "normal")
+        if st.conflict_of(os.path.basename(n["path"])):
+            lm.add_command(label=tr("동기화 충돌 해결…"), command=lambda: self.conflict_dialog(n))
+            lm.add_separator()
         lm.add_cascade(label=tr("노트북으로 이동"), menu=mm)
         lm.add_command(label=tr("즐겨찾기 해제") if self.is_fav(n) else tr("즐겨찾기 추가"), accelerator="Ctrl+D", command=lambda: self.toggle_favorite(n))
         lm.add_command(label=tr("연결된 노트 보기…"), command=lambda: self.show_links(n))

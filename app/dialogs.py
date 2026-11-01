@@ -1372,4 +1372,55 @@ class DialogsMixin:
         Btn(foot, tr("닫기"), top.destroy, kind="primary", padx=22, pady=5).pack(side="right")
         select(tab)
 
+    def conflict_dialog(self, n):
+        """동기화가 만든 충돌 사본(…sync-conflict-….md)을 원본과 견주어 보이고, 원본을 두거나 사본으로 바꾼다"""
+        import difflib
+        orig_name = st.conflict_of(os.path.basename(n["path"]))[0]
+        orig = os.path.join(os.path.dirname(n["path"]), orig_name)
+        mine = st.decode(open(orig, "rb").read()) if os.path.isfile(orig) else None
+        theirs = n.read()
+        top = self.tool_window(tr("동기화 충돌 — {0}").format(wikiconv.markdown.md_title(orig_name)), "900x600", native=True)
+        if mine is None:
+            head = tr("원본 노트가 없습니다. 이 사본을 원본 이름으로 되살릴 수 있습니다.")
+        elif mine == theirs:
+            head = tr("원본과 내용이 같습니다. 사본은 지워도 됩니다.")
+        else:
+            head = tr("빨간 줄은 원본에만 있는 내용, 초록 줄은 이 충돌 사본에만 있는 내용입니다.")
+        tk.Label(top, text=head, bg=C["bg"], fg=C["muted"], font=(self.ui, 9), anchor="w", padx=16, pady=10).pack(fill="x")
+        btns = tk.Frame(top, bg=C["bg"])
+        btns.pack(side="bottom", fill="x", padx=16, pady=12)
+        wrap = tk.Frame(top, bg=C["bg"])
+        wrap.pack(fill="both", expand=True, padx=16)
+        txt = tk.Text(wrap, wrap="word", bg=C["bg"], fg=C["text"], font=(self.ui, 10), relief="flat", padx=8, pady=6, borderwidth=0)
+        sb = ttk.Scrollbar(wrap, orient="vertical", command=txt.yview)
+        txt.config(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        txt.pack(side="left", fill="both", expand=True)
+        txt.tag_config("del", foreground="#b3261e")
+        txt.tag_config("add", foreground="#1b7f3b")
+        txt.tag_config("hunk", foreground=C["muted"])
+        for line in difflib.unified_diff((mine or "").splitlines(), theirs.splitlines(), lineterm="", n=2):
+            if line.startswith(("---", "+++")):
+                continue
+            txt.insert("end", line[1:] + "\n" if line[:1] in "+-" else line + "\n",
+                       "add" if line.startswith("+") else "del" if line.startswith("-") else "hunk" if line.startswith("@@") else "")
+        if not txt.get("1.0", "end").strip():
+            txt.insert("end", tr("(차이 없음)"))
+        txt.config(state="disabled")
+
+        def keep_original():
+            top.destroy()
+            self.trash_notes([n["path"]])
+
+        def use_copy():
+            if mine is not None and not messagebox.askyesno(APP, tr("원본을 이 사본의 내용으로 바꿀까요?\n(원본의 지금 내용은 이전 버전으로 남습니다)"), parent=top):
+                return
+            top.destroy()
+            self.flush()
+            self.store.save(orig, theirs, force=True)
+            self.trash_notes([n["path"]])
+        Btn(btns, tr("원본 두고 사본 지우기"), keep_original, kind="primary", padx=14, pady=3).pack(side="left")
+        Btn(btns, tr("사본으로 바꾸기") if mine is not None else tr("원본 이름으로 되살리기"), use_copy, padx=14, pady=3).pack(side="left", padx=6)
+        Btn(btns, tr("닫기"), top.destroy, padx=14, pady=3).pack(side="right")
+
     # ------------------------------------------------------------ 단축키·종료
