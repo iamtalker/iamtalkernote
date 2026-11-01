@@ -80,4 +80,5 @@ EN_MSG = {
     '외부 폴더 지정…': 'Choose external folder…',
     '동기화할 외부 폴더 고르기': 'Choose the external folder to sync',
     '노트 폴더와 겹치는 폴더는 외부 폴더로 고를 수 없습니다.': 'A folder that overlaps the notes folder cannot be used as an external folder.',
+    '컴퓨터와 폰의 동기화 규칙(방향·함께 맞출 것)이 같아야 동기화됩니다. 다르면 그 폴더는 멈춥니다.': 'Sync runs only when the computer and the phone use the same sync rules (direction and what to sync). If they differ, that folder stops.',
 }

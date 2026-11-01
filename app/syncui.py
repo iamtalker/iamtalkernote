@@ -269,6 +269,9 @@ def tab(app, p, kit):
     # ------------------------------------------------------------ 설치 후
     def main_view():
         clear()
+        # 가장 중요한 규칙을 맨 위에 둔다
+        lab(body, tr("컴퓨터와 폰의 동기화 규칙(방향·함께 맞출 것)이 같아야 동기화됩니다. 다르면 그 폴더는 멈춥니다."),
+            fg=C["accent"], font=(app.ui, 10, "bold"), wraplength=440).pack(anchor="w", pady=(0, 8))
         on = tk.BooleanVar(value=eng.enabled())
         status = lab(body, "", fg=C["muted"], font=(app.ui, 9))
         err_lab = lab(body, "", fg=C["danger"], font=(app.ui, 9), wraplength=440)
