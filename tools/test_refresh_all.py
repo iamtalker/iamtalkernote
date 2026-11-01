@@ -51,7 +51,9 @@ with open(os.path.join(vault, "업무", "새글.md"), "w", encoding="utf-8", new
 check("새로 고치기 전에는 앱이 아직 모른다", "개인" in a.nb_keys)
 
 a.root.event_generate("<F5>")
-pump(40)
+end = time.time() + 5   # 컴퓨터가 바쁠 때도 되도록 조건이 될 때까지 최대 5초 기다린다
+while time.time() < end and not ("개인" not in a.nb_keys and any(n["title"] == "새글" for n in a.all_notes)):
+    pump(5)
 check("F5 로 지운 노트북이 사라지고 새 노트가 보인다", "개인" not in a.nb_keys and any(n["title"] == "새글" for n in a.all_notes))
 check("상태 줄에 알린다", "새로" in a.status.cget("text"))
 

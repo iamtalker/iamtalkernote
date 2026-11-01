@@ -112,5 +112,22 @@ open(os.path.join(old, "docs.jsonl"), "w").write("{}")
 open(os.path.join(old, "내가 둔 파일.txt"), "w").write("보관")
 check("다른 파일이 섞여 있으면 그대로 둔다", docs_mod.remove_old_export(vault) is False and os.path.exists(os.path.join(old, "내가 둔 파일.txt")))
 check(".imported 가 없으면 아무 일도 없다", docs_mod.remove_old_export(os.path.join(tmp, "없는곳")) is False)
+# 뒤에서 다시 읽는 동안 상태 줄에 진행(읽은 수 / 읽을 수 · 파일 이름)이 보인다
+import threading as _th  # noqa: E402
+def slow_scan(progress=None, cancelled=None, only=None):
+    progress(3, 12, "읽는 중 — 홍엽만리.txt  ")
+    time.sleep(1.6)
+    return (12, 0, 12)
+a.docs.scan = slow_scan
+a.doc_scanning = False
+a.rescan_docs_bg()
+seen = []
+end = time.time() + 3
+while time.time() < end:
+    a.root.update()
+    seen.append(a.status.cget("text"))
+    time.sleep(0.05)
+check("뒤에서 읽는 동안 상태 줄에 진행이 보인다", any("3 / 12" in x and "홍엽만리.txt" in x for x in seen))
+check("끝나면 진행 글이 사라진다", "3 / 12" not in a.status.cget("text") and a.doc_scanning is False)
 a.root.destroy()
 sys.exit(1 if fails else 0)

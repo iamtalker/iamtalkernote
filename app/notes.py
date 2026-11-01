@@ -1736,10 +1736,11 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             return
         self.doc_scanning = True
         q = queue.Queue()
+        prog = {"v": None}   # (읽은 수, 읽을 수, 지금 읽는 파일) — 뒤에서 읽는 동안 아래 상태 줄에 보인다
 
         def job():
             try:
-                q.put(("ok", self.docs.scan()))
+                q.put(("ok", self.docs.scan(lambda d, tot, phase=None: prog.update(v=(d, tot, phase)))))
             except Exception as ex:  # noqa: BLE001
                 q.put(("err", str(ex)))
         threading.Thread(target=job, daemon=True).start()
@@ -1748,8 +1749,17 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             try:
                 kind, val = q.get_nowait()
             except queue.Empty:
+                v = prog["v"]
+                if v and v[1]:
+                    self.status.config(text=tr('가져온 폴더 문서 읽는 중… {0:,} / {1:,}   {2}').format(v[0], v[1], (v[2] or "").replace("읽는 중 — ", "").strip()))
                 return self.root.after(1000, poll)
             self.doc_scanning = False
+            if prog["v"]:   # 진행 글을 지우고 원래 상태 줄로 되돌린다(열린 노트가 없으면 update_status 가 아무것도 안 하니 먼저 비운다)
+                self.status.config(text="")
+                try:
+                    self.update_status()
+                except Exception:  # noqa: BLE001
+                    pass
             if kind == "ok" and (val[0] or val[1]):
                 self.after_docs_changed()
         poll()
