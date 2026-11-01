@@ -40,7 +40,6 @@ ID_PREFIX = "inn-"   # 이 앱이 만든 Syncthing 폴더만 알아보고 고치
 # 이력·휴지통은 파일이 아주 많고 폰에서 쓸 일이 거의 없어 기본은 보내지 않는 고급 옵션이다. 복원 지점(.snapshots)은 PC 전용이라 옵션이 없다.
 SIMPLE_OPTIONS = (
     ("media", "미디어(그림·첨부)", MEDIA_DIR, True),
-    ("imported", "가져온 문서 요약", IMPORTED_DIR, True),
     ("history", "변경 이력", HISTORY_DIR, False),
     ("trash", "휴지통", TRASH_DIR, False),
 )
@@ -126,6 +125,8 @@ def load(root):
                 p["simple"].setdefault("include", {})
                 for k, _, _, d in SIMPLE_OPTIONS:
                     p["simple"]["include"].setdefault(k, d)
+                p["simple"]["include"].pop("imported", None)   # 가져온 문서 요약 보내기는 없어졌다
+                p["modules"].pop("imported", None)
                 _modules_from_simple(p)
                 return p
             for mid, label, rel, direction in BUILTIN:   # 내장 모듈이 빠졌으면 채운다
@@ -242,7 +243,7 @@ def plan(policy, root, role="pc", external_paths=None, control_path=None):
         typ = folder_type(sm.get("direction", BOTH), role)
         if typ:
             ign = ["/" + rel for key, _, rel, _ in SIMPLE_OPTIONS if not sm.get("include", {}).get(key)]
-            ign.append("/.snapshots")
+            ign.extend(["/.snapshots", "/" + IMPORTED_DIR])   # 복원 지점은 PC 전용, .imported(예전 가져온 문서 요약)는 이제 보내지 않는다
             ign.extend(COMMON_IGNORE)
             out.append({"id": folder_id(policy, "markdown"), "label": "iamtalkernote", "path": root, "type": typ, "ignore": ign, "module": "markdown"})
     if simple and control_path:

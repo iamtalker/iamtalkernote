@@ -18,7 +18,7 @@ try:
     assert len(plans) == 1 and plans[0]["module"] == "markdown" and plans[0]["type"] == "sendreceive", plans
     ign = plans[0]["ignore"]
     assert "/.history" in ign and "/.trash" in ign and "/.snapshots" in ign, ign
-    assert "/.resources" not in ign and "/.imported" not in ign, ign          # 함께 보낼 것은 제외하지 않는다
+    assert "/.resources" not in ign and "/.imported" in ign, ign          # 미디어는 함께 보내고, 예전 가져온 문서 요약(.imported)은 보내지 않는다
     assert plans[0]["path"] == os.path.abspath(root)
     # 두 기기가 같은 폴더 ID 를 쓴다
     assert sp.plan(p, root, "mobile")[0]["id"] == plans[0]["id"]
@@ -43,7 +43,7 @@ try:
     assert p["modules"]["markdown"]["direction"] == sp.BOTH
     assert p["modules"]["media"]["direction"] == sp.BOTH and p["modules"]["history"]["direction"] == sp.OFF
     sp.set_simple(p, direction=sp.PC2MOBILE, media=False)
-    assert p["modules"]["media"]["direction"] == sp.OFF and p["modules"]["imported"]["direction"] == sp.PC2MOBILE
+    assert p["modules"]["media"]["direction"] == sp.OFF and "imported" not in p["modules"]
     sp.set_simple(p, direction=sp.BOTH, media=True)
 
     # ---- 새 방식에서는 노트북을 따로 두지 못하고, 모듈별 방향 바꾸기는 무시된다
@@ -83,7 +83,7 @@ try:
     # ---- 전환: 지금의 방향을 그대로 이어받고, 사라지는 노트북을 알려 준다
     dropped = sp.to_simple(old)
     assert dropped == ["업무"] and not any(m["kind"] == "notebook" for m in old["modules"].values())
-    assert old["simple"]["direction"] == sp.PC2MOBILE and old["simple"]["include"] == {"media": True, "imported": True, "history": True, "trash": False}
+    assert old["simple"]["direction"] == sp.PC2MOBILE and old["simple"]["include"] == {"media": True, "history": True, "trash": False}
     plans = sp.plan(old, root, "pc")
     assert len(plans) == 1 and plans[0]["type"] == "sendonly" and plans[0]["id"] == before_ids["markdown"]   # 노트 폴더의 ID 는 그대로
     assert "/.trash" in plans[0]["ignore"] and "/.history" not in plans[0]["ignore"]

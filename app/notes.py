@@ -45,6 +45,10 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         self.fav = favorites.Favorites(syncsettings.control_dir())   # 즐겨찾기(설정 폴더의 작은 파일, 폰과 맞춤)
         self.store.tagger = note_tags   # 색인에 태그도 함께 기억
         self.docs = docidx.DocIndex()  # 가져온 폴더의 문서 색인
+        try:
+            docidx.remove_old_export(self.store.root)   # 예전 '가져온 문서 요약'(.imported)은 이제 안 쓰니 치운다
+        except Exception:  # noqa: BLE001
+            pass
         self.doc_open = False          # 가져온 문서(읽기 전용)를 열어 둔 중인가
         self.doc_scanning = False      # 가져온 폴더를 뒤에서 다시 읽는 중인가(겹쳐 돌지 않게)
         self.pv = winpreview.Preview() # 윈도 미리보기 처리기(pdf → Edge, mp3 → Media Player …)

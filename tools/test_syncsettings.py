@@ -27,14 +27,14 @@ def put_peer(d, obj):
 
 with tempfile.TemporaryDirectory() as d:
     pol = sp.new_policy()
-    sp.set_simple(pol, direction=sp.PC2MOBILE, media=True, imported=False, history=False, trash=False)
+    sp.set_simple(pol, direction=sp.PC2MOBILE, media=True, history=False, trash=False)
     ma = sp.add_external(pol, "aaa", "음악", sp.BOTH)
     mb = sp.add_external(pol, "bbb", "문서", sp.MOBILE2PC)
     fa, fb = sp.folder_id(pol, ma), sp.folder_id(pol, mb)
 
     # 컴퓨터의 규칙을 적는다
     mine = ss.own(pol)
-    check("컴퓨터 규칙: 노트 폴더 방향·함께 보낼 것", mine["notes"]["direction"] == sp.PC2MOBILE and mine["notes"]["include"]["media"] is True and mine["notes"]["include"]["imported"] is False)
+    check("컴퓨터 규칙: 노트 폴더 방향·함께 보낼 것", mine["notes"]["direction"] == sp.PC2MOBILE and mine["notes"]["include"]["media"] is True and mine["notes"]["include"]["history"] is False and "imported" not in mine["notes"]["include"])
     check("컴퓨터 규칙: 외부 폴더마다 Syncthing 폴더 ID 로 방향", mine["ext"] == {fa: sp.BOTH, fb: sp.MOBILE2PC})
     check("처음엔 파일에 적는다", ss.write_own(d, pol) and json.load(open(os.path.join(d, ss.OWN_FILE))) == mine)
     check("같으면 다시 쓰지 않는다", ss.write_own(d, pol) is False)
@@ -61,7 +61,7 @@ with tempfile.TemporaryDirectory() as d:
     put_peer(d, {"notes": {"include": {"media": False}}})
     diff = ss.mismatches(pol, ss.read_peer(d))
     check("함께 보낼 것(미디어)이 다르면 노트 폴더가 멈춘다", list(diff) == ["markdown"] and "미디어" in diff["markdown"][0] and "켬" in diff["markdown"][0] and "끔" in diff["markdown"][0])
-    put_peer(d, {"notes": {"include": {"media": True, "imported": False}}})
+    put_peer(d, {"notes": {"include": {"media": True, "history": False}}})
     check("함께 보낼 것이 같으면 멈추지 않는다", ss.mismatches(pol, ss.read_peer(d)) == {})
     # 외부 폴더는 폴더마다 따로
     put_peer(d, {"ext": {fa: sp.PC2MOBILE, fb: sp.MOBILE2PC}})

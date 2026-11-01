@@ -100,5 +100,17 @@ a.open_note(n)
 pump(20)
 shown = a.text.get("1.0", "end")
 check("글 파일은 파일에서 바로 읽어(cp949 도) 보인다", "루트 글" in shown and "뽑은 글이 없습니다" not in shown)
+# 예전 '가져온 문서 요약'(.imported)은 앱이 만든 파일만 있을 때 치우고, 다른 파일이 섞여 있으면 건드리지 않는다
+import docs as docs_mod  # noqa: E402
+old = os.path.join(vault, ".imported")
+os.makedirs(os.path.join(old, ".stfolder.removed-1"))
+for name in ("docs.jsonl", "meta.json"):
+    open(os.path.join(old, name), "w").write("{}")
+check("앱이 만든 파일만 든 .imported 는 지운다", docs_mod.remove_old_export(vault) is True and not os.path.exists(old))
+os.makedirs(old)
+open(os.path.join(old, "docs.jsonl"), "w").write("{}")
+open(os.path.join(old, "내가 둔 파일.txt"), "w").write("보관")
+check("다른 파일이 섞여 있으면 그대로 둔다", docs_mod.remove_old_export(vault) is False and os.path.exists(os.path.join(old, "내가 둔 파일.txt")))
+check(".imported 가 없으면 아무 일도 없다", docs_mod.remove_old_export(os.path.join(tmp, "없는곳")) is False)
 a.root.destroy()
 sys.exit(1 if fails else 0)

@@ -510,8 +510,7 @@ def tab(app, p, kit):
                     pass
             state["job"] = app.root.after(700, apply_auto)
 
-        INCLUDE_HINTS = {"media": tr("끄면 그림은 폰으로 오지 않습니다"), "imported": tr("폰 앱이 읽는 가져온 문서 파일"),
-                         "history": tr("파일이 아주 많습니다"), "trash": tr("지운 노트 보관본")}
+        INCLUDE_HINTS = {"media": tr("끄면 그림은 폰으로 오지 않습니다"), "history": tr("파일이 아주 많습니다"), "trash": tr("지운 노트 보관본")}
 
         def switch_row(parent, text, hint, get, put):
             """폰과 같은 모양의 한 줄: 이름과 설명(왼쪽), 켜고 끄는 스위치(오른쪽)"""

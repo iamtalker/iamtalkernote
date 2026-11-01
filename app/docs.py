@@ -10,6 +10,7 @@
 import hashlib
 import json
 import os
+import shutil
 import re
 import sqlite3
 import threading
@@ -33,9 +34,6 @@ PDF_SECONDS = 120               # PDF 한 개를 읽는 데 쓸 시간 상한(�
 STUCK_SECONDS = PDF_SECONDS + 60   # 이 시간이 넘도록 끝나지 않는 파일은 멈춘 것으로 보고 그 작업 프로세스를 죽인다
 HEAVY_EXT = ("pdf", *OFFICE_EXT)   # 오래 걸려서 다른 프로세스에서 나눠 읽는 형식
 DOC_VERSION = 1
-EXPORT_DIR = ".imported"       # 노트 폴더 안 숨김 폴더: 가져온 문서의 요약을 내보내는 곳(폰 앱이 읽는다)
-EXPORT_TEXT_CHARS = 20000      # 문서마다 내보내는 글의 길이(앞부분만)
-EXPORT_VERSION = 1
 
 
 def _squash(text):
@@ -239,6 +237,22 @@ class Combined:
         return hits
 
 
+def remove_old_export(root):
+    """예전에 폰으로 보내던 가져온 문서 요약 폴더(<노트 폴더>/.imported)를 치운다(이제 쓰지 않는다). 앱이 만든 파일(docs.jsonl·meta.json·임시 파일·동기화 표지)만
+    들어 있을 때만 지우고, 다른 것이 있으면 건드리지 않는다. 지웠으면 True"""
+    d = os.path.join(root, ".imported")
+    if not os.path.isdir(d):
+        return False
+    try:
+        names = os.listdir(d)
+    except OSError:
+        return False
+    if not all(n in ("docs.jsonl", "meta.json") or n.endswith(".tmp") or n.startswith(".stfolder") for n in names):
+        return False
+    shutil.rmtree(d, ignore_errors=True)
+    return not os.path.exists(d)
+
+
 class Doc(dict):
     """가져온 문서 한 개의 요약. 목록에는 노트처럼 나오고, 글은 DB 에서 읽는다"""
     is_doc = True
@@ -369,7 +383,6 @@ class DocIndex:
             conn.execute("UPDATE docs SET hay=?, nhay=? WHERE path=?",
                          (self.make_hay(row[1], rel, text, tags, memo), self.make_hay(row[1], rel, "", tags, memo), path))
             conn.commit()
-            self.export_soon()
             return True
         finally:
             conn.close()
@@ -477,74 +490,7 @@ class DocIndex:
                 conn.commit()
         finally:
             conn.close()
-        if count["done"] or count["removed"] or only is None:
-            try:
-                self.export()
-            except Exception:  # noqa: BLE001
-                pass
         return count["done"], count["removed"], count["total"]
-
-    # ---- 폰으로 내보내기: <노트 폴더>/.imported/docs.jsonl — 문서마다 한 줄(이름·폴더·태그·메모·글 앞부분). 원본 파일은 담지 않는다.
-    # 노트 폴더를 동기화하면 폰 앱이 이 파일을 읽어 가져온 파일을 목록·검색·보기로 쓴다(폰에서는 읽기 전용).
-    def export_enabled(self):
-        return bool(st.read_config().get("imports", {}).get("export", True))
-
-    def export(self, root=None):
-        """가져온 문서 요약을 내보낸다 → 내보낸 문서 수(끄거나 폴더가 없으면 0). 실패해도 본 작업을 막지 않게 호출하는 쪽에서 try 한다"""
-        root = root or st.read_config().get("root") or st.default_root()
-        if not self.export_enabled() or not os.path.isdir(root):
-            return 0
-        names = {self.fid(f["path"]): f for f in self.cfg()["folders"]}
-        if not names:
-            return 0
-        conn = self._db()
-        try:
-            rows = conn.execute("SELECT path, folder, ext, size, mtime, title, body FROM docs").fetchall()
-            ann = {p: (json.loads(t or "[]"), m or "") for p, t, m in conn.execute("SELECT path, tags, memo FROM annot")}
-        finally:
-            conn.close()
-        lines = []
-        for path, folder, ext, size, mt, title, body in rows:
-            if folder not in names:
-                continue
-            text = zlib.decompress(body).decode("utf-8", "ignore") if body else ""
-            tags, memo = ann.get(path, ([], ""))
-            rel = os.path.relpath(path, names[folder]["path"]).replace("\\", "/")
-            lines.append(json.dumps({"id": hashlib.sha1(path.encode("utf-8")).hexdigest()[:16], "folder": names[folder].get("name") or folder,
-                                     "rel": rel, "ext": ext, "size": size, "mtime": round(mt, 1), "title": title, "tags": tags, "memo": memo,
-                                     "text": text[:EXPORT_TEXT_CHARS]}, ensure_ascii=False))
-        d = os.path.join(root, EXPORT_DIR)
-        os.makedirs(d, exist_ok=True)
-        if os.name == "nt":
-            try:
-                import ctypes
-                ctypes.WinDLL("kernel32").SetFileAttributesW(d, 0x2)   # 숨김 폴더
-            except Exception:  # noqa: BLE001
-                pass
-        for name, data in (("docs.jsonl", "\n".join(lines) + ("\n" if lines else "")),
-                           ("meta.json", json.dumps({"version": EXPORT_VERSION, "generated": time.time(), "count": len(lines), "textChars": EXPORT_TEXT_CHARS}))):
-            tmp = os.path.join(d, name + ".tmp")
-            with open(tmp, "w", encoding="utf-8", newline="\n") as f:
-                f.write(data)
-            os.replace(tmp, os.path.join(d, name))
-        return len(lines)
-
-    _export_timer = None
-
-    def export_soon(self, delay=4.0):
-        """태그·메모를 고친 직후처럼 자주 불릴 때 한 번만 내보내도록 잠깐 기다린다"""
-        if self._export_timer is not None:
-            self._export_timer.cancel()
-
-        def run():
-            try:
-                self.export()
-            except Exception:  # noqa: BLE001
-                pass
-        t = threading.Timer(delay, run)
-        t.daemon = True
-        self._export_timer = t
-        t.start()
 
     # ---- 목록·검색
     def list_docs(self, fid=None):
