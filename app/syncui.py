@@ -308,7 +308,7 @@ def tab(app, p, kit):
                 eng.scan(syncsettings.control_id(sp.load(root)))
                 return None
             bg(work, lambda *_: poll())
-        Btn(body, tr("상태 갱신"), refresh_now, padx=12, pady=2).pack(anchor="w", pady=(4, 0))
+        Btn(body, tr("상태 갱신"), refresh_now, kind="primary", padx=14, pady=3).pack(anchor="w", pady=(6, 2))
         # 진행 표시: 맨 아래에 두면 창이 작을 때 잘려서 위(상태 줄 바로 아래)로 올렸다
         prog = lab(body, "", fg=C["muted"], font=(app.ui, 9), wraplength=440, justify="left")
         prog.pack(anchor="w", pady=(4, 2))
