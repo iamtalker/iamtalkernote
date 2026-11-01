@@ -138,7 +138,11 @@ def eta_text(left, rate):
 def phone_block(d, rates=(0.0, 0.0, 0.0), stage="", pp=None, bytes_rate=0.0):
     """폰 동기화 화면과 같은 문구의 진행 표시.
     전체 N / M개 (P%) · 글 a / b개 (p%) · 그림 c / d개 (p%) · 전체 M개 중 받음 N개 · 남음 K개 · 속도 · 남은 시간 · 지금 받는 범위 용량"""
-    have = d["notesHave"] + d["mediaHave"]
+    # 컴퓨터 목록에 있는 것 중 폰에 있는 수만 센다(폰에서만 만든 노트·그림은 목록에 없어 세면 100% 를 넘는다)
+    n_got = min(d["notesHave"], d["notesAll"])
+    m_got = min(d["mediaHave"], d["mediaAll"])
+    only_here = max(d["notesHave"] - d["notesAll"], 0) + max(d["mediaHave"] - d["mediaAll"], 0)
+    have = n_got + m_got
     total = d["notesAll"] + d["mediaAll"]
 
     def pct(a, b):
@@ -147,9 +151,11 @@ def phone_block(d, rates=(0.0, 0.0, 0.0), stage="", pp=None, bytes_rate=0.0):
     s = stage
     s += "전체 %s / %s개 (%d%%)" % (format(have, ","), format(total, ","), pct(have, total)) + nl
     s += "글 %s / %s개 (%d%%) · 그림 %s / %s개 (%d%%)" % (
-        format(d["notesHave"], ","), format(d["notesAll"], ","), pct(d["notesHave"], d["notesAll"]),
-        format(d["mediaHave"], ","), format(d["mediaAll"], ","), pct(d["mediaHave"], d["mediaAll"])) + nl
+        format(n_got, ","), format(d["notesAll"], ","), pct(n_got, d["notesAll"]),
+        format(m_got, ","), format(d["mediaAll"], ","), pct(m_got, d["mediaAll"])) + nl
     s += "전체 %s개 중 받음 %s개 · 남음 %s개" % (format(total, ","), format(have, ","), format(max(total - have, 0), ","))
+    if only_here > 0:
+        s += nl + "폰에만 있는 파일 %s개(컴퓨터에는 없음)" % format(only_here, ",")
     r, rn, rm = rates
     if total > have:
         s += nl + "속도 초당 %.1f개 (글 분당 %d개 · 그림 분당 %d개) · 남은 시간 %s" % (r, round(rn * 60), round(rm * 60), eta_text(total - have, r))
