@@ -262,7 +262,7 @@ class Engine:
             os.makedirs(p["path"], exist_ok=True)
             f = dict(have.get(p["id"]) or template)
             f.update({"id": p["id"], "label": p["label"], "path": p["path"], "type": p["type"], "devices": devices,
-                      "fsWatcherEnabled": True, "fsWatcherDelayS": 10, "rescanIntervalS": 3600, "ignorePerms": True, "paused": False,
+                      "fsWatcherEnabled": True, "fsWatcherDelayS": 10, "rescanIntervalS": 3600, "ignorePerms": True, "paused": bool(p.get("paused")),
                       "order": "smallestFirst"})   # 작은 파일(노트)부터 받아 목록이 빨리 채워지게
             # 바뀐 것이 없으면 올리지 않는다: 폴더 설정·무시 목록을 올릴 때마다 폴더가 다시 시작되며 수만 개 파일을 처음부터 훑는다(앱을 켤 때마다 몇 분)
             if have.get(p["id"]) != f:

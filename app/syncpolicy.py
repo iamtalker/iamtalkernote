@@ -18,13 +18,13 @@ TRASH_DIR = ".trash"
 
 BOTH, PC2MOBILE, MOBILE2PC, OFF = "both", "pc2mobile", "mobile2pc", "off"
 DIRECTIONS = (BOTH, PC2MOBILE, MOBILE2PC, OFF)
-LABELS = {BOTH: "양방향", PC2MOBILE: "PC → 모바일", MOBILE2PC: "모바일 → PC", OFF: "동기화 안 함"}
+LABELS = {BOTH: "양방향", PC2MOBILE: "컴퓨터 → 폰", MOBILE2PC: "폰 → 컴퓨터", OFF: "동기화 안 함"}
 
 # 내장 모듈: id, 이름, 노트 폴더 안 위치(None=노트 폴더 전체), 기본 방향
 BUILTIN = (
     ("markdown", "Markdown 노트 전체", None, BOTH),
     ("media", "미디어(그림·첨부)", MEDIA_DIR, BOTH),
-    ("imported", "가져온 문서 요약(폰 앱이 읽는 파일)", IMPORTED_DIR, PC2MOBILE),
+    ("imported", "가져온 문서 요약", IMPORTED_DIR, PC2MOBILE),
     # 이력·휴지통은 파일이 아주 많아 문서보다 먼저 전송되면 문서가 늦어진다 → 따로 두고 기본은 끈다(문서가 다 맞춰진 뒤에 켠다)
     ("history", "변경 이력(.history) — 문서를 다 맞춘 뒤에 켜기", HISTORY_DIR, OFF),
     ("trash", "휴지통(.trash) — 문서를 다 맞춘 뒤에 켜기", TRASH_DIR, OFF),
@@ -40,9 +40,9 @@ ID_PREFIX = "inn-"   # 이 앱이 만든 Syncthing 폴더만 알아보고 고치
 # 이력·휴지통은 파일이 아주 많고 폰에서 쓸 일이 거의 없어 기본은 보내지 않는 고급 옵션이다. 복원 지점(.snapshots)은 PC 전용이라 옵션이 없다.
 SIMPLE_OPTIONS = (
     ("media", "미디어(그림·첨부)", MEDIA_DIR, True),
-    ("imported", "가져온 문서 요약(폰 앱이 읽는 파일)", IMPORTED_DIR, True),
-    ("history", "변경 이력(.history) — 고급", HISTORY_DIR, False),
-    ("trash", "휴지통(.trash) — 고급", TRASH_DIR, False),
+    ("imported", "가져온 문서 요약", IMPORTED_DIR, True),
+    ("history", "변경 이력", HISTORY_DIR, False),
+    ("trash", "휴지통", TRASH_DIR, False),
 )
 
 
@@ -156,22 +156,12 @@ def set_direction(policy, mid, direction):
     if direction in DIRECTIONS and mid in policy["modules"]:
         if is_simple(policy) and policy["modules"][mid]["kind"] != "external":
             return   # 새 방식에서는 노트 폴더 방향 하나만 있다(set_simple)
-        m = policy["modules"][mid]
-        if m["kind"] == "external" and m.get("direction") != direction:
-            m["updated"] = int(time.time() * 1000)   # 폰과 맞출 때 '더 최근에 바꾼 쪽'을 가리는 시각(syncsettings.py)
-        m["direction"] = direction
+        policy["modules"][mid]["direction"] = direction
 
 
 def remembered_ext(policy):
     """사용자가 확정한 외부 폴더 방향들 {모듈 id: 방향}. 설정(config.json)의 extDirections 로 저장해 둔다"""
     return {mid: m.get("direction") for mid, m in policy["modules"].items() if m.get("kind") == "external" and m.get("direction") in DIRECTIONS}
-
-
-def view(policy):
-    """화면에 보이는 방향들만 모은 값(노트 폴더 방향·함께 보낼 것·외부 폴더 이름과 방향). 정책이 바뀌었는지 가를 때 쓴다"""
-    sm = policy.get("simple") or {}
-    return (sm.get("direction"), tuple(sorted((sm.get("include") or {}).items())),
-            tuple(sorted((mid, m.get("direction")) for mid, m in policy["modules"].items() if m.get("kind") == "external")))
 
 
 def apply_remembered_ext(policy, saved):
@@ -194,9 +184,12 @@ def add_notebook(policy, rel, direction=BOTH):
     return mid
 
 
-def add_external(policy, ext_id, name, direction=BOTH):
+def add_external(policy, ext_id, name, direction=BOTH, local=None):
+    """외부 폴더(노트 폴더 밖, 음악·PDF 등)를 추가한다. local 은 이 컴퓨터의 폴더 경로(가져오기에 등록한 폴더가 아니어도 된다)"""
     mid = "ext:" + ext_id
     policy["modules"][mid] = {"kind": "external", "label": "외부 폴더 · " + name, "direction": direction}
+    if local:
+        policy["modules"][mid]["local"] = local
     return mid
 
 
@@ -263,7 +256,7 @@ def plan(policy, root, role="pc", external_paths=None, control_path=None):
             continue
         if m["kind"] == "external":
             ext_id = mid.split(":", 1)[1]
-            p = external_paths.get(ext_id)
+            p = m.get("local") or external_paths.get(ext_id)   # 정책에 적힌 경로가 먼저, 없으면 예전처럼 가져오기에 등록한 폴더
             if not p:
                 continue
             path, rel = os.path.abspath(p), None

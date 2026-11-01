@@ -1,10 +1,11 @@
 """옵션의 '동기화' 탭과, 앱이 켜질 때 동기화를 이어 주는 코드. 정책 계산은 syncpolicy, Syncthing 제어는 syncengine 이 맡는다."""
+import hashlib
 import os
 import threading
 import time
 import webbrowser
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 
 import store as st
 from i18n import tr
@@ -37,18 +38,34 @@ def draw_qr(canvas, text, size):
                 canvas.create_rectangle(off + x * cell, off + y * cell, off + (x + 1) * cell, off + (y + 1) * cell, fill="black", outline="black")
 
 
+def adopt_local_paths(app, policy):
+    """예전에 가져오기에 등록한 폴더로 만든 외부 폴더에 그 경로를 정책에 직접 적어 둔다(이제 외부 폴더는 가져오기와 따로다)"""
+    reg = {f["id"]: f["path"] for f in app.docs.folders()}
+    for mid, m in policy["modules"].items():
+        if m.get("kind") == "external" and not m.get("local") and reg.get(mid.split(":", 1)[1]):
+            m["local"] = reg[mid.split(":", 1)[1]]
+
+
 def current_plans(app, policy=None):
-    """이 컴퓨터에서 만들 Syncthing 폴더 목록. 외부 폴더의 경로는 '가져오기' 에 등록된 폴더에서 가져온다"""
+    """이 컴퓨터에서 만들 Syncthing 폴더 목록. 외부 폴더의 경로는 정책에 적힌 것(없으면 예전 '가져오기' 등록 폴더)"""
     policy = policy or sp.load(app.store.root)
+    adopt_local_paths(app, policy)
     sp.apply_remembered_ext(policy, st.read_config().get("extDirections"))   # 어느 경로로 계산하든 확정한 외부 폴더 방향으로
     ext = {f["id"]: f["path"] for f in app.docs.folders()}
-    return stagesync.apply_plans(sp.plan(policy, app.store.root, "pc", ext, syncsettings.control_dir()), app.store.root, policy)   # 아직 열지 않은 단계는 가린다
+    plans = stagesync.apply_plans(sp.plan(policy, app.store.root, "pc", ext, syncsettings.control_dir()), app.store.root, policy)   # 아직 열지 않은 단계는 가린다
+    # 폰과 규칙(방향·함께 보낼 것)이 다른 폴더는 멈춘다(폴더 설정은 그대로 두고 paused 만 켠다)
+    blocked = syncsettings.mismatches(policy, syncsettings.read_peer(syncsettings.control_dir()))
+    for p in plans:
+        if p["module"] in blocked:
+            p["paused"] = True
+    return plans
 
 
 def apply_now(app, policy=None):
     """정책을 저장하고 Syncthing 설정에 맞춘다. (만든·고친 수, 지운 수)"""
     explicit = policy is not None   # 사용자가 [적용] 으로 확정한 정책이면 외부 폴더 방향을 기억해 둔다
     policy = policy or sp.load(app.store.root)
+    adopt_local_paths(app, policy)
     if explicit:
         st.write_config(extDirections=sp.remembered_ext(policy))
     else:
@@ -83,6 +100,7 @@ def start_stage_watcher(app):
     if getattr(app, "_stage_watch", False):
         return
     app._stage_watch = True
+    last = {"sig": None}   # 마지막으로 맞춰 본 '폰과 규칙이 다른 모듈' 목록
 
     def loop():
         while True:
@@ -94,9 +112,11 @@ def start_stage_watcher(app):
                     plan_ = stagesync.load_plan(app.store.root)
                     if plan_:
                         syncsettings.write_totals(syncsettings.control_dir(), plan_)   # 폰이 전체 개수를 알 수 있게
-                    if syncsettings.reconcile(pol, syncsettings.control_dir()) == "pull":   # 폰에서 더 최근에 바꿨다 → 정책에 받아들이고 적용
-                        st.write_config(extDirections=sp.remembered_ext(pol))   # 폰이 바꾼 외부 폴더 방향을 확정한 값으로 기억(안 하면 낡은 값으로 되돌린다)
-                        sp.save(app.store.root, pol)
+                    sd = syncsettings.control_dir()
+                    syncsettings.write_own(sd, pol)   # 컴퓨터의 규칙을 폰이 볼 수 있게 적는다
+                    sig = sorted(syncsettings.mismatches(pol, syncsettings.read_peer(sd)))
+                    if sig != last["sig"]:   # 폰과 규칙이 달라졌거나 같아졌다 → 그 폴더를 멈추거나 다시 돌린다
+                        last["sig"] = sig
                         app.sync.apply(current_plans(app, pol))
             except Exception:  # noqa: BLE001
                 pass
@@ -188,7 +208,11 @@ def tab(app, p, kit):
     body.pack(fill="both", expand=True)
     alive = {"on": True}
     body.bind("<Destroy>", lambda e: alive.update(on=False) if e.widget is body else None)
-    state = {"policy": sp.load(root), "dirty": False}
+    state = {"policy": sp.load(root), "dirty": False, "diff": {}}   # diff: 폰과 규칙이 달라 멈춘 모듈 {모듈 id: [어디가 다른지 글]}
+    try:
+        state["diff"] = syncsettings.mismatches(state["policy"], syncsettings.read_peer(syncsettings.control_dir()))
+    except Exception:  # noqa: BLE001
+        pass
     # 바꾸고 [적용]을 안 누른 채 옵션 창을 닫으면 변경이 사라진다(예: 뺀 외부 폴더가 그대로 동기화됨) → 닫기 전에 묻는다
     top.can_close = lambda: not state["dirty"] or messagebox.askyesno(
         tr("동기화"), tr("동기화 설정을 바꾸고 [적용]을 누르지 않았습니다.\n적용하지 않고 닫으면 바꾼 내용이 사라집니다. 닫을까요?"), parent=top)
@@ -459,6 +483,42 @@ def tab(app, p, kit):
             state["dirty"] = True
             note.config(text=tr("바꾼 내용은 [적용]을 눌러야 반영됩니다."), fg=C["muted"])
 
+        INCLUDE_HINTS = {"media": tr("끄면 그림은 폰으로 오지 않습니다"), "imported": tr("폰 앱이 읽는 가져온 문서 파일"),
+                         "history": tr("파일이 아주 많습니다"), "trash": tr("지운 노트 보관본")}
+
+        def switch_row(parent, text, hint, get, put):
+            """폰과 같은 모양의 한 줄: 이름과 설명(왼쪽), 켜고 끄는 스위치(오른쪽)"""
+            r = tk.Frame(parent, bg=C["bg"])
+            r.pack(fill="x", pady=3)
+            col = tk.Frame(r, bg=C["bg"])
+            col.pack(side="left", fill="x", expand=True)
+            lab(col, text).pack(anchor="w")
+            lab(col, hint, fg=C["muted"], font=(app.ui, 9)).pack(anchor="w")
+            val = {"on": bool(get())}
+            cv = tk.Canvas(r, width=40, height=22, bg=C["bg"], highlightthickness=0, cursor="hand2")
+            cv.pack(side="right", padx=(8, 4))
+
+            def draw():
+                cv.delete("all")
+                on = val["on"]
+                cv.create_oval(1, 1, 21, 21, fill=C["accent"] if on else C["line"], outline="")
+                cv.create_oval(19, 1, 39, 21, fill=C["accent"] if on else C["line"], outline="")
+                cv.create_rectangle(11, 1, 29, 21, fill=C["accent"] if on else C["line"], outline="")
+                cv.create_oval(23 if on else 3, 3, 37 if on else 17, 19, fill="#ffffff", outline="")
+
+            def flip(_e=None):
+                val["on"] = not val["on"]
+                draw()
+                put(val["on"])
+            cv.bind("<Button-1>", flip)
+            draw()
+
+        def warn(parent, mid):
+            """폰과 규칙이 달라 이 폴더의 동기화를 멈췄다는 경고(어디가 어떻게 다른지 포함)"""
+            if mid in state["diff"]:
+                lab(parent, tr("⚠ 폰과 규칙이 달라 이 폴더의 동기화를 멈췄습니다 — ") + "; ".join(state["diff"][mid]) + tr(". 컴퓨터나 폰을 같게 맞추면 다시 동기화됩니다."),
+                    fg=C["danger"], font=(app.ui, 9), wraplength=440).pack(anchor="w", pady=(0, 4))
+
         def direction_row(parent, text, get, put, drop=None):
             r = tk.Frame(parent, bg=C["bg"])
             r.pack(fill="x", pady=2)
@@ -500,6 +560,7 @@ def tab(app, p, kit):
                     draw_mods()
                 direction_row(mods, m.get("label", mid), lambda mid=mid: state["policy"]["modules"][mid].get("direction"),
                               lambda d, mid=mid: sp.set_direction(state["policy"], mid, d), drop)
+                warn(mods, mid)
 
         def draw_mods():
             for w in list(mods.winfo_children()) + list(btns.winfo_children()):
@@ -507,28 +568,18 @@ def tab(app, p, kit):
             pol = state["policy"]
             if sp.is_simple(pol):
                 sm = pol["simple"]
-                direction_row(mods, tr("노트 폴더 전체 (노트 글)"), lambda: sm["direction"], lambda d: sp.set_simple(pol, direction=d))
-                lab(mods, tr("함께 보낼 것"), fg=C["muted"], font=(app.ui, 9)).pack(anchor="w", pady=(8, 0))
-                keep = []
-                for key, label, rel, _ in sp.SIMPLE_OPTIONS:
-                    if key in ("history", "trash"):
-                        continue
-                    var = tk.BooleanVar(value=bool(sm["include"].get(key)))
-                    keep.append(var)
-                    check(mods, label, var, lambda key=key, var=var: (sp.set_simple(pol, **{key: var.get()}), changed())).pack(anchor="w")
-                lab(mods, tr("고급 — 파일이 아주 많고 폰에서 쓸 일이 거의 없어 기본은 보내지 않습니다(켜도 문서가 다 맞춰진 뒤에 켜세요)."), fg=C["muted"], font=(app.ui, 9), wraplength=440).pack(anchor="w", pady=(6, 0))
-                for key, label, rel, _ in sp.SIMPLE_OPTIONS:
-                    if key not in ("history", "trash"):
-                        continue
-                    var = tk.BooleanVar(value=bool(sm["include"].get(key)))
-                    keep.append(var)
-                    check(mods, label, var, lambda key=key, var=var: (sp.set_simple(pol, **{key: var.get()}), changed())).pack(anchor="w")
+                direction_row(mods, tr("노트 폴더 방향"), lambda: sm["direction"], lambda d: sp.set_simple(pol, direction=d))
+                warn(mods, "markdown")
+                lab(mods, tr("함께 맞출 것"), fg=C["muted"], font=(app.ui, 9)).pack(anchor="w", pady=(10, 2))
+                for key, label, rel, _ in sp.SIMPLE_OPTIONS:   # 폰 설정 → 동기화와 같은 이름·설명·순서(스위치)
+                    switch_row(mods, label + (tr(" (고급)") if key in ("history", "trash") else ""), INCLUDE_HINTS[key],
+                               lambda key=key: bool(sm["include"].get(key)), lambda v, key=key: (sp.set_simple(pol, **{key: v}), changed()))
                 lab(mods, tr("복원 지점(.snapshots)은 컴퓨터 전용이라 보내지 않습니다."), fg=C["muted"], font=(app.ui, 9)).pack(anchor="w", pady=(4, 0))
-                mods._keep = keep
                 if any(m["kind"] == "external" for m in pol["modules"].values()):
                     lab(mods, tr("외부 폴더(노트 폴더 밖)"), fg=C["muted"], font=(app.ui, 9)).pack(anchor="w", pady=(10, 0))
                 ext_rows()
-                Btn(btns, tr("외부 폴더 추가…"), lambda: add_menu("external"), padx=12, pady=3).pack(side="left")
+                if not any(m["kind"] == "external" for m in pol["modules"].values()):   # 외부 폴더는 하나만 쓴다
+                    Btn(btns, tr("외부 폴더 지정…"), lambda: add_menu("external"), padx=12, pady=3).pack(side="left")
             else:
                 lab(mods, tr("지금은 옛 방식(모듈마다 폴더와 방향)입니다. 폴더 하나·방향 하나의 새 방식으로 바꾸면 폰에서 폴더마다 허용할 일이 없어집니다."),
                     fg=C["accent"], font=(app.ui, 9), wraplength=440).pack(anchor="w")
@@ -541,7 +592,21 @@ def tab(app, p, kit):
                     direction_row(mods, m.get("label", mid), lambda mid=mid: state["policy"]["modules"][mid].get("direction"),
                                   lambda d, mid=mid: sp.set_direction(state["policy"], mid, d), drop if m["kind"] in ("notebook", "external") else None)
                 Btn(btns, tr("노트북 따로 설정…"), lambda: add_menu("notebook"), padx=12, pady=3).pack(side="left")
-                Btn(btns, tr("외부 폴더 추가…"), lambda: add_menu("external"), padx=12, pady=3).pack(side="left", padx=6)
+                if not any(m["kind"] == "external" for m in pol["modules"].values()):
+                    Btn(btns, tr("외부 폴더 지정…"), lambda: add_menu("external"), padx=12, pady=3).pack(side="left", padx=6)
+
+        def add_external_folder():
+            """동기화할 외부 폴더를 폴더 선택 창으로 아무거나 고른다(가져오기에 등록한 폴더가 아니어도 된다)"""
+            path = filedialog.askdirectory(parent=top, title=tr("동기화할 외부 폴더 고르기"))
+            if not path:
+                return
+            path = os.path.normpath(path)
+            here, root_n = os.path.normcase(os.path.abspath(path)), os.path.normcase(os.path.abspath(app.store.root))
+            if here == root_n or here.startswith(root_n + os.sep) or root_n.startswith(here + os.sep):
+                return messagebox.showinfo(tr("동기화"), tr("노트 폴더와 겹치는 폴더는 외부 폴더로 고를 수 없습니다."), parent=top)
+            sp.add_external(state["policy"], hashlib.sha1(here.encode("utf-8")).hexdigest()[:10], os.path.basename(path) or path, sp.BOTH, local=path)
+            changed()
+            draw_mods()
 
         def add_menu(kind):
             m = tk.Menu(top, tearoff=0)
@@ -550,9 +615,7 @@ def tab(app, p, kit):
                 opts = [(nb, nb) for nb in app.store.notebooks() if nb not in have]
                 add = lambda v: sp.add_notebook(state["policy"], v, sp.BOTH)   # noqa: E731
             else:
-                have = {k.split(":", 1)[1] for k, x in state["policy"]["modules"].items() if x["kind"] == "external"}
-                opts = [(f["name"] + "  (" + f["path"] + ")", f) for f in app.docs.folders() if f["id"] not in have]
-                add = lambda f: sp.add_external(state["policy"], f["id"], f["name"], sp.BOTH)   # noqa: E731
+                return add_external_folder()
             if not opts:
                 m.add_command(label=tr("추가할 항목이 없습니다") + ("" if kind == "notebook" else tr(" (옵션 > 가져오기에서 폴더를 먼저 추가하세요)")), state="disabled")
             for text, v in opts:
@@ -641,13 +704,14 @@ def tab(app, p, kit):
                         msg += tr(" (최신)")
                     ver.config(text=msg)
                     fill_peers()
-                # 폰이 바꾼 방향을 받아 정책 파일이 바뀌었으면 화면의 방향 표시도 따라간다(바꾸고 [적용]을 안 누른 것이 있으면 건드리지 않는다)
+                # 폰과 규칙이 다른 폴더(= 멈춘 폴더)가 달라졌으면 경고 줄을 다시 그린다(저장된 정책 기준: 실제로 동기화가 멈추는 기준)
                 try:
-                    if not state["dirty"] and sp.exists(root):
-                        cur = sp.load(root)
-                        if sp.view(cur) != sp.view(state["policy"]):
-                            state["policy"] = cur
-                            draw_mods()
+                    if sp.exists(root):
+                        diff = syncsettings.mismatches(sp.load(root), syncsettings.read_peer(syncsettings.control_dir()))
+                        if diff != state["diff"]:
+                            state["diff"] = diff
+                            if not state["dirty"]:   # 바꾸고 [적용]을 안 누른 것이 있으면 그 입력을 지우지 않게 다시 그리지 않는다
+                                draw_mods()
                 except Exception:  # noqa: BLE001
                     pass
                 try:

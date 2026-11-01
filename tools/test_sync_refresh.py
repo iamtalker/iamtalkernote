@@ -1,5 +1,5 @@
-"""옵션 → 동기화 화면이 폰이 바꾼 방향(정책 파일의 변경)을 따라가는지 시험. 임시 APPDATA·임시 노트 폴더만 쓴다.
-py -3 -X utf8 tools/test_sync_refresh.py"""
+"""폰과 규칙이 다르면 그 폴더를 멈추고 옵션 → 동기화 화면에 경고를 보이는지 시험(창을 연 채로 폰 파일이 바뀌어도 따라간다).
+임시 APPDATA·임시 노트 폴더만 쓴다.  py -3 -X utf8 tools/test_sync_refresh.py"""
 import json
 import os
 import sys
@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 import notes  # noqa: E402
 import syncengine  # noqa: E402
 import syncpolicy as sp  # noqa: E402
+import syncsettings as ss  # noqa: E402
 import syncui  # noqa: E402
 syncengine.installed = lambda: True   # 시험 PC 에는 Syncthing 이 없어도 정책 영역이 그려지게
 
@@ -31,14 +32,23 @@ def check(name, ok):
 
 
 pol = sp.new_policy()
-sp.set_simple(pol, direction=sp.BOTH)
+sp.set_simple(pol, direction=sp.PC2MOBILE)
 mid = sp.add_external(pol, "aaa", "음악", sp.BOTH)
+fid = sp.folder_id(pol, mid)
 sp.save(vault, pol)
+peer_path = os.path.join(ss.control_dir(), ss.PEER_FILE)
+
+
+def put_peer(obj):
+    with open(peer_path, "w", encoding="utf-8") as fh:
+        json.dump(obj, fh)
+
 
 a = notes.App()
+a.docs.folders = lambda: [{"id": "aaa", "path": os.path.join(tmp, "aaa"), "name": "음악"}]   # 가져오기에 등록된 외부 폴더인 것처럼
 
 
-def pump(sec):
+def run(sec):
     """실제 메인 루프를 sec 초 돌린다(백그라운드 스레드가 after() 로 화면에 알리려면 메인 루프가 돌아야 한다)"""
     a.root.after(int(sec * 1000), a.root.quit)
     a.root.mainloop()
@@ -50,36 +60,34 @@ def walk(w):
         yield from walk(c)
 
 
-def combos(top):
-    return [w for w in walk(top) if w.winfo_class() == "TCombobox"]
+def warnings(top):
+    return [w.cget("text") if w.winfo_class() == "Label" else w.get("1.0", "end") for w in walk(top)
+            if w.winfo_class() in ("Label", "Text") and "멈췄습니다" in (w.cget("text") if w.winfo_class() == "Label" else w.get("1.0", "end"))]
 
 
-pump(1.5)
+# 폴더 계획: 폰과 같으면 멈추지 않고, 다르면 그 폴더만 멈춘다
+put_peer({})
+plans = {p["module"]: p for p in syncui.current_plans(a, sp.load(vault))}
+check("폰이 따로 정한 것이 없으면 아무 폴더도 안 멈춘다", not any(p.get("paused") for p in plans.values()))
+put_peer({"ext": {fid: sp.OFF}})
+plans = {p["module"]: p for p in syncui.current_plans(a, sp.load(vault))}
+check("방향이 다른 외부 폴더만 멈춘다", plans[mid].get("paused") is True and not plans["markdown"].get("paused"))
+put_peer({"notes": {"include": {"media": False}}})
+plans = {p["module"]: p for p in syncui.current_plans(a, sp.load(vault))}
+check("함께 보낼 것이 다르면 노트 폴더가 멈춘다", plans["markdown"].get("paused") is True and not plans[mid].get("paused"))
+
+# 화면: 열 때 경고가 보이고, 연 채로 폰 파일이 같아지면 사라진다
+put_peer({"ext": {fid: sp.OFF}})
+run(1.5)
 a.show_options("sync")
-pump(1)
+run(1)
 top = [w for w in a.root.winfo_children() if w.winfo_class() == "Toplevel"][-1]
-cbs = combos(top)
-check("방향 콤보가 둘(노트 폴더·외부 폴더)", len(cbs) == 2)
-ext_cb = cbs[-1]
-check("처음엔 외부 폴더가 '양방향'", ext_cb.get() == sp.LABELS[sp.BOTH])
-
-# 폰이 바꿔서 컴퓨터가 정책을 새로 저장한 것처럼 파일을 고친다
-new = sp.load(vault)
-sp.set_direction(new, mid, sp.MOBILE2PC)
-sp.save(vault, new)
-pump(6)
-cbs = combos(top)
-check("창을 연 채로 몇 초 뒤 외부 폴더 표시가 '폰 → 컴퓨터'로 바뀐다", cbs and cbs[-1].get() == sp.LABELS[sp.MOBILE2PC])
-
-# 사용자가 직접 바꾸고 [적용] 전이면 파일이 바뀌어도 덮어쓰지 않는다
-cbs[-1].current(0)
-cbs[-1].event_generate("<<ComboboxSelected>>")
-pump(0.5)
-mine = cbs[-1].get()
-new2 = sp.load(vault)
-sp.set_direction(new2, mid, sp.OFF)
-sp.save(vault, new2)
-pump(6)
-check("바꾸고 [적용]을 안 눌렀으면 자동 갱신이 내 선택을 덮어쓰지 않는다", combos(top)[-1].get() == mine)
+check("규칙이 다른 외부 폴더에 경고가 보인다", len(warnings(top)) == 1 and "양방향" in warnings(top)[0] and "동기화 안 함" in warnings(top)[0])
+put_peer({})
+run(6)
+check("폰 값이 컴퓨터와 같아지면(연 채로) 경고가 사라진다", len(warnings(top)) == 0)
+put_peer({"notes": {"direction": sp.BOTH}})
+run(6)
+check("노트 폴더 규칙이 다르면 경고가 다시 보인다", len(warnings(top)) == 1 and "컴퓨터 → 폰" in warnings(top)[0])
 a.root.destroy()
 sys.exit(1 if fails else 0)
