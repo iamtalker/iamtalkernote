@@ -2,7 +2,8 @@
 
 설정만 담는 작은 폴더(항상 양방향, 종류 cfg)로 각자 자기 파일만 쓴다(서로 덮어쓰지 않는다 → '누가 더 나중에 바꿨나' 를 가릴 일이 없다).
  - pc-config.json    (컴퓨터가 씀) 컴퓨터의 지금 규칙 {"notes": {"direction": 방향, "include": {media: 참/거짓 …}}, "ext": {폴더 ID: 방향}}
- - phone-config.json (폰이 씀)   폰이 컴퓨터와 다르게 정한 것만 같은 모양으로(없는 항목은 컴퓨터를 따른다)
+ - phone-config.json (폰이 씀)   폰의 규칙(같은 모양). 폰은 처음 한 번만 컴퓨터 값으로 채워 두고 그 뒤로는 독립이다(컴퓨터가 바뀌어도 따라가지 않는다 →
+                                 한쪽만 바꾸면 값이 달라져 그 폴더가 멈춘다). 옛 폰 앱처럼 이 파일이 없거나 항목이 비면 같은 것으로 본다
 Syncthing 을 전혀 모르는 순수 계산이라 폰 앱 SyncSettings.kt 와 같은 규칙을 쓴다."""
 import hashlib
 import json
@@ -64,7 +65,7 @@ def write_own(directory, policy):
 
 
 def read_peer(directory):
-    """폰이 컴퓨터와 다르게 정한 것. 파일이 없거나 깨졌으면 {}(전부 컴퓨터를 따른다 = 옛 폰 앱도 멈추지 않는다)"""
+    """폰의 규칙. 파일이 없거나 깨졌으면 {}(전부 같은 것으로 본다 = 옛 폰 앱도 멈추지 않는다)"""
     try:
         with open(os.path.join(directory, PEER_FILE), encoding="utf-8") as fh:
             s = json.load(fh)
@@ -91,7 +92,7 @@ def read_peer(directory):
 
 def mismatches(policy, peer):
     """컴퓨터와 폰의 규칙이 다른 모듈 {모듈 id: [어디가 어떻게 다른지 글 …]}. 노트 폴더는 'markdown', 외부 폴더는 'ext:…'.
-    폰이 따로 정한 것이 없는 항목은 컴퓨터를 따르므로 같은 것으로 본다"""
+    폰 파일에 없는 항목은 같은 것으로 본다(옛 폰 앱)"""
     mine = own(policy)
     out = {}
     if mine is None or not peer:

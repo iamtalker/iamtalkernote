@@ -248,6 +248,8 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         mb.add_cascade(label=tr("편집"), menu=m)
 
         m = tk.Menu(mb, tearoff=0)
+        m.add_command(label=tr("새로 고침"), accelerator="F5", command=self.refresh_all)
+        m.add_separator()
         m.add_checkbutton(label=tr("노트북 보기"), variable=self.v["notebooks"], command=self.on_view_toggle)
         m.add_checkbutton(label=tr("태그 보기"), variable=self.v["tags"], command=self.on_view_toggle)
         m.add_checkbutton(label=tr("노트 목록 보기"), accelerator="Ctrl+Shift+L", variable=self.v["list"], command=self.on_view_toggle)
@@ -841,6 +843,9 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         top = tk.Frame(f, bg=C["bg"])
         top.pack(fill="x", padx=14, pady=(14, 8))
         Btn(top, tr("＋ 새 노트"), self.new_note, kind="primary", bold=True, pady=6).pack(side="right", padx=(8, 0))
+        refresh = Btn(top, "⟳", self.refresh_all, pady=6, font=(self.ui, 12))
+        refresh.pack(side="right", padx=(8, 0))
+        self.tip(refresh, tr("새로 고침 (F5): 탐색기 등 앱 밖에서 폴더·노트를 지우거나 옮겼을 때 다시 읽습니다"))
         Btn(top, tr("검색"), self.search_now, pady=6).pack(side="right", padx=(8, 0))   # 치는 즉시 검색하지만, 눌러서 바로 다시 검색할 수도 있다
         box = tk.Frame(top, bg=C["panel"], highlightthickness=1, highlightbackground=C["line"], highlightcolor=C["accent"])
         box.pack(side="left", fill="x", expand=True)
@@ -1719,6 +1724,10 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
     def auto_scan_docs(self):
         """조용히(창 없이 뒤에서) 가져온 폴더에서 바뀐 파일만 다시 읽는다. 시작하고 20초 뒤에 한 번, 그 뒤로는 앱을 열어 두는 동안 5분마다 되풀이"""
         self.root.after(DOC_RESCAN_SECONDS * 1000, self.auto_scan_docs)
+        self.rescan_docs_bg()
+
+    def rescan_docs_bg(self):
+        """조용히(창 없이 뒤에서) 가져온 폴더에서 바뀐 파일만 다시 읽는다(주기적 자동 읽기와 새로 고침이 함께 쓴다)"""
         if self.doc_scanning or not self.docs.folders():
             return
         self.doc_scanning = True
@@ -1783,6 +1792,20 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             else:
                 self.count.config(text=tr("노트를 불러오지 못했습니다: ") + val)
         self.root.after(80, poll)
+
+    def refresh_all(self, e=None):
+        """전체 새로 고침(F5·⟳): 탐색기 등 앱 밖에서 노트북·노트를 지우거나 옮겼을 때, 껐다 켜지 않고 노트·노트북·태그·즐겨찾기·달력·가져온 문서를 다시 읽는다"""
+        self.flush()
+        for fn in (self.fav.invalidate, self.planner.sync):
+            try:
+                fn()
+            except Exception:  # noqa: BLE001
+                pass
+        self.reload_notes(keep_scroll=True)
+        if self.docs.folders():
+            self.rescan_docs_bg()
+        self.status.config(text=tr("새로 고쳤습니다"))
+        return "break"
 
     def read_all_notes(self):
         self.load_prog = (0, 0)
@@ -3630,6 +3653,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         r.bind_all("<Shift-F3>", lambda e: self.find_step(-1) if self.findbar.winfo_ismapped() else None)
         r.bind_all("<Control-comma>", lambda e: self.show_options("general"))
         r.bind_all("<F1>", lambda e: self.open_manual())
+        r.bind_all("<F5>", lambda e: self.refresh_all())
         r.bind_all("<Control-minus>", lambda e: self.go(-1))
         r.bind_all("<Control-plus>", lambda e: self.go(1))
         r.bind_all("<Control-equal>", lambda e: self.go(1))

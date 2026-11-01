@@ -104,4 +104,7 @@ EN_MSG = {
     '모든 파일': 'All files',
     '파일을 복사하지 못했습니다.\n{0}': 'Could not copy the file.\n{0}',
     '{0}개를 리소스 폴더로 복사해 넣었습니다': '{0} copied into the resources folder and inserted',
+    '새로 고침': 'Refresh',
+    '새로 고쳤습니다': 'Refreshed',
+    '새로 고침 (F5): 탐색기 등 앱 밖에서 폴더·노트를 지우거나 옮겼을 때 다시 읽습니다': 'Refresh (F5): re-read after folders or notes were deleted or moved outside the app, e.g. in Explorer',
 }
