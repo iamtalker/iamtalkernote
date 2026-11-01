@@ -113,7 +113,11 @@ def start_stage_watcher(app):
                     if plan_:
                         syncsettings.write_totals(syncsettings.control_dir(), plan_)   # 폰이 전체 개수를 알 수 있게
                     sd = syncsettings.control_dir()
-                    syncsettings.write_own(sd, pol)   # 컴퓨터의 규칙을 폰이 볼 수 있게 적는다
+                    if syncsettings.write_own(sd, pol):   # 컴퓨터의 규칙을 폰이 볼 수 있게 적는다 → 바로 검사시켜 폰에 빨리 가게 한다
+                        try:
+                            app.sync.scan(syncsettings.control_id(pol))
+                        except Exception:  # noqa: BLE001
+                            pass
                     sig = sorted(syncsettings.mismatches(pol, syncsettings.read_peer(sd)))
                     if sig != last["sig"]:   # 폰과 규칙이 달라졌거나 같아졌다 → 그 폴더를 멈추거나 다시 돌린다
                         last["sig"] = sig
@@ -164,7 +168,7 @@ class SelText(tk.Text):
 
     def _fit(self):
         try:
-            n = self.count("1.0", "end-1c", "displaylines")
+            n = self.count("1.0", "end", "displaylines")   # end 까지: 줄이 몇 개로 보이는지(end-1c 까지는 한 줄 적게 센다)
             n = (n[0] if n else 1) or 1
             if int(self.cget("height")) != n:
                 tk.Text.configure(self, height=n)
@@ -213,9 +217,8 @@ def tab(app, p, kit):
         state["diff"] = syncsettings.mismatches(state["policy"], syncsettings.read_peer(syncsettings.control_dir()))
     except Exception:  # noqa: BLE001
         pass
-    # 바꾸고 [적용]을 안 누른 채 옵션 창을 닫으면 변경이 사라진다(예: 뺀 외부 폴더가 그대로 동기화됨) → 닫기 전에 묻는다
-    top.can_close = lambda: not state["dirty"] or messagebox.askyesno(
-        tr("동기화"), tr("동기화 설정을 바꾸고 [적용]을 누르지 않았습니다.\n적용하지 않고 닫으면 바꾼 내용이 사라집니다. 닫을까요?"), parent=top)
+    # 옵션 창을 닫을 때 아직 적용 전인 변경(바꾼 지 0.7초 안)이 있으면 바로 적용하고 닫는다
+    top.can_close = lambda: (state["flush"]() if state.get("flush") else None, True)[1]
 
     def bg(fn, done):
         def run():
@@ -292,6 +295,20 @@ def tab(app, p, kit):
         check(body, tr("동기화 사용 (앱을 켤 때 함께 시작하고, 끌 때 함께 멈춥니다)"), on, toggle).pack(anchor="w")
         status.pack(anchor="w", pady=(2, 0))
         err_lab.pack(anchor="w")
+
+        def refresh_now():
+            """상태 갱신: 폴더 설정을 다시 맞추고, 폰과 연결을 다시 맺고, 설정 폴더를 바로 검사한다(껐다 켜지 않아도 되게)"""
+            status.config(text=tr("갱신하는 중…"), fg=C["muted"])
+
+            def work():
+                if not eng.running():
+                    return None
+                apply_now(app)
+                eng.reconnect()
+                eng.scan(syncsettings.control_id(sp.load(root)))
+                return None
+            bg(work, lambda *_: poll())
+        Btn(body, tr("상태 갱신"), refresh_now, padx=12, pady=2).pack(anchor="w", pady=(4, 0))
         # 진행 표시: 맨 아래에 두면 창이 작을 때 잘려서 위(상태 줄 바로 아래)로 올렸다
         prog = lab(body, "", fg=C["muted"], font=(app.ui, 9), wraplength=440, justify="left")
         prog.pack(anchor="w", pady=(4, 2))
@@ -483,8 +500,15 @@ def tab(app, p, kit):
         btns.pack(anchor="w", pady=(8, 0))
 
         def changed():
+            """바꾸면 잠깐 뒤 자동으로 적용한다(연달아 바꾸면 마지막만)"""
             state["dirty"] = True
-            note.config(text=tr("바꾼 내용은 [적용]을 눌러야 반영됩니다."), fg=C["muted"])
+            note.config(text=tr("적용하는 중…"), fg=C["muted"])
+            if state.get("job"):
+                try:
+                    app.root.after_cancel(state["job"])
+                except Exception:  # noqa: BLE001
+                    pass
+            state["job"] = app.root.after(700, apply_auto)
 
         INCLUDE_HINTS = {"media": tr("끄면 그림은 폰으로 오지 않습니다"), "imported": tr("폰 앱이 읽는 가져온 문서 파일"),
                          "history": tr("파일이 아주 많습니다"), "trash": tr("지운 노트 보관본")}
@@ -546,7 +570,7 @@ def tab(app, p, kit):
                    "- 이미 연결한 폰은 폴더 구성이 바뀌므로, 폰의 Syncthing-Fork 에서 이 앱이 만든 폴더(ID 가 inn- 로 시작)를 지우고 다시 받아야 합니다(폰의 파일은 그대로입니다)."))
             if nbs:
                 msg += tr("\n- ‘노트북 따로 설정’은 새 방식에서 없어집니다: ") + ", ".join(nbs)
-            msg += tr("\n\n바꾸고 [적용]을 눌러야 반영됩니다. 계속할까요?")
+            msg += tr("\n\n계속할까요?")
             if messagebox.askyesno(tr("새 방식으로 바꾸기"), msg, parent=top):
                 sp.to_simple(pol)
                 changed()
@@ -626,20 +650,47 @@ def tab(app, p, kit):
             m.tk_popup(app.root.winfo_pointerx(), app.root.winfo_pointery())
         note = lab(body, "", fg=C["muted"], font=(app.ui, 9), wraplength=440)
 
-        def apply_btn():
-            if not eng.running():
-                return messagebox.showinfo(tr("동기화"), tr("먼저 '동기화 사용'을 켜세요."), parent=top)
+        def apply_work():
+            pol = state["policy"]
+            if eng.running():
+                r = apply_now(app, pol)   # 정책 저장 + Syncthing 폴더 맞춤
+                try:
+                    if syncsettings.write_own(syncsettings.control_dir(), pol):   # 폰이 바로 알 수 있게 규칙을 적고 검사시킨다
+                        eng.scan(syncsettings.control_id(pol))
+                except Exception:  # noqa: BLE001
+                    pass
+                return r
+            st.write_config(extDirections=sp.remembered_ext(pol))   # 동기화가 꺼져 있으면 정책만 저장(켜 두면 앱을 켤 때 적용된다)
+            sp.save(root, pol)
+            return None
+
+        def apply_auto():
+            state["job"] = None
+            if not alive["on"]:
+                return
 
             def done(r, err):
                 if err:
                     note.config(text=tr('적용하지 못했습니다: {0}').format(err), fg=C["danger"])
-                else:
-                    state["dirty"] = False
-                    note.config(text=tr('적용했습니다 (폴더 {0}개 맞춤, {1}개 정리). 폰에서 공유 요청을 받아 주세요.').format(r[0], r[1]), fg="#15803d")
-            bg(lambda: apply_now(app, state["policy"]), done)
-        Btn(body, tr("적용"), apply_btn, kind="primary", bold=True, padx=22, pady=5).pack(anchor="w", pady=(10, 0))
-        note.pack(anchor="w", pady=(6, 0))
-        lab(body, tr("방향은 노트 폴더와 외부 폴더마다 하나씩 고릅니다.\n· 양방향: 컴퓨터와 폰 어느 쪽에서 고쳐도 서로 맞춰집니다. 지운 것도 같이 지워집니다.\n· PC → 모바일: 컴퓨터의 내용이 폰으로 갑니다. 폰에서 고친 것은 컴퓨터에 가지 않습니다.\n· 모바일 → PC: 폰의 내용이 컴퓨터로 갑니다. 컴퓨터에서 고친 것은 폰에 가지 않습니다.\n· 동기화 안 함: 주고받지 않습니다.\n폰의 설정 → 동기화에서도 같은 방향을 바꿀 수 있고, 양쪽에서 바꾸면 가장 최근에 바꾼 쪽이 적용됩니다."), fg=C["muted"], font=(app.ui, 9), wraplength=440).pack(anchor="w", pady=(8, 0))
+                    return
+                state["dirty"] = False
+                note.config(text=tr("적용했습니다."), fg="#15803d")
+            bg(apply_work, done)
+
+        def flush():
+            """창을 닫을 때 아직 적용 전인 변경이 있으면 바로 적용한다"""
+            if state.get("job"):
+                try:
+                    app.root.after_cancel(state["job"])
+                except Exception:  # noqa: BLE001
+                    pass
+                state["job"] = None
+            if state["dirty"]:
+                state["dirty"] = False
+                threading.Thread(target=apply_work, daemon=True).start()
+        state["flush"] = flush
+        note.pack(anchor="w", pady=(10, 0))
+        lab(body, tr("방향은 노트 폴더와 외부 폴더마다 하나씩 고릅니다.\n· 양방향: 컴퓨터와 폰 어느 쪽에서 고쳐도 서로 맞춰집니다. 지운 것도 같이 지워집니다.\n· PC → 모바일: 컴퓨터의 내용이 폰으로 갑니다. 폰에서 고친 것은 컴퓨터에 가지 않습니다.\n· 모바일 → PC: 폰의 내용이 컴퓨터로 갑니다. 컴퓨터에서 고친 것은 폰에 가지 않습니다.\n· 동기화 안 함: 주고받지 않습니다.\n바꾸면 바로 적용됩니다. 컴퓨터와 폰을 같게 맞춰야 동기화됩니다."), fg=C["muted"], font=(app.ui, 9), wraplength=440).pack(anchor="w", pady=(8, 0))
         hr(body)
         ver = lab(body, "", fg=C["muted"], font=(app.ui, 9), wraplength=440)
         ver.pack(anchor="w")
@@ -649,6 +700,12 @@ def tab(app, p, kit):
         def poll():
             if not alive["on"]:
                 return
+            if state.get("poll_job"):   # 예약돼 있던 다음 확인은 취소(상태 갱신·켜기 등이 겹쳐 불러도 하나만 돈다)
+                try:
+                    app.root.after_cancel(state["poll_job"])
+                except Exception:  # noqa: BLE001
+                    pass
+                state["poll_job"] = None
 
             def status_work():
                 if not eng.running():
@@ -659,11 +716,20 @@ def tab(app, p, kit):
                 # 외부 폴더(음악·PDF 등)마다 폰이 얼마나 받았는지: 노트 폴더만 보이던 것을 같이 보인다
                 exts = []
                 for mid, m in pol["modules"].items():
-                    if m.get("kind") == "external" and m.get("direction") != sp.OFF:
+                    d = m.get("direction")
+                    if m.get("kind") != "external" or d == sp.OFF:
+                        continue
+                    fid = sp.folder_id(pol, mid)
+                    if d in (sp.PC2MOBILE, sp.BOTH):   # 폰이 받는 것
                         try:
-                            exts.append((mid, m.get("label", mid), eng.peer_progress(sp.folder_id(pol, mid))))
+                            exts.append((mid + ":peer", m.get("label", mid) + tr(" — 폰 받기"), eng.peer_progress(fid)))
                         except Exception:  # noqa: BLE001
-                            exts.append((mid, m.get("label", mid), None))
+                            exts.append((mid + ":peer", m.get("label", mid) + tr(" — 폰 받기"), None))
+                    if d in (sp.MOBILE2PC, sp.BOTH):   # 컴퓨터가 받는 것(폰이 올리는 것)
+                        try:
+                            exts.append((mid + ":own", m.get("label", mid) + tr(" — 컴퓨터 받기"), eng.own_progress(fid)))
+                        except Exception:  # noqa: BLE001
+                            exts.append((mid + ":own", m.get("label", mid) + tr(" — 컴퓨터 받기"), None))
                 return eng.overview(ids), eng.pending_devices(), eng.upgrade_info(), pp, exts
 
             def done(r, err):
@@ -677,7 +743,7 @@ def tab(app, p, kit):
                     ext_text = ""
                     for mid, label, ep in exts:
                         if ep is None:
-                            ext_text += chr(10) + label + ": " + tr("폰이 연결되면 받기 시작합니다")
+                            ext_text += chr(10) + label + ": " + tr("연결되면 시작합니다")
                         else:
                             ext_text += chr(10) + label + chr(10) + syncprogress.line(ep[0], ep[1], ep[2], ep[3], etas.setdefault("x:" + mid, syncprogress.Eta()).update(ep[3]))
                     if pp is None:
@@ -718,7 +784,7 @@ def tab(app, p, kit):
                 except Exception:  # noqa: BLE001
                     pass
                 try:
-                    app.root.after(4000, poll)
+                    state["poll_job"] = app.root.after(4000, poll)
                 except Exception:  # noqa: BLE001
                     pass
             bg(status_work, done)

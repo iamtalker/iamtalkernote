@@ -1,6 +1,6 @@
 """즐겨찾기: 노트 파일은 건드리지 않고 설정 폴더(폰과 항상 양방향으로 맞추는 작은 폴더)의 작은 파일에 적는다.
 충돌이 없도록 컴퓨터는 favorites-pc.json, 폰은 favorites-phone.json 만 자기가 쓰고, 읽을 때는 둘을 합쳐 노트마다 '더 최근에 바꾼 쪽'을 따른다.
-형식: {"items": {"폴더/노트.md": [1 또는 0, 바꾼 시각(ms)]}}  (노트 경로는 노트 폴더 기준, 슬래시). 노트 이름을 바꾸거나 옮기면 그 노트의 즐겨찾기는 풀린다.
+형식: {"items": {"폴더/노트.md": [1 또는 0, 바꾼 시각(ms)]}}  (노트 경로는 노트 폴더 기준, 슬래시). 노트 이름을 바꾸거나 옮기면 move 로 새 경로에 옮겨 즐겨찾기가 풀리지 않게 한다.
 폰 앱 Favorites.kt 와 같은 규칙."""
 import json
 import os
@@ -93,6 +93,15 @@ class Favorites:
         os.replace(tmp, own)
         self._sig = None
         self._checked = 0.0
+
+    def move(self, old, new, now=None):
+        """노트 이름을 바꾸거나 옮겼을 때 즐겨찾기를 새 경로로 옮긴다(즐겨찾기는 노트 경로로 기억하므로 안 옮기면 풀려 버린다). 옮겼으면 True"""
+        if old == new or not self.is_fav(old):
+            return False
+        now = int(time.time() * 1000) if now is None else now
+        self.set(old, False, now)
+        self.set(new, True, now + 1)
+        return True
 
     def toggle(self, rel):
         on = not self.is_fav(rel)

@@ -37,5 +37,12 @@ with tempfile.TemporaryDirectory() as d:
         fh.write("{깨짐")
     check("상대 파일이 깨져도 내 것은 유지", fv.Favorites(d).is_fav("a.md"))
     check("한글 경로", (f.set("노트/한글 제목.md", True) or f.is_fav("노트/한글 제목.md")))
+    # 이름을 바꾸거나 옮겨도 즐겨찾기가 풀리지 않는다
+    f.set("클로드 변경.md", True)
+    check("이름을 바꾸면 새 이름이 즐겨찾기, 옛 이름은 꺼짐", f.move("클로드 변경.md", "클로드 변경2.md") is True and f.is_fav("클로드 변경2.md") and not f.is_fav("클로드 변경.md"))
+    check("옮겨도(폴더가 바뀌어도) 유지", f.move("클로드 변경2.md", "업무/클로드 변경2.md") is True and f.is_fav("업무/클로드 변경2.md") and not f.is_fav("클로드 변경2.md"))
+    check("즐겨찾기가 아니던 노트는 옮겨도 즐겨찾기가 되지 않는다", f.move("없던.md", "새로.md") is False and not f.is_fav("새로.md"))
+    check("같은 경로면 아무 일도 없다", f.move("업무/클로드 변경2.md", "업무/클로드 변경2.md") is False and f.is_fav("업무/클로드 변경2.md"))
+    check("앱을 다시 시작해도 유지", fv.Favorites(d).is_fav("업무/클로드 변경2.md"))
 print("통과" if not fails else "실패 %d" % fails)
 sys.exit(1 if fails else 0)

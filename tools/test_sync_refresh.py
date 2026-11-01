@@ -82,6 +82,15 @@ run(1.5)
 a.show_options("sync")
 run(1)
 top = [w for w in a.root.winfo_children() if w.winfo_class() == "Toplevel"][-1]
+def banner_ok(top):
+    """맨 위 안내가 줄바꿈돼도 전부 보인다(높이가 줄 수에 맞고 스크롤 없이 처음부터 끝까지)"""
+    for w in walk(top):
+        if w.winfo_class() == "Text" and "같아야 동기화됩니다" in w.get("1.0", "end"):
+            return int(w.cget("height")) >= 2 and w.yview() == (0.0, 1.0)
+    return False
+
+
+check("맨 위 '규칙이 같아야 동기화' 안내가 줄바꿈돼도 전부 보인다", banner_ok(top))
 check("규칙이 다른 외부 폴더에 경고가 보인다", len(warnings(top)) == 1 and "양방향" in warnings(top)[0] and "동기화 안 함" in warnings(top)[0])
 put_peer({})
 run(6)

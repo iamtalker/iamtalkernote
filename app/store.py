@@ -1052,6 +1052,18 @@ class Store:
                     lambda m: m.group(1) + save(m.group(2), m.group(3)) + m.group(4), md, flags=re.I)
         return md, count[0]
 
+    def add_media(self, src, nb):
+        """그림 같은 파일을 리소스 폴더로 복사한다 → 그 노트에서 쓸 상대 경로(파일 이름까지). 내용이 같은 파일이 이미 있으면 그것을 쓴다"""
+        res = self.ensure_media()
+        with open(src, "rb") as fh:
+            data = fh.read()
+        name = hashlib.sha1(data).hexdigest()[:16] + os.path.splitext(src)[1].lower()
+        dst = os.path.join(res, name)
+        if not os.path.exists(dst):
+            with open(dst, "wb") as fh:
+                fh.write(data)
+        return self.media_rel(self.nb_dir(nb)) + name
+
     def delete_note(self, path):
         self.to_trash(path)
 

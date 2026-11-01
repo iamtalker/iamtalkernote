@@ -307,6 +307,28 @@ class Engine:
             out = v if out is None or v[3] > out[3] else out   # 가장 덜 받은 기기 기준
         return out
 
+    def reconnect(self):
+        """등록된 기기와의 연결을 한 번 끊었다 다시 맺게 한다(연결이 멈춘 듯 '준비 중'에 머물 때). 기기들의 ID 목록을 돌려준다"""
+        me = self.my_id()
+        ids = []
+        for d in self.api("/rest/config")["devices"]:
+            if d["deviceID"] == me:
+                continue
+            ids.append(d["deviceID"])
+            for paused in (True, False):
+                d["paused"] = paused
+                self.api("/rest/config/devices/" + d["deviceID"], "PUT", d)
+        return ids
+
+    def own_progress(self, folder_id):
+        """이 컴퓨터가 이 폴더에서 받아야 할 것(폰이 올리는 것): (전체 파일, 남은 파일, 전체 바이트, 남은 바이트)"""
+        s = self.api("/rest/db/status?folder=" + urllib.parse.quote(folder_id), timeout=5) or {}
+        return (int(s.get("globalFiles", 0)), int(s.get("needFiles", 0)), int(s.get("globalBytes", 0)), int(s.get("needBytes", 0)))
+
+    def scan(self, folder_id):
+        """폴더를 바로 다시 검사시킨다(파일 감시 지연 10초를 기다리지 않고 폰에 빨리 알린다)"""
+        self.api("/rest/db/scan?folder=" + urllib.parse.quote(folder_id), "POST")
+
     # ---- 상태
     def overview(self, folder_ids):
         """{'connected': 연결된 기기 수, 'peers': 등록된 기기 수, 'folders': {id: (상태, 남은바이트)}}"""

@@ -1068,6 +1068,17 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
 
         self.edit_frame = tk.Frame(self.body, bg=C["panel"])
         self.pane_head(self.edit_frame, tr("마크다운"), tr("편집"))
+        # 원문 편집 칸 위의 최소 서식 툴바(원문만·좌우 분할에서도 서식과 그림 첨부를 쓸 수 있게)
+        tools = self.edit_tools = tk.Frame(self.edit_frame, bg=C["panel"])
+        tools.pack(fill="x", padx=10, pady=(0, 4))
+        for label, hint, act in (("B", tr("굵게 (Ctrl+B)"), ("wrap", "b")), ("I", tr("기울임 (Ctrl+I)"), ("wrap", "i")), ("S", tr("취소선"), ("wrap", "s")),
+                                 ("H", tr("제목"), ("heading", 2)), ("•", tr("글머리 목록"), ("line", "ul")), ("1.", tr("번호 목록"), ("line", "ol")),
+                                 ("☐", tr("할 일"), ("line", "task")), ("❝", tr("인용"), ("line", "quote")), ("</>", tr("코드"), ("wrap", "code")),
+                                 ("🔗", tr("링크"), ("wrap", "link")), ("🖼", tr("그림·파일 첨부 (리소스 폴더로 복사)"), None)):
+            b = Btn(tools, label, (lambda a=act: self.run_action(a)) if act else self.attach_files, kind="icon", padx=8, pady=1,
+                    font=(self.ui, 10, "bold" if label in ("B", "H") else "normal"))
+            b.pack(side="left", padx=1)
+            self.tip(b, hint)
         box = tk.Frame(self.edit_frame, bg=C["panel"])
         box.pack(fill="both", expand=True, padx=8, pady=(0, 8))
         self.text = tk.Text(box, wrap="word", undo=True, maxundo=-1, font=(self.mono, self.size) + (("bold",) if self.note_bold else ()), padx=14, pady=10,
@@ -1813,6 +1824,10 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         """검색·정렬을 다시 하고 목록을 그린다. keep_page=True 는 자동 저장 때처럼 보던 자리를 유지"""
         self.search_job = None
         pool = [n for n in self.notes if self.tag in n["tags"]] if self.tag else self.notes
+        dctx = self.doc_context()
+        if dctx and not (self.q.get().strip() or self.d_from.get().strip() or self.d_to.get().strip() or self.tag):
+            cur = self.dnorm(dctx[1])   # 가져온 폴더: 검색 중이 아니면 지금 보는 폴더 바로 아래 파일만 보인다(하위 폴더는 위의 폴더 목록)
+            pool = [n for n in pool if self.dnorm(os.path.dirname(n["path"])) == cur]
         self.bad_dates = search.bad_dates(self.q.get(), self.d_from.get(), self.d_to.get())
         if self.bad_dates:   # 날짜를 읽을 수 없으면 기간 없이 찾지 말고 비워서 알린다
             self.results, self.words = [], []
@@ -1822,8 +1837,86 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
                                                   docidx.Combined(self.store, self.docs) if self.scope_all() else self.store)
         self.draw_list(keep_scroll=keep_page)
 
+    @staticmethod
+    def dnorm(path):
+        return os.path.normcase(os.path.normpath(path))
+
+    def doc_context(self):
+        """가져온 폴더를 보는 중이면 (그 폴더의 맨 위 경로, 지금 보는 폴더 경로), 아니면 None"""
+        if not self.nb.startswith("@doc:"):
+            return None
+        f = next((f for f in self.docs.folders() if f["id"] == self.nb[5:]), None)
+        if not f:
+            return None
+        root = os.path.normpath(f["path"])
+        cur = getattr(self, "doc_dir", None)
+        if getattr(self, "_doc_nb", None) != self.nb or not cur or not (self.dnorm(cur) == self.dnorm(root) or self.dnorm(cur).startswith(self.dnorm(root) + os.sep)):
+            cur = root
+            self.doc_dir, self._doc_nb = root, self.nb
+        return root, cur
+
+    def doc_go(self, path):
+        self.doc_dir = path
+        self.refresh()
+
+    def update_doc_rows(self, ctx):
+        """가져온 폴더 안의 하위 폴더를 목록 맨 위에 보인다(폴더가 많아도 스크롤). 눌러서 들어가고, '위로' 로 나온다"""
+        root, cur = ctx
+        subs = {}
+        base = self.dnorm(cur)
+        for n in self.notes:
+            d = self.dnorm(os.path.dirname(n["path"]))
+            if d == base or not d.startswith(base + os.sep):
+                continue
+            first = os.path.relpath(os.path.dirname(n["path"]), cur).split(os.sep)[0]
+            subs[first] = subs.get(first, 0) + 1
+        names = sorted(subs, key=str.lower)
+        sig = (self.nb, base, tuple((k, subs[k]) for k in names))
+        box = getattr(self, "docdir_box", None)
+        if box is None:
+            box = self.docdir_box = tk.Frame(self.folder_box.master, bg=C["bg"])
+        self.folder_box.pack_forget()
+        if getattr(self, "_docdir_sig", None) == sig and box.winfo_manager():
+            return
+        self._docdir_sig = sig
+        for w in box.winfo_children():
+            w.destroy()
+        if not names and self.dnorm(root) == base:
+            box.pack_forget()
+            return
+        box.pack(fill="x", before=self.list_body, pady=(4, 2))
+        head = tk.Frame(box, bg=C["bg"])
+        head.pack(fill="x")
+        rel = os.path.relpath(cur, root)
+        tk.Label(head, text="📂  " + (os.path.basename(root) if rel == "." else os.path.basename(root) + os.sep + rel), anchor="w", bg=C["bg"], fg=C["text"],
+                 font=(self.ui, 10, "bold"), padx=18).pack(side="left", fill="x", expand=True)
+        if self.dnorm(root) != base:
+            up = tk.Label(head, text=tr("⬆ 위로"), bg=C["bg"], fg=C["accent"], font=(self.ui, 10), padx=12, cursor="hand2")
+            up.pack(side="right")
+            up.bind("<Button-1>", lambda e: self.doc_go(os.path.dirname(cur)))
+        if not names:
+            return
+        wrap = tk.Frame(box, bg=C["bg"])
+        wrap.pack(fill="x", padx=(18, 8))
+        lb = tk.Listbox(wrap, height=min(len(names), 8), activestyle="none", exportselection=False, bg=C["bg"], fg=C["accent"], font=(self.ui, 10),
+                        relief="flat", borderwidth=0, highlightthickness=0, selectbackground=C["soft"], selectforeground=C["accent"])
+        for k in names:
+            lb.insert("end", f"📁  {k}   ({subs[k]:,})")
+        if len(names) > 8:
+            sb = ttk.Scrollbar(wrap, orient="vertical", command=lb.yview)
+            lb.config(yscrollcommand=sb.set)
+            sb.pack(side="right", fill="y")
+        lb.pack(side="left", fill="x", expand=True)
+        lb.bind("<<ListboxSelect>>", lambda e: (lb.curselection() and self.doc_go(os.path.join(cur, names[lb.curselection()[0]]))))
+
     def update_folder_rows(self):
         """고른 노트북 바로 아래의 하위 노트북을 노트 목록 맨 위에 폴더 줄로 보인다(저장 폴더를 고르면 ScrapBook 같은 노트북들)"""
+        ctx = self.doc_context()
+        if ctx:
+            return self.update_doc_rows(ctx)
+        if getattr(self, "docdir_box", None) is not None:
+            self.docdir_box.pack_forget()
+            self._docdir_sig = None
         box = self.folder_box
         kids = []
         if self.nb == "" or (self.nb and not self.nb.startswith("@") and self.nb != ALL):
@@ -2011,7 +2104,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         fail = 0
         for n in items:
             try:
-                self.store.move(n["path"], nb)
+                self.fav_move(n["path"], self.store.move(n["path"], nb))
             except OSError:
                 fail += 1
         self.multi.clear()
@@ -2079,6 +2172,13 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         return "break"
 
     # ---- 즐겨찾기(설정 폴더의 작은 파일에 적어 폰과 맞춘다)
+    def fav_move(self, old_path, new_path):
+        """이름을 바꾸거나 옮긴 노트의 즐겨찾기를 새 경로로 옮긴다"""
+        try:
+            self.fav.move(favorites.rel_of(self.store.root, old_path), favorites.rel_of(self.store.root, new_path))
+        except Exception:  # noqa: BLE001
+            pass
+
     def fav_rel(self, n):
         return n.get("key") or favorites.rel_of(self.store.root, n["path"])   # 노트의 key 는 노트 폴더 기준 슬래시 경로(rel_of 와 같다)
 
@@ -2188,6 +2288,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         self.flush()
         try:
             new = self.store.move(n["path"], nb)
+            self.fav_move(n["path"], new)
         except OSError as ex:
             return messagebox.showerror(APP, tr('노트를 옮기지 못했습니다.\n{0}').format(ex))
         if self.cur and self.cur["path"] == n["path"]:
@@ -2263,6 +2364,11 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         else:
             self.apply_layout("edit")
             body = n.read()
+            if not body.strip() and n["ext"] in docidx.TEXT_EXT:   # 문서 안 글 검색을 꺼 두면 색인에는 글이 없다: 글 파일은 파일에서 바로 읽어 보인다
+                try:
+                    body = docidx.extract(n["path"], n["ext"], os.path.getsize(n["path"]))[:1_000_000]
+                except OSError:
+                    body = ""
             if not body.strip():
                 body = (tr("(이 파일에서 뽑은 글이 없습니다.)\n\n") if n["ext"] not in docidx.AUDIO_EXT else "") + tr("위치: ") + n["path"]
             if n.get("memo"):
@@ -2480,6 +2586,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         self.flush()
         try:
             title, path = self.store.rename(self.cur["path"], new)
+            self.fav_move(self.cur["path"], path)   # 즐겨찾기가 풀리지 않게 새 경로로 옮긴다
         except OSError as ex:
             self.title_var.set(self.cur["title"])
             return messagebox.showerror(APP, tr('제목을 바꾸지 못했습니다.\n{0}').format(ex))
@@ -3278,6 +3385,35 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             t.tag_add("sel", f"{a}+{s}c", f"{a}+{e}c")
             t.mark_set("insert", f"{a}+{e}c")
         t.focus_set()
+
+    IMAGE_EXT = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg")
+
+    def attach_files(self):
+        """그림(또는 다른 파일)을 골라 노트에 넣는다: 파일은 리소스 폴더로 복사되고 노트에는 그 상대 경로 링크가 들어간다"""
+        if not self.cur or self.doc_open:
+            return
+        if self.mode == "view":
+            self.set_mode("split")
+        down = os.path.join(os.path.expanduser("~"), "Downloads")
+        paths = filedialog.askopenfilenames(parent=self.root, title=tr("노트에 넣을 그림·파일 고르기"), initialdir=down if os.path.isdir(down) else None,
+                                            filetypes=[(tr("그림"), " ".join("*" + e for e in self.IMAGE_EXT)), (tr("모든 파일"), "*.*")])
+        if not paths:
+            return
+        out = []
+        for p in paths:
+            try:
+                rel = self.store.add_media(p, self.cur["nb"]).replace(" ", "%20")
+            except OSError as ex:
+                messagebox.showerror(APP, tr('파일을 복사하지 못했습니다.\n{0}').format(ex), parent=self.root)
+                continue
+            base = os.path.basename(p)
+            out.append(f"![{os.path.splitext(base)[0]}]({rel})" if p.lower().endswith(self.IMAGE_EXT) else f"[{base}]({rel})")
+        if not out:
+            return
+        a, b = self.sel_range()
+        new = "\n".join(out) + "\n"
+        self.replace(a, b, new, len(new), len(new))
+        self.status.config(text=tr('{0}개를 리소스 폴더로 복사해 넣었습니다').format(len(out)))
 
     def run_action(self, action):
         if not self.cur:
