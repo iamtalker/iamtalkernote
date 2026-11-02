@@ -76,6 +76,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         self.tag_global = bool(cfg.get("tagGlobal", False))
         self.adv_conditions = []
         self.nb_keys, self.tag_keys = [], []
+        self.nb_open = {}              # 노트북 목록에서 펼침(True)·접음(False)을 사용자가 정한 항목. 정한 적 없으면 가져온 폴더 쪽은 접고 나머지는 펼친다
         self.all_notes, self.notes, self.results, self.words = [], [], [], []
         self.cards = []                # 목록에 그려진 카드 → note
         self.rendered, self.card_starts, self.next_line = 0, [], 1   # 목록에 그려 놓은 노트 수 / 카드 시작 줄 / 다음 카드 줄
@@ -839,9 +840,15 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         self.left_pane = tk.PanedWindow(f, orient="vertical", sashwidth=4, sashrelief="flat", bg=C["line"], bd=0)
         self.left_pane.pack(fill="both", expand=True)
         self.nb_sec = tk.Frame(self.left_pane, bg=C["bg"])
-        self.section_head(self.nb_sec, tr("노트북"))
+        nb_head = self.section_head(self.nb_sec, tr("노트북"))
+        for icon, opened, hint in (("📁", False, tr("모두 접음")), ("📂", True, tr("모두 펼침"))):   # pack(side=right) 라서 먼저 놓은 것이 오른쪽 끝
+            b = Btn(nb_head, icon, lambda o=opened: self.nb_set_all(o), kind="ghost", bg=C["bg"], padx=4, pady=0, font=("Segoe UI Emoji", 10))
+            b.pack(side="right")
+            self.tip(b, hint)
         self.nbtree = self.make_tree(self.nb_sec)
         self.nbtree.bind("<<TreeviewSelect>>", self.on_nb_select)
+        self.nbtree.bind("<<TreeviewOpen>>", lambda e: self.on_nb_toggle(True))
+        self.nbtree.bind("<<TreeviewClose>>", lambda e: self.on_nb_toggle(False))
         self.nbtree.bind("<Delete>", lambda e: self.delete_notebook())
         self.nbtree.bind("<Button-3>", self.on_nb_menu)
         self.nbmenu = tk.Menu(self.root, tearoff=0)
@@ -1582,8 +1589,10 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
                 label, count = self.nb_short(key), total(key)
                 # 최상위 노트북은 저장 폴더 항목(scrapbook) 아래에 들여써서 보여 준다
                 parent = f"nb{idx[key.rsplit('/', 1)[0]]}" if "/" in key else f"nb{idx['']}"
-            self.nbtree.insert(parent, "end", iid=f"nb{i}", text="  " + label + ("" if count is None else f"   {count:,}"), values=("" if count is None else f"{count:,}",), open=True)
+            self.nbtree.insert(parent, "end", iid=f"nb{i}", text="  " + label + ("" if count is None else f"   {count:,}"), values=("" if count is None else f"{count:,}",),
+                               open=self.nb_open.get(key, not key.startswith("@doc:")))   # 가져온 폴더(와 그 하위 폴더)는 기본으로 접어 둔다
         self.nbtree.selection_set(f"nb{idx[self.nb]}")
+        self.nbtree.see(f"nb{idx[self.nb]}")   # 고른 항목이 접힌 폴더 안이면 그 위쪽만 펼쳐 보인다
         texts = []
 
         def collect(parent=""):
@@ -1655,6 +1664,24 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         if self.tag is None and not self.tag_none:
             self.tagtree.selection_remove(*self.tagtree.selection())
         self.refresh()
+
+    def on_nb_toggle(self, opened):
+        """노트북 목록에서 삼각형을 눌러 펼치거나 접은 것을 기억한다(목록을 다시 그려도 그대로 두려고)"""
+        if self.quiet:
+            return
+        iid = self.nbtree.focus()
+        if iid and iid.startswith("nb") and iid[2:].isdigit() and int(iid[2:]) < len(self.nb_keys):
+            self.nb_open[self.nb_keys[int(iid[2:])]] = opened
+
+    def nb_set_all(self, opened):
+        """노트북 목록의 하위가 있는 항목을 모두 펼치거나 모두 접는다"""
+        def walk(parent=""):
+            for c in self.nbtree.get_children(parent):
+                if self.nbtree.get_children(c):
+                    self.nbtree.item(c, open=opened)
+                    self.nb_open[self.nb_keys[int(c[2:])]] = opened
+                walk(c)
+        walk()
 
     def on_nb_select(self, e=None):
         if self.quiet:

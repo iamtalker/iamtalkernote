@@ -63,6 +63,8 @@ EN_MAIN = {
     "뽑은 글로 보기": "View extracted text",
     "원본으로 보기": "View original",
     "PDF 로 보기": "View PDF",
+    "모두 접음": "Collapse all",
+    "모두 펼침": "Expand all",
     "연결 프로그램으로 열기": "Open with linked program",
     ".{0} 파일을 열 프로그램 지정…": "Set program to open .{0} files…",
     ".{0} 연결 해제 (윈도 기본 프로그램으로)": "Unlink .{0} (use Windows default)",
