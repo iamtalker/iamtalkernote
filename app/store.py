@@ -334,6 +334,9 @@ def _sql_cond(node, params):
     if node[0] == "WORD":
         params.append(node[1].encode("utf-8"))
         return "instr(hay, ?) > 0"
+    if node[0] == "TAG":
+        params.append(json.dumps(node[1], ensure_ascii=False))
+        return "instr(notes.tags, ?) > 0"
     left, right = _sql_cond(node[1], params), _sql_cond(node[2], params)
     if node[0] == "AND":
         return f"({left} AND {right})"

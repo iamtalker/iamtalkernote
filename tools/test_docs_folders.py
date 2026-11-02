@@ -1,4 +1,4 @@
-"""가져오기: 폴더 안의 폴더를 목록에 폴더로 보이고(들어가기·위로), 글 파일은 색인이 비어 있어도 파일에서 바로 읽어 보이는지 시험.
+"""가져오기: 하위 폴더의 계층 표시·목록 필터링과 원본 파일 보기를 시험.
 임시 APPDATA·임시 노트 폴더·임시 가져오기 폴더만 쓴다.  py -3 -X utf8 tools/test_docs_folders.py"""
 import json
 import os
@@ -58,37 +58,36 @@ def titles():
     return sorted(n["title"] for n in a.results)
 
 
-def rows():
-    box = getattr(a, "docdir_box", None)
-    if box is None or not box.winfo_manager():
-        return []
-    for w in box.winfo_children():
-        for x in [w] + list(w.winfo_children()):
-            if x.winfo_class() == "Listbox":
-                return list(x.get(0, "end"))
-    return []
+def tree_children(key):
+    iid = f"nb{a.nb_keys.index(key)}"
+    return [a.nb_keys[int(child[2:])] for child in a.nbtree.get_children(iid)]
 
 
 check("맨 위 폴더에는 그 폴더 바로 아래 파일만 보인다", titles() == ["루트.txt"])
-check("하위 폴더가 폴더 줄로 나온다(파일 수 포함)", any("A 소설" in r and "(2)" in r for r in rows()) and any("B 소설" in r and "(2)" in r for r in rows()))
+root_key = "@doc:" + fid
+check("가져온 폴더의 하위 폴더가 노트북 트리에 표시된다",
+      set(tree_children(root_key)) == {root_key + "/A 소설", root_key + "/B 소설"})
+check("선택 중인 가져온 폴더 아래에 중복 폴더 목록을 표시하지 않는다", not a.folder_box.winfo_manager())
 
-a.doc_go(os.path.join(src, "A 소설"))
+a.go_nb(root_key + "/A 소설")
 pump(20)
-check("폴더에 들어가면 그 폴더의 파일만 보인다", titles() == ["a1.txt", "a2.txt"])
-check("하위 폴더가 없으면 폴더 줄이 없다", rows() == [])
+check("하위 폴더를 고르면 그 폴더의 파일만 보인다", titles() == ["a1.txt", "a2.txt"])
 
-a.doc_go(os.path.join(src, "B 소설"))
+a.go_nb(root_key + "/B 소설")
 pump(20)
-check("한 단계 더 안쪽 폴더도 폴더 줄로 나온다", titles() == ["b1.txt"] and any("외전" in r for r in rows()))
-a.doc_go(os.path.dirname(os.path.join(src, "B 소설")))
+check("더 깊은 하위 폴더가 부모 아래 계층으로 표시된다",
+      titles() == ["b1.txt"] and tree_children(root_key + "/B 소설") == [root_key + "/B 소설/외전"])
+a.go_nb(root_key + "/B 소설/외전")
 pump(20)
-check("위로 나오면 처음 폴더", titles() == ["루트.txt"])
+check("깊은 하위 폴더를 선택하면 그 안의 파일만 나온다", titles() == ["x.txt"])
 
-# 검색하면 하위 폴더까지 전부 찾는다
+# 부모 폴더에서 검색하면 그 아래 하위 폴더의 파일까지 찾는다
+a.go_nb(root_key)
+check("가져온 폴더 전체를 선택하면 바로 아래 파일을 표시한다", titles() == ["루트.txt"])
 a.q.set("a1")
 a.refresh()
 pump(20)
-check("검색 중에는 하위 폴더까지 찾는다", "a1.txt" in titles())
+check("검색 중에는 현재 가져온 폴더 아래를 모두 찾는다", "a1.txt" in titles())
 a.q.set("")
 a.refresh()
 pump(20)

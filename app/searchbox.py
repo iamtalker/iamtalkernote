@@ -252,6 +252,9 @@ class SearchBoxMixin:
         self.remember_search(new)
 
     def show_search_history(self):
+        if self.ac_visible() and self.ac_items and self.ac_items[0][0] == "history":
+            self.ac_pick(0)
+            return
         self.search_entry.focus_set()
         self.ac_sig = self.ac_signature()
         self.ac_show(history=True)

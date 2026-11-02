@@ -38,6 +38,16 @@ labels = list(app.ac_list.get(0, "end"))
 checks.append(labels == ["지난 검색어", "회의록"] and all("최근" not in label for label in labels))
 print(("  ✔ " if checks[-1] else "  ✘ ") + "최근 검색 버튼용 목록은 접두어 없이 검색어만 표시")
 
+app.remember_search = lambda _query: None
+app.ac_hide()
+app.q.set("현재 검색어")
+app.show_search_history()
+root.update()
+app.show_search_history()
+root.update()
+checks.append(app.q.get() == "지난 검색어" and not app.ac_visible())
+print(("  ✔ " if checks[-1] else "  ✘ ") + "최근 검색 버튼을 다시 누르면 가장 최근 검색어를 입력")
+
 app.q.set("회의")
 app.ac_show()
 root.update()

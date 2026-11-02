@@ -1389,7 +1389,10 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             s = next((x for x in self.smart_list() if "@smart:" + x["id"] == key), None)
             return s["name"] if s else tr("저장된 검색")
         if key.startswith("@doc:"):
-            f = next((f for f in self.docs.folders() if f["id"] == key[5:]), None)
+            fid, rel = self.doc_key_parts(key)
+            if rel:
+                return rel.rsplit("/", 1)[-1]
+            f = next((f for f in self.docs.folders() if f["id"] == fid), None)
             return f.get("name") or f["path"] if f else tr("가져온 폴더")
         if not key or key == ALL:
             return self.store.root_name if key == "" else tr("모든 파일")
@@ -1507,7 +1510,16 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
                 pass
         outl_names = [n for n in names if n == OUTL or n.startswith(OUTL + "/")]
         dfolders = self.docs.folders()
-        doc_keys = (["@docs"] + ["@doc:" + f["id"] for f in dfolders]) if dfolders else []
+        doc_keys = ["@docs"] if dfolders else []
+        doc_counts = self.docs.counts() if dfolders else {}
+        for folder in dfolders:
+            root_key = "@doc:" + folder["id"]
+            doc_keys.append(root_key)
+            subfolders = self.docs.subfolders(folder["id"])
+            for rel, count in sorted(subfolders.items(), key=lambda item: (item[0].count("/"), item[0].lower())):
+                doc_key = root_key + "/" + rel
+                doc_keys.append(doc_key)
+                doc_counts[doc_key] = count
         smarts = self.smart_list()
         smart_keys = (["@smarts"] + ["@smart:" + s["id"] for s in smarts]) if smarts else []
         if self.nb not in (ALL, "", FAVS, QUICK, CAL, TRASH) and self.nb not in names and self.nb not in doc_keys and self.nb not in smart_keys:
@@ -1521,7 +1533,6 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         if self.nb == FAVS and not self.feat["favs"]:
             self.nb = ALL
         self.nb_keys = [ALL] + ([QUICK] + quick if quick else []) + [""] + [n for n in names if n not in outl_names] + doc_keys + smart_keys + [TRASH]
-        dcounts = self.docs.counts() if dfolders else {}
         direct = {}
         for n in self.all_notes:
             direct[n["nb"]] = direct.get(n["nb"], 0) + 1
@@ -1546,13 +1557,18 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             elif key == CAL:
                 label, count, parent = tr("달력·할일"), sum(1 for t in self.planner.todos if not t["done"]), f"nb{idx[QUICK]}"
             elif key == ALL:
-                label, count, parent = tr("모든 파일"), len(self.all_notes) + sum(dcounts.values()), ""   # 노트 + 가져온 문서
+                label, count, parent = tr("모든 파일"), len(self.all_notes) + sum(doc_counts.get("@doc:" + f["id"], 0) for f in dfolders), ""   # 노트 + 가져온 문서
             elif key == "":
                 label, count, parent = self.store.root_name, None, ""   # 저장 폴더 줄에는 숫자를 달지 않는다(아래 노트북들이 실제 내용)
             elif key == "@docs":
-                label, count, parent = tr("가져온 폴더"), sum(dcounts.values()), ""
+                label, count, parent = tr("가져온 폴더"), sum(doc_counts.get("@doc:" + f["id"], 0) for f in dfolders), ""
             elif key.startswith("@doc:"):
-                label, count, parent = self.nb_label(key), dcounts.get(key[5:], 0), f"nb{idx['@docs']}"
+                fid, rel = self.doc_key_parts(key)
+                root_key = "@doc:" + fid
+                label = self.nb_label(key)
+                count = doc_counts.get(key, 0)
+                parent_key = root_key + ("/" + rel.rpartition("/")[0] if "/" in rel else "") if rel else "@docs"
+                parent = f"nb{idx[parent_key]}"
             elif key == "@smarts":
                 label, count, parent = tr("저장된 검색"), None, ""
             elif key.startswith("@smart:"):
@@ -1675,8 +1691,10 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             return m.tk_popup(e.x_root, e.y_root)
         if key.startswith("@doc"):   # 가져온 폴더: 원본 파일은 건드리지 않는다
             if key.startswith("@doc:"):
-                m.add_command(label=tr("다시 읽기"), command=lambda: self.scan_docs(key[5:]))
-                m.add_command(label=tr("목록에서 빼기 (원본 파일은 그대로)"), command=lambda: self.remove_doc_folder(key[5:]))
+                fid, rel = self.doc_key_parts(key)
+                m.add_command(label=tr("다시 읽기"), command=lambda: self.scan_docs(fid))
+                if not rel:
+                    m.add_command(label=tr("목록에서 빼기 (원본 파일은 그대로)"), command=lambda: self.remove_doc_folder(fid))
             else:
                 m.add_command(label=tr("모두 다시 읽기"), command=lambda: self.scan_docs())
             m.add_command(label=tr("가져오기 설정…"), command=lambda: self.show_options("imports"))
@@ -1846,7 +1864,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         if not f or not messagebox.askyesno(APP, tr('「{0}」을(를) 가져온 폴더 목록에서 뺄까요?\n(원본 파일은 그대로 두고, 이 앱의 색인만 지웁니다)').format(f['path']), parent=self.root):
             return
         self.docs.remove_folder(fid)
-        if self.nb == "@doc:" + fid:
+        if self.nb.startswith("@doc:") and self.doc_key_parts(self.nb)[0] == fid:
             self.close_note()
             self.nb = "@docs"
         self.after_docs_changed()
@@ -1906,7 +1924,17 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         keep = self.cur["path"] if self.cur else None
         self.all_notes = loaded
         if self.nb.startswith("@doc"):   # 가져온 폴더를 골랐으면 목록은 노트가 아니라 가져온 문서
-            self.notes = self.docs.list_docs(self.nb[5:] if self.nb.startswith("@doc:") else None)
+            fid = self.doc_key_parts(self.nb)[0] if self.nb.startswith("@doc:") else None
+            self.notes = self.docs.list_docs(fid)
+            if fid:
+                root = self.doc_root(fid)
+                rel = self.doc_key_parts(self.nb)[1]
+                if root:
+                    cur = self.dnorm(os.path.join(root, *rel.split("/"))) if rel else self.dnorm(root)
+                    self.notes = [n for n in self.notes if self.dnorm(os.path.dirname(n["path"])) == cur
+                                  or self.dnorm(os.path.dirname(n["path"])).startswith(cur + os.sep)]
+                else:
+                    self.notes = []
         elif self.nb == CAL:             # 달력·할일: 노트 목록에는 달력 마크다운 파일들(달마다 한 개, 눌러서 열 수 있다)
             self.notes = [n for n in self.all_notes if n["nb"] == pm.MD_DIR]
         elif self.nb == TRASH:           # 휴지통: 지운 노트를 다른 노트북과 같은 목록으로(삭제까지 남은 날 표시)
@@ -2047,10 +2075,18 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             pool = [n for n in self.notes if self.tag in n["tags"]]
         else:
             pool = self.notes
-        dctx = self.doc_context()
-        if dctx and not (self.q.get().strip() or self.d_from.get().strip() or self.d_to.get().strip() or self.tag or self.tag_none or self.adv_conditions):
-            cur = self.dnorm(dctx[1])   # 가져온 폴더: 검색 중이 아니면 지금 보는 폴더 바로 아래 파일만 보인다(하위 폴더는 위의 폴더 목록)
-            pool = [n for n in pool if self.dnorm(os.path.dirname(n["path"])) == cur]
+        if self.nb.startswith("@doc:"):
+            fid, rel = self.doc_key_parts(self.nb)
+            root = self.doc_root(fid)
+            if root:
+                cur = self.dnorm(os.path.join(root, *rel.split("/"))) if rel else self.dnorm(root)
+                searching_docs = bool(self.q.get().strip() or self.d_from.get().strip() or self.d_to.get().strip()
+                                      or self.tag or self.tag_none or self.adv_conditions)
+                if searching_docs:
+                    pool = [n for n in pool if self.dnorm(os.path.dirname(n["path"])) == cur
+                            or self.dnorm(os.path.dirname(n["path"])).startswith(cur + os.sep)]
+                else:
+                    pool = [n for n in pool if self.dnorm(os.path.dirname(n["path"])) == cur]
         self.bad_dates = search.bad_dates(self.q.get(), self.d_from.get(), self.d_to.get()) + search.bad_advanced_dates(self.adv_conditions)
         if self.bad_dates:   # 날짜를 읽을 수 없으면 기간 없이 찾지 말고 비워서 알린다
             self.results, self.words = [], []
@@ -2066,82 +2102,18 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
     def dnorm(path):
         return os.path.normcase(os.path.normpath(path))
 
-    def doc_context(self):
-        """가져온 폴더를 보는 중이면 (그 폴더의 맨 위 경로, 지금 보는 폴더 경로), 아니면 None"""
-        if not self.nb.startswith("@doc:"):
-            return None
-        f = next((f for f in self.docs.folders() if f["id"] == self.nb[5:]), None)
-        if not f:
-            return None
-        root = os.path.normpath(f["path"])
-        cur = getattr(self, "doc_dir", None)
-        if getattr(self, "_doc_nb", None) != self.nb or not cur or not (self.dnorm(cur) == self.dnorm(root) or self.dnorm(cur).startswith(self.dnorm(root) + os.sep)):
-            cur = root
-            self.doc_dir, self._doc_nb = root, self.nb
-        return root, cur
+    @staticmethod
+    def doc_key_parts(key):
+        """가져온 폴더 노드 키 → (등록 폴더 ID, 상대 하위 폴더 경로)."""
+        fid, _, rel = key[5:].partition("/")
+        return fid, rel
 
-    def doc_go(self, path):
-        self.doc_dir = path
-        self.refresh()
-
-    def update_doc_rows(self, ctx):
-        """가져온 폴더 안의 하위 폴더를 목록 맨 위에 보인다(폴더가 많아도 스크롤). 눌러서 들어가고, '위로' 로 나온다"""
-        root, cur = ctx
-        subs = {}
-        base = self.dnorm(cur)
-        for n in self.notes:
-            d = self.dnorm(os.path.dirname(n["path"]))
-            if d == base or not d.startswith(base + os.sep):
-                continue
-            first = os.path.relpath(os.path.dirname(n["path"]), cur).split(os.sep)[0]
-            subs[first] = subs.get(first, 0) + 1
-        names = sorted(subs, key=str.lower)
-        sig = (self.nb, base, tuple((k, subs[k]) for k in names))
-        box = getattr(self, "docdir_box", None)
-        if box is None:
-            box = self.docdir_box = tk.Frame(self.folder_box.master, bg=C["bg"])
-        self.folder_box.pack_forget()
-        if getattr(self, "_docdir_sig", None) == sig and box.winfo_manager():
-            return
-        self._docdir_sig = sig
-        for w in box.winfo_children():
-            w.destroy()
-        if not names and self.dnorm(root) == base:
-            box.pack_forget()
-            return
-        box.pack(fill="x", before=self.list_body, pady=(4, 2))
-        head = tk.Frame(box, bg=C["bg"])
-        head.pack(fill="x")
-        rel = os.path.relpath(cur, root)
-        tk.Label(head, text="📂  " + (os.path.basename(root) if rel == "." else os.path.basename(root) + os.sep + rel), anchor="w", bg=C["bg"], fg=C["text"],
-                 font=(self.ui, 10, "bold"), padx=18).pack(side="left", fill="x", expand=True)
-        if self.dnorm(root) != base:
-            up = tk.Label(head, text=tr("⬆ 위로"), bg=C["bg"], fg=C["accent"], font=(self.ui, 10), padx=12, cursor="hand2")
-            up.pack(side="right")
-            up.bind("<Button-1>", lambda e: self.doc_go(os.path.dirname(cur)))
-        if not names:
-            return
-        wrap = tk.Frame(box, bg=C["bg"])
-        wrap.pack(fill="x", padx=(18, 8))
-        lb = tk.Listbox(wrap, height=min(len(names), 8), activestyle="none", exportselection=False, bg=C["bg"], fg=C["accent"], font=(self.ui, 10),
-                        relief="flat", borderwidth=0, highlightthickness=0, selectbackground=C["soft"], selectforeground=C["accent"])
-        for k in names:
-            lb.insert("end", f"📁  {k}   ({subs[k]:,})")
-        if len(names) > 8:
-            sb = ttk.Scrollbar(wrap, orient="vertical", command=lb.yview)
-            lb.config(yscrollcommand=sb.set)
-            sb.pack(side="right", fill="y")
-        lb.pack(side="left", fill="x", expand=True)
-        lb.bind("<<ListboxSelect>>", lambda e: (lb.curselection() and self.doc_go(os.path.join(cur, names[lb.curselection()[0]]))))
+    def doc_root(self, fid):
+        folder = next((f for f in self.docs.folders() if f["id"] == fid), None)
+        return os.path.normpath(folder["path"]) if folder else None
 
     def update_folder_rows(self):
         """고른 노트북 바로 아래의 하위 노트북을 노트 목록 맨 위에 폴더 줄로 보인다(저장 폴더를 고르면 ScrapBook 같은 노트북들)"""
-        ctx = self.doc_context()
-        if ctx:
-            return self.update_doc_rows(ctx)
-        if getattr(self, "docdir_box", None) is not None:
-            self.docdir_box.pack_forget()
-            self._docdir_sig = None
         box = self.folder_box
         kids = []
         if self.nb == "" or (self.nb and not self.nb.startswith("@") and self.nb != ALL):

@@ -5,6 +5,7 @@ import re
 import time
 
 TOKEN_RE = re.compile(r'"([^"]*)"|\(|\)|&+|\|+|!+|\bAND\b|\bOR\b|\bNOT\b|[^\s&|]+')
+TAG_QUERY_RE = re.compile(r"#([A-Za-z_가-힣][\w가-힣\-]*)\Z")
 
 
 def tokenize(q):
@@ -81,24 +82,28 @@ def parse(q):
                 nxt()
             return node
         if k == "WORD":
-            return ("WORD", nxt()[1].lower())
+            word = nxt()[1]
+            tag = TAG_QUERY_RE.fullmatch(word)
+            return ("TAG", tag.group(1)) if tag else ("WORD", word.lower())
         return None
 
     return p_or() if tokens else None
 
 
-def match(node, hay):
+def match(node, hay, tags=()):
     if node is None:
         return True
     op = node[0]
     if op == "WORD":
         return node[1] in hay
+    if op == "TAG":
+        return node[1] in tags
     if op == "AND":
-        return match(node[1], hay) and match(node[2], hay)
+        return match(node[1], hay, tags) and match(node[2], hay, tags)
     if op == "OR":
-        return match(node[1], hay) or match(node[2], hay)
+        return match(node[1], hay, tags) or match(node[2], hay, tags)
     if op == "NOT":
-        return match(node[1], hay) and not match(node[2], hay)
+        return match(node[1], hay, tags) and not match(node[2], hay, tags)
     return True
 
 
@@ -108,6 +113,8 @@ def positive_words(node, out=None):
         return out
     if node[0] == "WORD":
         out.append(node[1])
+    elif node[0] == "TAG":
+        pass
     elif node[0] == "NOT":
         positive_words(node[1], out)
     else:
@@ -233,7 +240,7 @@ def run(notes, query="", sort="relevance", asc=False, date_from="", date_to="", 
             else:
                 if "_hay" not in n:
                     n["_hay"] = (n["title"] + "\n" + (n.read() if hasattr(n, "read") else n["body"])).lower()
-                if not match(node, n["_hay"]):
+                if not match(node, n["_hay"], n.get("tags", ())):
                     continue
         out.append(n)
     if sort == "relevance" and q:

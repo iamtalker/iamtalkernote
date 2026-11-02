@@ -220,6 +220,9 @@ def sql_cond(node, params):
     if node[0] == "WORD":
         params.append(node[1].encode("utf-8"))
         return "instr(hay, ?) > 0"
+    if node[0] == "TAG":
+        params.append(json.dumps(node[1], ensure_ascii=False))
+        return "EXISTS (SELECT 1 FROM annot WHERE annot.path = docs.path AND instr(annot.tags, ?) > 0)"
     left, right = sql_cond(node[1], params), sql_cond(node[2], params)
     return f"({left} {'AND' if node[0] in ('AND', 'NOT') else 'OR'}{' NOT' if node[0] == 'NOT' else ''} {right})"
 
@@ -525,6 +528,34 @@ class DocIndex:
             return dict(conn.execute("SELECT folder, COUNT(*) FROM docs GROUP BY folder"))
         finally:
             conn.close()
+
+    def subfolders(self, fid):
+        """가져온 폴더의 색인된 파일을 포함하는 하위 폴더와 각 폴더의 하위 파일 수."""
+        folder = next((f for f in self.folders() if f["id"] == fid), None)
+        if not folder:
+            return {}
+        root = os.path.abspath(folder["path"])
+        root_key = os.path.normcase(root)
+        conn = self._db()
+        try:
+            paths = [row[0] for row in conn.execute("SELECT path FROM docs WHERE folder=?", (fid,))]
+        finally:
+            conn.close()
+        counts = {}
+        for path in paths:
+            parent = os.path.abspath(os.path.dirname(path))
+            try:
+                inside = os.path.normcase(os.path.commonpath((root, parent))) == root_key
+            except ValueError:
+                inside = False
+            if not inside or os.path.normcase(parent) == root_key:
+                continue
+            rel = os.path.relpath(parent, root).replace("\\", "/")
+            parts = rel.split("/")
+            for i in range(1, len(parts) + 1):
+                key = "/".join(parts[:i])
+                counts[key] = counts.get(key, 0) + 1
+        return counts
 
     def body(self, path):
         conn = self._db()
