@@ -51,6 +51,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             pass
         self.doc_open = False          # 가져온 문서(읽기 전용)를 열어 둔 중인가
         self.doc_scanning = False      # 가져온 폴더를 뒤에서 다시 읽는 중인가(겹쳐 돌지 않게)
+        self.doc_scan_progress = None
         self.pv = winpreview.Preview() # 윈도 미리보기 처리기(pdf → Edge, mp3 → Media Player …)
         self.pv_active = False         # 지금 노트 화면에 윈도 미리보기를 띄워 두었는가
         self.snap = sn.Snapshots(self.store)   # 복원 지점
@@ -66,6 +67,9 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         self.feat["gongsu"] = bool(cfg.get("cal_gongsu", False))   # 공수달력은 기본으로 꺼져 있고 체크해서 켠다
         self.nb = win.get("nb") if isinstance(win.get("nb"), str) and not win["nb"].startswith("@smart") else ALL   # '*' 모든 노트 · '' 기본 · 그 밖은 노트북 폴더 이름(없어졌으면 읽은 뒤 '*' 로)
         self.tag = None                # 태그로 거르는 중이면 그 태그
+        self.tag_none = False
+        self.tag_global = bool(cfg.get("tagGlobal", False))
+        self.adv_conditions = []
         self.nb_keys, self.tag_keys = [], []
         self.all_notes, self.notes, self.results, self.words = [], [], [], []
         self.cards = []                # 목록에 그려진 카드 → note
@@ -79,9 +83,12 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         self.load_prog = (0, 0)        # 처음 색인을 만들 때의 진행(읽은 수, 총 수)
         self.dirty = self.loading = self.quiet = False
         self.save_job = self.render_job = self.search_job = None
+        self.title_save_job = None
         self.resize_job = None        # 렌더링 칸 너비가 바뀐 뒤 그림 크기를 다시 맞추는 예약
         self.img_w_used, self.has_imgs = None, False   # 마지막으로 그릴 때 쓴 그림 너비 / 그 글에 그림이 있는지
         self.imgs, self.img_q, self.photos = {}, queue.Queue(), []
+        self.local_img_q, self.local_img_lock, self.local_img_worker = queue.Queue(), threading.Lock(), False
+        self.gif_jobs, self.gif_sources, self.gif_generation = set(), [], 0
         self.multi = {}       # 목록에서 Shift/Ctrl+클릭으로 고른 노트들 {경로: 노트} (한 개만 고르면 비어 있다)
         self.anchor = None    # Shift+클릭 범위의 시작 노트 경로
         self.img_files = {}   # 렌더링 화면 속 그림 이름 → 원본 파일 경로(우클릭 "파일 위치 열기"용)
@@ -802,6 +809,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             self.tip(lb, tr("누르면 고른 태그가 풀립니다"))
         if action:
             Btn(h, "＋", action, kind="ghost", bg=C["bg"], padx=6, pady=0).pack(side="right")
+        return h
 
     def fit_count(self, tree, texts):
         """숫자 칸의 폭을 가장 긴 숫자에 맞춘다(고정 폭이면 13,902 같은 큰 수가 잘린다)"""
@@ -833,7 +841,11 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         self.nbtree.bind("<Button-3>", self.on_nb_menu)
         self.nbmenu = tk.Menu(self.root, tearoff=0)
         self.tag_sec = tk.Frame(self.left_pane, bg=C["bg"])
-        self.section_head(self.tag_sec, tr("태그"), clear=self.clear_tag)
+        tag_head = self.section_head(self.tag_sec, tr("태그"), clear=self.clear_tag)
+        self.tag_scope_btn = Btn(tag_head, tr("전체 범위") if self.tag_global else tr("현재 범위"), self.toggle_tag_scope,
+                                 kind="ghost", padx=5, pady=0, font=(self.ui, 8))
+        self.tag_scope_btn.pack(side="right")
+        self.tip(self.tag_scope_btn, tr("태그 목록 범위를 전체와 현재 노트북 사이에서 바꿉니다"))
         self.tagtree = self.make_tree(self.tag_sec)
         self.tagtree.config(selectmode="extended")   # Ctrl/Shift+클릭으로 태그 여러 개를 골라 한꺼번에 이름 변경·삭제
         self.tagtree.bind("<ButtonRelease-1>", self.on_tag_click)
@@ -851,6 +863,8 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         refresh.pack(side="right", padx=(8, 0))
         self.tip(refresh, tr("새로 고침 (F5): 탐색기 등 앱 밖에서 폴더·노트를 지우거나 옮겼을 때 다시 읽습니다"))
         Btn(top, tr("검색"), self.search_now, pady=6).pack(side="right", padx=(8, 0))   # 치는 즉시 검색하지만, 눌러서 바로 다시 검색할 수도 있다
+        self.advanced_search_btn = Btn(top, tr("고급 검색"), self.open_advanced_search, pady=6)
+        self.advanced_search_btn.pack(side="right", padx=(8, 0))
         box = tk.Frame(top, bg=C["panel"], highlightthickness=1, highlightbackground=C["line"], highlightcolor=C["accent"])
         box.pack(side="left", fill="x", expand=True)
         self.q = tk.StringVar()
@@ -858,7 +872,13 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         self.search_entry = tk.Entry(box, textvariable=self.q, relief="flat", bd=0, bg=C["panel"], fg=C["text"],
                                      insertbackground=C["text"], insertwidth=2, insertborderwidth=0, insertontime=600, insertofftime=400,
                                      font=(self.ui, 10))   # 세로 막대 커서가 깜빡인다
-        self.search_entry.pack(fill="x", padx=(10, 28), pady=7)
+        self.search_entry.pack(fill="x", padx=(10, 52), pady=7)
+        self.history_btn = tk.Label(box, text="◷", bg=C["panel"], fg=C["muted"], font=(self.ui, 12), cursor="hand2")
+        self.history_btn.place(relx=1.0, x=-30, rely=0.5, anchor="e")
+        self.history_btn.bind("<Button-1>", lambda e: self.show_search_history())
+        self.history_btn.bind("<Enter>", lambda e: self.history_btn.config(fg=C["text"]))
+        self.history_btn.bind("<Leave>", lambda e: self.history_btn.config(fg=C["muted"]))
+        self.tip(self.history_btn, tr("최근 검색"))
         self.clear_btn = tk.Label(box, text="×", bg=C["panel"], fg=C["muted"], font=(self.ui, 13), cursor="hand2")   # 오른쪽 끝 × : 검색 초기화
         self.clear_btn.bind("<Button-1>", lambda e: self.clear_search())
         self.clear_btn.bind("<Enter>", lambda e: self.clear_btn.config(fg=C["text"]))
@@ -876,14 +896,14 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         self.b_date = Btn(bar, tr("기간"), self.toggle_date, padx=6, pady=3)
         for b in (*self.sort_btns.values(), self.b_date):
             b.pack(side="left", padx=1)
-        # 가져온 파일의 '문서 안 글'까지 찾을지(끄면 이름·경로·태그·메모만 찾아서 빠르고 결과가 짧다). 가져온 폴더가 있을 때만 보인다
+        # 가져온 파일의 본문까지 찾을지. 가져온 폴더가 있을 때만 보인다.
         self.v_content = tk.BooleanVar(value=self.docs.content_search)
         self.opt_row = tk.Frame(f, bg=C["bg"])      # 정렬 줄이 이미 꽉 차서 체크박스는 아래 줄에 둔다
-        self.cb_content = tk.Checkbutton(self.opt_row, text=tr("문서 안 글 포함"), variable=self.v_content, command=self.on_content_toggle, relief="flat",
+        self.cb_content = tk.Checkbutton(self.opt_row, text=tr("문서 내부 검색"), variable=self.v_content, command=self.on_content_toggle, relief="flat",
                                          bd=0, takefocus=False, bg=C["bg"], fg=C["sub"], activebackground=C["soft"], selectcolor=C["bg"],
                                          cursor="hand2", font=(self.ui, 9))
         self.cb_content.pack(side="left")
-        self.tip(self.cb_content, tr("켜면 가져온 pdf·txt 등의 본문까지 찾고, 끄면 파일 이름·경로·태그·메모만 찾습니다"))
+        self.tip(self.cb_content, tr("켜면 가져온 pdf·txt 등의 본문까지 찾고, 끄면 파일 제목만 찾습니다"))
         b_save = Btn(bar, tr("저장"), self.save_search, padx=6, pady=3)   # 지금의 검색식·기간·태그·정렬을 '저장된 검색'으로
         b_save.pack(side="right", padx=1)
         self.tip(b_save, tr("지금의 검색을 왼쪽 '저장된 검색'에 이름을 붙여 저장합니다(스마트 폴더)"))
@@ -953,7 +973,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         self.update_placeholder()
 
     def update_content_check(self):
-        """'문서 안 글 포함' 체크박스는 가져온 폴더가 있을 때만 보인다"""
+        """'문서 내부 검색' 체크박스는 가져온 폴더가 있을 때만 보인다"""
         if self.docs.folders():
             if not self.opt_row.winfo_ismapped():
                 self.opt_row.pack(fill="x", padx=14, before=self.count)
@@ -1006,6 +1026,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         head = tk.Frame(self.main, bg=C["bg"])
         head.pack(fill="x", padx=18, pady=(14, 6))
         self.title_var = tk.StringVar()
+        self.title_var.trace_add("write", self.schedule_title_commit)
         # 문법 체크박스(위키나루처럼): 제목줄 맨 오른쪽, 노트 속성(ⓘ) 아이콘의 오른쪽
         sb = tk.Checkbutton(head, text=tr("문법"), variable=self.v["syntax"], command=self.on_view_toggle, relief="flat", bd=0,
                             takefocus=False, bg=C["bg"], fg=C["text"], activebackground=C["soft"], selectcolor=C["bg"],
@@ -1036,19 +1057,20 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
                                     bg=C["bg"], fg=C["text"], insertbackground=C["accent"], width=8)
         self.title_entry.pack(side="left", fill="x", expand=True, ipady=3)
         self.title_entry.bind("<Return>", lambda e: (self.commit_title(), self.text.focus_set()))
-        self.title_entry.bind("<FocusOut>", lambda e: self.commit_title())
+        self.title_entry.bind("<FocusOut>", lambda e: self.schedule_title_commit())
 
+        self.tag_row = tk.Frame(self.main, bg=C["bg"])
+        self.tag_row.pack(fill="x", padx=18, pady=(0, 3))
+        self.tagbtn = tk.Label(self.tag_row, text="", anchor="w", bg=C["bg"], fg=C["accent"], font=(self.ui, 9), cursor="hand2", pady=2)
+        self.tagbtn.pack(side="left")
+        self.tagbtn.bind("<Button-1>", self.edit_tags)
+        self.tagbtn.bind("<Enter>", lambda e: self.tagbtn.config(font=(self.ui, 9, "underline")))
+        self.tagbtn.bind("<Leave>", lambda e: self.tagbtn.config(font=(self.ui, 9)))
         tk.Frame(self.main, height=1, bg=C["line"]).pack(fill="x")
         self.statusbar = tk.Frame(self.main, bg=C["bg"])
         self.statusbar.pack(side="bottom", fill="x")
         self.status = tk.Label(self.statusbar, text="", anchor="w", bg=C["bg"], fg=C["muted"], font=(self.ui, 9), padx=18, pady=4)
         self.status.pack(side="left")
-        # 맨 아래 줄의 태그 부분: 누르면 그 자리에서 바로 태그를 고친다
-        self.tagbtn = tk.Label(self.statusbar, text="", anchor="w", bg=C["bg"], fg=C["accent"], font=(self.ui, 9), cursor="hand2", pady=4)
-        self.tagbtn.pack(side="left")
-        self.tagbtn.bind("<Button-1>", self.edit_tags)
-        self.tagbtn.bind("<Enter>", lambda e: self.tagbtn.config(font=(self.ui, 9, "underline")))
-        self.tagbtn.bind("<Leave>", lambda e: self.tagbtn.config(font=(self.ui, 9)))
         self.tag_edit = None   # 태그를 고치는 중이면 그 하단 박스(tagac.TagBox)
         self.status_sep = tk.Frame(self.main, height=1, bg=C["line"])
         self.status_sep.pack(side="bottom", fill="x")
@@ -1080,6 +1102,13 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         # 원문 편집 칸 위의 최소 서식 툴바(원문만·좌우 분할에서도 서식과 그림 첨부를 쓸 수 있게)
         tools = self.edit_tools = tk.Frame(self.edit_frame, bg=C["panel"])
         tools.pack(fill="x", padx=10, pady=(0, 4))
+        self.undo_btn = Btn(tools, "↶", lambda: self.text_do("edit_undo"), kind="icon", padx=8, pady=1)
+        self.redo_btn = Btn(tools, "↷", lambda: self.text_do("edit_redo"), kind="icon", padx=8, pady=1)
+        self.undo_btn.pack(side="left", padx=1)
+        self.redo_btn.pack(side="left", padx=1)
+        self.tip(self.undo_btn, tr("실행 취소 (Ctrl+Z)"))
+        self.tip(self.redo_btn, tr("다시 실행 (Ctrl+Y)"))
+        tk.Frame(tools, width=1, bg=C["line"]).pack(side="left", fill="y", padx=6, pady=3)
         for label, hint, act in (("B", tr("굵게 (Ctrl+B)"), ("wrap", "b")), ("I", tr("기울임 (Ctrl+I)"), ("wrap", "i")), ("S", tr("취소선"), ("wrap", "s")),
                                  ("H", tr("제목"), ("heading", 2)), ("•", tr("글머리 목록"), ("line", "ul")), ("1.", tr("번호 목록"), ("line", "ol")),
                                  ("☐", tr("할 일"), ("line", "task")), ("❝", tr("인용"), ("line", "quote")), ("</>", tr("코드"), ("wrap", "code")),
@@ -1384,17 +1413,19 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
     def save_search(self, overwrite=None):
         """지금의 검색(검색어·기간·태그·정렬)을 저장한다. overwrite 는 덮어쓸 저장된 검색의 id"""
         q, f, t, tag = self.q.get().strip(), self.d_from.get().strip(), self.d_to.get().strip(), self.tag
-        if not (q or f or t or tag):
+        if not (q or f or t or tag or self.tag_none or self.adv_conditions):
             return messagebox.showinfo(APP, tr("저장할 검색이 없습니다. 검색어나 기간, 태그를 먼저 정하세요."), parent=self.root)
         lst = self.smart_list()
-        cond = {"q": q, "d_from": f, "d_to": t, "tag": tag or "", "sort": self.sort, "asc": self.asc}
+        cond = {"q": q, "d_from": f, "d_to": t, "tag": tag or "", "tag_none": self.tag_none,
+                "advanced": [dict(x) for x in self.adv_conditions], "sort": self.sort, "asc": self.asc}
         if overwrite:
             for s in lst:
                 if s["id"] == overwrite:
                     s.update(cond)
             sid = overwrite
         else:
-            name = simpledialog.askstring(tr("검색 저장"), tr("이 검색의 이름:"), initialvalue=q or (f"# {tag}" if tag else tr("검색")), parent=self.root)
+            default_name = "태그 없음" if self.tag_none else f"# {tag}" if tag else "고급 검색" if self.adv_conditions else "검색"
+            name = simpledialog.askstring(tr("검색 저장"), tr("이 검색의 이름:"), initialvalue=q or tr(default_name), parent=self.root)
             if not name or not name.strip():
                 return
             sid = secrets.token_hex(4)
@@ -1412,6 +1443,8 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         self.close_note()
         self.nb = key
         self.tag = s.get("tag") or None
+        self.tag_none = bool(s.get("tag_none", False))
+        self.adv_conditions = [dict(x) for x in s.get("advanced", []) if isinstance(x, dict)]
         self.sort, self.asc = (s.get("sort") if s.get("sort") in self.sort_names else "relevance"), bool(s.get("asc"))
         self.d_from.set(s.get("d_from", ""))
         self.d_to.set(s.get("d_to", ""))
@@ -1472,19 +1505,22 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
                 names = self.visible_notebooks()
             except OSError:
                 pass
+        outl_names = [n for n in names if n == OUTL or n.startswith(OUTL + "/")]
         dfolders = self.docs.folders()
         doc_keys = (["@docs"] + ["@doc:" + f["id"] for f in dfolders]) if dfolders else []
         smarts = self.smart_list()
         smart_keys = (["@smarts"] + ["@smart:" + s["id"] for s in smarts]) if smarts else []
         if self.nb not in (ALL, "", FAVS, QUICK, CAL, TRASH) and self.nb not in names and self.nb not in doc_keys and self.nb not in smart_keys:
             self.nb = ALL
-        outl = [n for n in names if n == OUTL or n.startswith(OUTL + "/")] if self.feat["outl"] else []
+        if not self.feat["outl"] and self.nb in outl_names:
+            self.nb = ALL
+        outl = outl_names if self.feat["outl"] else []
         quick = ([FAVS] if self.feat["favs"] else []) + outl + ([CAL] if self.feat["cal"] else [])
         if self.nb == CAL and not self.feat["cal"]:
             self.nb = ALL
         if self.nb == FAVS and not self.feat["favs"]:
             self.nb = ALL
-        self.nb_keys = [ALL] + ([QUICK] + quick if quick else []) + [""] + [n for n in names if n not in outl] + doc_keys + smart_keys + [TRASH]
+        self.nb_keys = [ALL] + ([QUICK] + quick if quick else []) + [""] + [n for n in names if n not in outl_names] + doc_keys + smart_keys + [TRASH]
         dcounts = self.docs.counts() if dfolders else {}
         direct = {}
         for n in self.all_notes:
@@ -1542,24 +1578,45 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         if not self.show["tags"]:
             return   # 태그 보기를 켤 때 만든다(태그가 많으면 느리다)
         counts = {}
-        for n in self.all_notes:
+        if self.tag_global:
+            sources = self.all_notes
+            doc_counts = self.docs.tag_counts()
+            untagged = sum(not n["tags"] for n in sources) + self.docs.untagged_count()
+        else:
+            sources = self.notes
+            doc_counts = {}
+            untagged = sum(not n["tags"] for n in sources)
+        for n in sources:
             for t in n["tags"]:
                 counts[t] = counts.get(t, 0) + 1
-        for t, c in self.docs.tag_counts().items():   # 가져온 파일에 붙인 태그도 같은 목록에
+        for t, c in doc_counts.items():
             counts[t] = counts.get(t, 0) + c
-        self.tag_keys = sorted(counts, key=lambda t: (-counts[t], t.lower()))
+        self.tag_keys = [None] + sorted(counts, key=lambda t: (-counts[t], t.lower()))
         self.quiet = True
         self.tagtree.delete(*self.tagtree.get_children())
-        for i, t in enumerate(self.tag_keys):
+        self.tagtree.insert("", "end", iid="tg0", text=f"  {tr('태그 없음')}   {untagged:,}", values=(f"{untagged:,}",))
+        for i, t in enumerate(self.tag_keys[1:], 1):
             self.tagtree.insert("", "end", iid=f"tg{i}", text="  # " + t + f"   {counts[t]:,}", values=(f"{counts[t]:,}",))
-        if self.tag in self.tag_keys:
+        selection = self.tagtree.selection()
+        if selection:
+            self.tagtree.selection_remove(*selection)
+        if self.tag_none:
+            self.tagtree.selection_set("tg0")
+        elif self.tag in self.tag_keys[1:]:
             self.tagtree.selection_set(f"tg{self.tag_keys.index(self.tag)}")
-        self.fit_count(self.tagtree, [f"{c:,}" for c in list(counts.values())[:200]])
+        self.fit_count(self.tagtree, [f"{untagged:,}"] + [f"{c:,}" for c in list(counts.values())[:200]])
         self.quiet = False
 
+    def toggle_tag_scope(self):
+        self.tag_global = not self.tag_global
+        st.write_config(tagGlobal=self.tag_global)
+        self.tag_scope_btn.config(text=tr("전체 범위") if self.tag_global else tr("현재 범위"))
+        self.reload_tags()
+
     def clear_tag(self):
-        if self.tag:
+        if self.tag or self.tag_none:
             self.tag = None
+            self.tag_none = False
             self.tagtree.selection_remove(*self.tagtree.selection())
             self.refresh()
 
@@ -1568,8 +1625,13 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         if not row or e.state & 0x5:   # Ctrl/Shift+클릭은 여러 개 고르기라서 노트를 거르지 않는다
             return
         tag = self.tag_keys[int(row[2:])]
-        self.tag = None if tag == self.tag else tag   # 선택된 태그를 다시 누르면 해제
-        if self.tag is None:
+        if tag is None:
+            self.tag_none = not self.tag_none
+            self.tag = None
+        else:
+            self.tag_none = False
+            self.tag = None if tag == self.tag else tag   # 선택된 태그를 다시 누르면 해제
+        if self.tag is None and not self.tag_none:
             self.tagtree.selection_remove(*self.tagtree.selection())
         self.refresh()
 
@@ -1687,7 +1749,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             except (OSError, ValueError) as ex:
                 return messagebox.showerror(APP, str(ex), parent=self.root)
             self.hist, self.hpos = [], -1
-            self.nb, self.tag = ALL, None
+            self.nb, self.tag, self.tag_none, self.adv_conditions = ALL, None, False, []
             self.close_note()
             self.reload_notes()
             self.status.config(text=tr("저장 폴더의 내용을 휴지통으로 보냈습니다. (파일 → 휴지통에서 복원)"))
@@ -1699,7 +1761,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             return False
         self.flush()
         self.store.set_root(d)
-        self.nb, self.tag = ALL, None
+        self.nb, self.tag, self.tag_none, self.adv_conditions = ALL, None, False, []
         self.hist, self.hpos = [], -1
         self.close_note()
         self.reload_notes()
@@ -1718,11 +1780,21 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         if not self.docs.folders():
             return
 
+        def work(prog, cancel):
+            def update(d, total, phase=None):
+                self.doc_scan_progress = {"done": d, "total": total, "phase": phase}
+                prog(d, total, phase)
+            try:
+                return self.docs.scan(update, cancel, only)
+            finally:
+                self.doc_scan_progress = None
+
         def done(res):
             read, gone, total = res
             self.after_docs_changed()
             self.status.config(text=tr('가져온 폴더: 파일 {0:,}개 (새로 읽은 것 {1:,}, 사라진 것 {2:,})').format(total, read, gone))
-        self.run_task(tr("가져온 폴더 읽는 중"), lambda prog, cancel: self.docs.scan(prog, cancel, only), done,
+        self.doc_scan_progress = {"done": 0, "total": 0, "phase": None}
+        self.run_task(tr("가져온 폴더 읽는 중"), work, done,
                       text=tr("가져온 폴더의 문서를 읽는 중… (처음 한 번은 오래 걸립니다)"))
 
     def auto_scan_docs(self):
@@ -1737,10 +1809,14 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         self.doc_scanning = True
         q = queue.Queue()
         prog = {"v": None}   # (읽은 수, 읽을 수, 지금 읽는 파일) — 뒤에서 읽는 동안 아래 상태 줄에 보인다
+        self.doc_scan_progress = {"done": 0, "total": 0, "phase": None}
 
         def job():
             try:
-                q.put(("ok", self.docs.scan(lambda d, tot, phase=None: prog.update(v=(d, tot, phase)))))
+                def update(d, total, phase=None):
+                    prog.update(v=(d, total, phase))
+                    self.doc_scan_progress = {"done": d, "total": total, "phase": phase}
+                q.put(("ok", self.docs.scan(update)))
             except Exception as ex:  # noqa: BLE001
                 q.put(("err", str(ex)))
         threading.Thread(target=job, daemon=True).start()
@@ -1754,6 +1830,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
                     self.status.config(text=tr('가져온 폴더 문서 읽는 중… {0:,} / {1:,}   {2}').format(v[0], v[1], (v[2] or "").replace("읽는 중 — ", "").strip()))
                 return self.root.after(1000, poll)
             self.doc_scanning = False
+            self.doc_scan_progress = None
             if prog["v"]:   # 진행 글을 지우고 원래 상태 줄로 되돌린다(열린 노트가 없으면 update_status 가 아무것도 안 하니 먼저 비운다)
                 self.status.config(text="")
                 try:
@@ -1852,6 +1929,110 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         self.refresh()
         self.search_entry.focus_set()
 
+    def open_advanced_search(self):
+        top = tk.Toplevel(self.root)
+        top.title(tr("고급 검색"))
+        top.configure(bg=C["bg"])
+        top.transient(self.root)
+        top.resizable(False, False)
+        top.geometry(f"700x310+{self.root.winfo_x() + 100}+{self.root.winfo_y() + 80}")
+        tk.Label(top, text=tr("조건을 고르고 AND·OR·NOT으로 결합합니다. NOT은 앞 조건에 이어 제외합니다."),
+                 bg=C["bg"], fg=C["muted"], font=(self.ui, 9), anchor="w", padx=16, pady=10).pack(fill="x")
+
+        old = {c.get("field"): c for c in self.adv_conditions if isinstance(c, dict)}
+        known_tags = {t for n in self.all_notes for t in n["tags"]}
+        known_tags.update(self.docs.tag_counts())
+        no_tag_label = "◌ " + tr("태그 없음")
+        tag_options = [no_tag_label] + ["#" + t for t in sorted(known_tags, key=str.lower)]
+        folders = self.docs.folders()
+        folder_labels = [f'{f.get("name") or f["path"]} ({f["path"]})' for f in folders]
+        folder_by_label = dict(zip(folder_labels, (f["id"] for f in folders)))
+        extensions = sorted({"md"} | {str(x).lower().lstrip(".") for x in self.docs.cfg().get("exts", []) if x})
+
+        body = tk.Frame(top, bg=C["bg"], padx=16)
+        body.pack(fill="both", expand=True)
+        rows = []
+
+        def add_row(field, label, value):
+            previous = old.get(field, {})
+            row = tk.Frame(body, bg=C["bg"])
+            row.pack(fill="x", pady=3)
+            enabled = tk.BooleanVar(value=field in old)
+            tk.Checkbutton(row, text=tr(label), variable=enabled, bg=C["bg"], fg=C["text"], activebackground=C["bg"],
+                           selectcolor=C["bg"], font=(self.ui, 9), width=15, anchor="w").pack(side="left")
+            op = tk.StringVar(value=previous.get("op", "AND"))
+            combo = ttk.Combobox(row, textvariable=op, values=("AND", "OR", "NOT"), width=6, state="readonly")
+            combo.pack(side="left", padx=(0, 8))
+            entry = None
+            if field == "date":
+                start = tk.StringVar(value=previous.get("from", ""))
+                end = tk.StringVar(value=previous.get("to", ""))
+                tk.Label(row, text=tr("시작"), bg=C["bg"], fg=C["muted"], font=(self.ui, 9)).pack(side="left")
+                tk.Entry(row, textvariable=start, width=13).pack(side="left", padx=(4, 10))
+                tk.Label(row, text=tr("끝"), bg=C["bg"], fg=C["muted"], font=(self.ui, 9)).pack(side="left")
+                tk.Entry(row, textvariable=end, width=13).pack(side="left", padx=(4, 0))
+                entry = (start, end)
+            else:
+                options = {"tag": tag_options, "folder": folder_labels, "extension": extensions}[field]
+                entry = tk.StringVar()
+                if field == "tag":
+                    entry.set(no_tag_label if previous.get("untagged") else "#" + previous.get("value", "") if previous else "")
+                elif field == "folder":
+                    entry.set(next((name for name, fid in folder_by_label.items() if fid == previous.get("value")), ""))
+                else:
+                    entry.set(previous.get("value", ""))
+                ttk.Combobox(row, textvariable=entry, values=options, width=42, state="readonly").pack(side="left", fill="x", expand=True)
+            rows.append((field, enabled, op, entry))
+
+        add_row("date", "기간", None)
+        add_row("tag", "태그", None)
+        add_row("folder", "가져온 폴더", None)
+        add_row("extension", "확장자", None)
+
+        def apply():
+            conditions = []
+            for field, enabled, op, value in rows:
+                if not enabled.get():
+                    continue
+                cond = {"field": field}
+                if field == "date":
+                    start, end = (v.get().strip() for v in value)
+                    if not start and not end:
+                        return messagebox.showinfo(APP, tr("기간을 하나 이상 입력하세요."), parent=top)
+                    if (start and search.parse_date(start) is None) or (end and search.parse_date(end, True) is None):
+                        return messagebox.showerror(APP, tr("날짜 형식을 확인하세요. 예: 20240131"), parent=top)
+                    cond.update({"from": start, "to": end})
+                elif field == "tag":
+                    selected = value.get()
+                    if not selected:
+                        return messagebox.showinfo(APP, tr("태그를 선택하세요."), parent=top)
+                    if selected == no_tag_label:
+                        cond["untagged"] = True
+                    else:
+                        cond["value"] = selected[1:] if selected.startswith("#") else selected
+                elif field == "folder":
+                    selected = value.get()
+                    if selected not in folder_by_label:
+                        return messagebox.showinfo(APP, tr("가져온 폴더를 선택하세요."), parent=top)
+                    cond["value"] = folder_by_label[selected]
+                else:
+                    selected = value.get().strip().lower().lstrip(".")
+                    if not selected:
+                        return messagebox.showinfo(APP, tr("확장자를 선택하세요."), parent=top)
+                    cond["value"] = selected
+                cond["op"] = op.get()
+                conditions.append(cond)
+            self.adv_conditions = conditions
+            top.destroy()
+            self.refresh()
+
+        buttons = tk.Frame(top, bg=C["bg"], padx=16, pady=12)
+        buttons.pack(fill="x")
+        Btn(buttons, tr("취소"), top.destroy, padx=14).pack(side="right", padx=(6, 0))
+        Btn(buttons, tr("검색 적용"), apply, kind="primary", padx=14).pack(side="right")
+        top.bind("<Escape>", lambda _e: top.destroy())
+        top.grab_set()
+
     def schedule_search(self):
         if self.search_job:
             self.root.after_cancel(self.search_job)
@@ -1860,18 +2041,25 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
     def refresh(self, keep_page=False):
         """검색·정렬을 다시 하고 목록을 그린다. keep_page=True 는 자동 저장 때처럼 보던 자리를 유지"""
         self.search_job = None
-        pool = [n for n in self.notes if self.tag in n["tags"]] if self.tag else self.notes
+        if self.tag_none:
+            pool = [n for n in self.notes if not n["tags"]]
+        elif self.tag:
+            pool = [n for n in self.notes if self.tag in n["tags"]]
+        else:
+            pool = self.notes
         dctx = self.doc_context()
-        if dctx and not (self.q.get().strip() or self.d_from.get().strip() or self.d_to.get().strip() or self.tag):
+        if dctx and not (self.q.get().strip() or self.d_from.get().strip() or self.d_to.get().strip() or self.tag or self.tag_none or self.adv_conditions):
             cur = self.dnorm(dctx[1])   # 가져온 폴더: 검색 중이 아니면 지금 보는 폴더 바로 아래 파일만 보인다(하위 폴더는 위의 폴더 목록)
             pool = [n for n in pool if self.dnorm(os.path.dirname(n["path"])) == cur]
-        self.bad_dates = search.bad_dates(self.q.get(), self.d_from.get(), self.d_to.get())
+        self.bad_dates = search.bad_dates(self.q.get(), self.d_from.get(), self.d_to.get()) + search.bad_advanced_dates(self.adv_conditions)
         if self.bad_dates:   # 날짜를 읽을 수 없으면 기간 없이 찾지 말고 비워서 알린다
             self.results, self.words = [], []
         else:
             self.results, self.words = search.run(pool, self.q.get(), self.sort, self.asc, self.d_from.get(), self.d_to.get(),
                                                   index=None if self.nb == TRASH else self.docs if self.nb.startswith("@doc") else
                                                   docidx.Combined(self.store, self.docs) if self.scope_all() else self.store)
+            if self.adv_conditions:
+                self.results = [n for n in self.results if search.advanced_match(n, self.adv_conditions, self.sort)]
         self.draw_list(keep_scroll=keep_page)
 
     @staticmethod
@@ -1984,13 +2172,17 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
     def draw_list(self, keep_scroll=False):
         self.update_folder_rows()
         total = len(self.results)
-        searching = self.q.get().strip() or self.d_from.get().strip() or self.d_to.get().strip() or self.tag
+        searching = self.q.get().strip() or self.d_from.get().strip() or self.d_to.get().strip() or self.tag or self.tag_none or self.adv_conditions
         unit = i18n.unit("파일") if self.scope_all() or self.nb.startswith("@doc") else i18n.unit("노트")
         text = tr('{0:,}개 중 {1:,}개 찾음').format(len(self.notes), total) if searching else tr('{0:,}개의 {1}').format(total, unit)
         if getattr(self, "bad_dates", None):
             text = tr("날짜를 읽을 수 없습니다: ") + ", ".join(self.bad_dates) + tr("  (예: date:20200202-20221231)")
         if self.tag:
             text += f"  ·  # {self.tag}"
+        elif self.tag_none:
+            text += "  ·  " + tr("태그 없음")
+        if self.adv_conditions:
+            text += "  ·  " + tr("고급 검색")
         self.count.config(text=text)
         L = self.lst
         if not keep_scroll:
@@ -2562,9 +2754,30 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             self.commit_title()
 
     def flush(self):
+        if not getattr(self, "_autosaving", False):
+            self.commit_title()
         self._flush_save()
         if not getattr(self, "_autosaving", False) and self.cur and not self.doc_open and getattr(self, "fresh", None) == self.cur["path"]:
             self.auto_title(self.text.get("1.0", "end-1c"))   # 노트를 떠날 때(타이머 저장이 아닐 때): 제목을 안 썼으면 본문 첫 줄을 제목으로
+
+    def schedule_title_commit(self, *_):
+        """제목 입력이 2초간 멈추면 저장한다. IME 조합 중에는 글자가 확정될 때까지 기다린다."""
+        if self.title_save_job:
+            self.root.after_cancel(self.title_save_job)
+            self.title_save_job = None
+        if not self.cur or self.doc_open or self.title_var.get().strip() == self.cur["title"]:
+            return
+        self.title_save_job = self.root.after(2000, self.commit_title_when_idle)
+
+    def commit_title_when_idle(self):
+        self.title_save_job = None
+        if self.title_entry.focus_get() is self.title_entry and ime.composing():
+            if not ime.complete():
+                self.title_save_job = self.root.after(250, self.commit_title_when_idle)
+                return
+            self.title_save_job = self.root.after(50, self.commit_title_when_idle)
+            return
+        self.commit_title()
 
     def _flush_save(self):
         if self.cur and self.cur.get("trash"):
@@ -2610,6 +2823,15 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
                 self.tagbtn.config(text=shown or tr("# 태그 추가"), fg=C["accent"] if tags else C["muted"])
 
     def commit_title(self):
+        if (self.cur and not self.doc_open and self.title_entry.focus_get() is self.title_entry
+                and ime.composing()):
+            if self.title_save_job:
+                self.root.after_cancel(self.title_save_job)
+            self.title_save_job = self.root.after(250, self.commit_title_when_idle)
+            return
+        if self.title_save_job:
+            self.root.after_cancel(self.title_save_job)
+            self.title_save_job = None
         if not self.cur or self.doc_open:
             return
         new = self.title_var.get().strip()
@@ -2620,14 +2842,15 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         if self.wiki_on() and new and wikilinks.taken(new, self.store.titles(wikilinks.space(self.cur["nb"]) if st.wiki_scoped() else None), own=self.store.key_of(self.cur["path"])):
             self.title_var.set(self.cur["title"])
             return messagebox.showinfo(APP, tr('"{0}" 제목의 노트가 이미 있습니다.\n위키 링크([[제목]])를 쓰는 동안은 같은 제목을 만들 수 없어서 제목을 바꾸지 않았습니다.\n(옵션 → 일반에서 위키 링크를 끄면 같은 제목도 쓸 수 있습니다)').format(new), parent=self.root)
-        self.flush()
+        self._flush_save()
         try:
             title, path = self.store.rename(self.cur["path"], new)
             self.fav_move(self.cur["path"], path)   # 즐겨찾기가 풀리지 않게 새 경로로 옮긴다
         except OSError as ex:
             self.title_var.set(self.cur["title"])
             return messagebox.showerror(APP, tr('제목을 바꾸지 못했습니다.\n{0}').format(ex))
-        self.title_var.set(title)
+        if self.title_var.get() != title:
+            self.title_var.set(title)
         if getattr(self, "fresh", None) == self.cur["path"]:
             self.fresh = None                       # 제목이 정해졌다
         old = self.cur["path"]
@@ -2642,7 +2865,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         self.q.set("")
         self.d_from.set("")
         self.d_to.set("")
-        self.tag = None
+        self.tag, self.tag_none, self.adv_conditions = None, False, []
         nb = self.md_nb()
         try:
             made = self.store.create_note(nb)
@@ -2809,9 +3032,13 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
 
     def draw_view_body(self, segs):
         v = self.view
+        self.stop_gifs()
         self.img_w_used = self.img_avail()
         self.has_imgs = any(extra and extra[0] == "img" for _, _, extra in segs)
         top = v.yview()[0]
+        top_source = None
+        if getattr(self, "view_ok", False):
+            top_source = self.w2s(self.wcount(v, v.index("@0,0")))
         v.config(state="normal")
         v.delete("1.0", "end")
         self.links.clear()
@@ -2866,26 +3093,68 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         self.view_w0 = [m[0] for m in vmap]
         self.view_s0 = [m[2] for m in vmap]
         self.view_total_s = s_off
-        v.yview_moveto(top)
+        v.tk.call(v._w, "sync")
+        top_view = self.s2w(top_source) if top_source is not None else None
+        if top_view is not None:
+            v.yview(f"1.0+{top_view}c")
+        else:
+            v.yview_moveto(top)
         self.find_later()   # 다시 그렸으면 찾은 곳의 강조도 다시 한다
         self.pair_later(self._pair_side)   # 다시 그렸으면 왼쪽↔오른쪽 짝 강조도 다시 한다
 
-    def data_image(self, src):
-        """data:image/...;base64,… 주소 → 화면에 쓸 PhotoImage(실패하면 None). GIF·PNG 는 바로, 그 밖(JPEG 등)은 PNG 로 바꿔서"""
+    def data_image(self, src, target=None):
+        """data:image/...;base64,… 주소 → 화면에 쓸 PhotoImage와 선택적 애니메이션."""
         m = re.match(r"(?is)^data:image/([a-z0-9.+-]+)[^,]*;base64,(.*)$", src.strip())
         if not m:
             return None
         kind, payload = m.group(1).lower(), re.sub(r"\s+", "", m.group(2))
         try:
-            if kind in ("gif", "png"):
-                return tk.PhotoImage(data=payload)
             raw = base64.b64decode(payload)
+            if kind == "gif":
+                import io
+                loaded = self.animated_gif(io.BytesIO(raw), target)
+                return loaded or (tk.PhotoImage(data=payload), None)
+            if kind == "png":
+                return tk.PhotoImage(data=payload), None
             path = os.path.join(ed.image_cache_dir(), hashlib.sha1(raw).hexdigest()[:20] + "." + ("jpg" if kind in ("jpeg", "jpg") else kind))
             if not os.path.isfile(path):
                 with open(path, "wb") as f:
                     f.write(raw)
-            return tk.PhotoImage(file=ed.local_image_png(path, max_w=self.img_avail()))
+            return tk.PhotoImage(file=ed.local_image_png(path, max_w=target or self.img_avail())), None
         except (tk.TclError, OSError, ValueError):
+            return None
+
+    def animated_gif(self, source, target):
+        """GIF 첫 장면과 재생 정보를 연다. 실패하면 정지 이미지 경로로 돌아간다."""
+        image = None
+        try:
+            from PIL import Image, ImageTk
+            image = Image.open(source)
+            image.seek(0)
+            frame = image.convert("RGBA")
+            if target and frame.width > target:
+                height = max(1, round(frame.height * target / frame.width))
+                resized = frame.resize((target, height), Image.Resampling.LANCZOS)
+                frame.close()
+                frame = resized
+            photo = ImageTk.PhotoImage(frame, master=self.view)
+            frame.close()
+            count = int(getattr(image, "n_frames", 1))
+            if count < 2:
+                image.close()
+                return photo, None
+            return photo, {
+                "image": image,
+                "photo": photo,
+                "frames": count,
+                "index": 0,
+                "target": target,
+                "delay": int(image.info.get("duration", 100)),
+                "remaining": image.info.get("loop", 1),
+            }
+        except (ImportError, OSError, ValueError, EOFError, tk.TclError):
+            if image is not None:
+                image.close()
             return None
 
     def find_local_image(self, src):
@@ -2993,29 +3262,134 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         except (tk.TclError, OSError):
             return None
 
+    def local_image_photo(self, path, target):
+        """파일 그림을 작은 PNG 캐시로 뒤에서 바꾼 뒤 화면에 올린다."""
+        try:
+            stat = os.stat(path)
+        except OSError:
+            return None
+        key = f"local:{os.path.normcase(os.path.abspath(path))}:{stat.st_mtime_ns}:{stat.st_size}:{target}"
+        state = self.imgs.get(key)
+        if state is None:
+            self.imgs[key] = ("pending",)
+            with self.local_img_lock:
+                self.local_img_q.put((key, path, target))
+                if not self.local_img_worker:
+                    self.local_img_worker = True
+                    threading.Thread(target=self.convert_local_images, daemon=True).start()
+            self.root.after(150, self.poll_images)
+            return None
+        if state[0] != "ok":
+            return None
+        return self.photo_from_file(state[1], target)
+
+    def convert_local_images(self):
+        while True:
+            try:
+                key, path, target = self.local_img_q.get(timeout=0.1)
+            except queue.Empty:
+                with self.local_img_lock:
+                    if self.local_img_q.empty():
+                        self.local_img_worker = False
+                        return
+                continue
+            try:
+                result = ed.local_image_png(path, max_w=target)
+                self.img_q.put((key, "ok", result))
+            except Exception as ex:  # noqa: BLE001
+                self.img_q.put((key, "fail", str(ex)))
+            finally:
+                self.local_img_q.task_done()
+
+    def stop_gifs(self):
+        self.gif_generation += 1
+        for job in self.gif_jobs:
+            try:
+                self.root.after_cancel(job)
+            except tk.TclError:
+                pass
+        self.gif_jobs.clear()
+        for image in self.gif_sources:
+            image.close()
+        self.gif_sources.clear()
+
+    def start_gif(self, animation):
+        from PIL import Image
+        image, photo = animation["image"], animation["photo"]
+        self.gif_sources.append(image)
+        generation = self.gif_generation
+        job = None
+
+        def advance():
+            nonlocal job
+            self.gif_jobs.discard(job)
+            if generation != self.gif_generation:
+                return
+            next_index = animation["index"] + 1
+            if next_index >= animation["frames"]:
+                remaining = animation["remaining"]
+                if remaining != 0:
+                    if remaining <= 1:
+                        return
+                    animation["remaining"] = remaining - 1
+                next_index = 0
+            animation["index"] = next_index
+            try:
+                image.seek(next_index)
+                frame = image.convert("RGBA")
+                target = animation["target"]
+                if target and frame.width > target:
+                    height = max(1, round(frame.height * target / frame.width))
+                    resized = frame.resize((target, height), Image.Resampling.LANCZOS)
+                    frame.close()
+                    frame = resized
+                photo.paste(frame)
+                frame.close()
+            except (OSError, ValueError, EOFError, tk.TclError):
+                return
+            delay = max(20, min(int(image.info.get("duration", 100)), 10000))
+            job = self.root.after(delay, advance)
+            self.gif_jobs.add(job)
+
+        try:
+            job = self.root.after(max(20, animation["delay"]), advance)
+            self.gif_jobs.add(job)
+        except tk.TclError:
+            image.close()
+
     def show_image(self, src, width=0):
         """그림으로 보여 준다: 같은 폴더·리소스 폴더의 파일, http(s) 주소, 본문에 박힌 data: 그림. 안 되면 글자 칩으로 남는다."""
         src = src.strip()
-        if src[:5].lower() == "data:":   # 노트 본문에 base64 로 박힌 그림
-            img = self.data_image(src)
-            return self.put_image(img, width) if img is not None else False
         avail = self.img_avail()
-        target = min(width, avail) if width else avail   # HTML 의 width 가 있으면 그 너비로(칸보다 넓지는 않게)
+        target = min(width, avail) if width else avail
+        animation = None
+        if src[:5].lower() == "data:":   # 노트 본문에 base64 로 박힌 그림
+            loaded = self.data_image(src, target)
+            if loaded is None:
+                return False
+            img, animation = loaded
+            return self.put_image(img, width, animation=animation)
         if re.match(r"(?i)^https?://", src):
             path = self.remote_image(src)
             if not path:
                 return False
-            img = self.photo_from_file(path, target)
         else:
             if re.match(r"(?i)^[a-z][a-z0-9+.-]+:", src) and not re.match(r"(?i)^(file:///|:/)", src):
                 return False   # mailto: 같은 그림이 아닌 주소
             path = self.find_local_image(src)
             if not path:
                 return False
-            img = self.photo_from_file(path, target)
-        return self.put_image(img, width, path) if img is not None else False
+        if ed.sniff_image(path) == "gif":
+            loaded = self.animated_gif(path, target)
+            if loaded:
+                img, animation = loaded
+            else:
+                img = self.photo_from_file(path, target)
+        else:
+            img = self.local_image_photo(path, target)
+        return self.put_image(img, width, path, animation) if img is not None else False
 
-    def put_image(self, img, width=0, path=None):
+    def put_image(self, img, width=0, path=None, animation=None):
         """그림을 렌더링 화면에 넣는다. 파일 그림은 photo_from_file 에서 이미 알맞게 줄였고, 본문에 박힌 PNG·GIF 처럼 못 줄인 것만
         여기서 정수 배로 줄인다(HTML 의 width 가 있으면 그 너비에 가깝게, 없으면 칸 너비보다 클 때만)"""
         if width and img.width() > width:
@@ -3026,6 +3400,8 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         name = self.view.image_create("end", image=img)
         if path:
             self.img_files[str(name)] = path
+        if animation:
+            self.start_gif(animation)
         return True
 
     def image_at(self, e):
@@ -3174,6 +3550,12 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         for w in (self.text, self.view):
             w.tag_remove("pair", "1.0", "end")
 
+    def keep_pair_visible(self, widget, start, end):
+        top = widget.index("@0,0")
+        bottom = widget.index(f"@0,{max(0, widget.winfo_height() - 1)}")
+        if widget.compare(end, "<=", top) or widget.compare(start, ">", bottom):
+            widget.see(start)
+
     def pair_run(self):
         self._pair_job = None
         if self.mode != "split" or not self.cur or self.doc_open:
@@ -3194,7 +3576,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
                 a, z = off + hit[0], off + hit[1]
                 ua, uz = idx_to_u16(text, a), idx_to_u16(text, z)
                 self.text.tag_add("pair", f"1.0+{ua}c", f"1.0+{uz}c")
-                self.text.see(f"1.0+{ua}c")
+                self.keep_pair_visible(self.text, f"1.0+{ua}c", f"1.0+{uz}c")
             else:
                 u = self.wcount(self.text, "insert")
                 p = u16_to_idx(text, u) - off
@@ -3205,7 +3587,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
                 if w0 is None or w1 is None or w1 <= w0:
                     return
                 self.view.tag_add("pair", f"1.0+{w0}c", f"1.0+{w1}c")
-                self.view.see(f"1.0+{w0}c")
+                self.keep_pair_visible(self.view, f"1.0+{w0}c", f"1.0+{w1}c")
         except tk.TclError:
             pass
 
@@ -3305,15 +3687,17 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         return s[1] if s[0] == "ok" else None
 
     def poll_images(self):
-        changed = False
+        changed = remote_changed = False
         try:
             while True:
                 url, kind, val = self.img_q.get_nowait()
                 self.imgs[url] = (kind, val)
                 changed = True
+                remote_changed |= not url.startswith("local:")
         except queue.Empty:
             pass
-        if changed:
+        local_pending = any(key.startswith("local:") and value[0] == "pending" for key, value in self.imgs.items())
+        if changed and (remote_changed or not local_pending):
             self.render()
         if any(v[0] == "pending" for v in self.imgs.values()):
             self.root.after(200, self.poll_images)

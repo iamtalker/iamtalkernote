@@ -13,21 +13,42 @@ def current_token(text):
 
 def suggest(counts, token, have=(), limit=8):
     """counts {태그: 개수}, token 치는 중인 낱말, have 이미 넣은 태그 → 후보 태그 목록.
-    앞부분이 같은 것이 먼저, 그다음 글자가 들어 있는 것. 각각 많이 쓴 순. 낱말이 비었으면 많이 쓴 태그를 보여 준다"""
+    입력한 글자로 시작하는 태그만 많이 쓴 순으로 보여 준다. 낱말이 비었으면 많이 쓴 태그를 보여 준다"""
     key = token.lstrip("#").lower()
     have_l = {h.lower() for h in have}
     pool = [(t, c) for t, c in counts.items() if t.lower() not in have_l and t.lower() != key]
     pool.sort(key=lambda tc: (-tc[1], tc[0].lower()))
     if not key:
         return [t for t, _ in pool[:limit]]
-    first = [t for t, _ in pool if t.lower().startswith(key)]
-    rest = [t for t, _ in pool if key in t.lower() and not t.lower().startswith(key)]
-    return (first + rest)[:limit]
+    return [t for t, _ in pool if t.lower().startswith(key)][:limit]
 
 
 def tags_in(text):
     """입력 글에 이미 적힌 태그들(# 뗀 것)"""
     return [t.lstrip("#") for t in re.split(r"[,\s]+", text) if t.lstrip("#")]
+
+
+def content_suggestions(body, have=(), limit=3):
+    """본문에서 흔한 단어를 태그 후보로 돌려준다. 자주 붙는 한국어 조사는 어근에서 떼고 기존 태그는 건너뛴다."""
+    body = re.sub(r"(?s)```.*?```|`[^`]*`", " ", str(body))
+    body = re.sub(r"https?://\S+", " ", body)
+    body = re.sub(r"(?m)^\s*태그\s*:.*$", " ", body)
+    particles = ("에게서", "으로부터", "에서", "에게", "한테", "으로", "까지", "부터", "처럼",
+                 "보다", "이랑", "랑", "은", "는", "이", "가", "을", "를", "에", "의", "로", "와", "과", "도", "만", "께")
+    stopwords = {"그리고", "그런데", "그래서", "하지만", "또는", "또한", "이것", "그것", "저것", "무엇", "정말", "그냥", "때문"}
+    counts, display = {}, {}
+    for token in re.findall(r"[가-힣A-Za-z][가-힣A-Za-z0-9_-]*", body):
+        word = token.casefold().strip("_-")
+        suffix = next((p for p in particles if word.endswith(p) and len(word) - len(p) >= 2), None)
+        if suffix:
+            word = word[:-len(suffix)]
+        if len(word) < 2 or len(word) > 30 or word in stopwords:
+            continue
+        display.setdefault(word, word)
+        counts[word] = counts.get(word, 0) + 1
+    existing = {str(tag).casefold() for tag in have}
+    ranked = sorted((word for word in counts if word not in existing), key=lambda word: (-counts[word], word))
+    return [display[word] for word in ranked[:limit]]
 
 
 def clean(tok):
@@ -70,6 +91,8 @@ class TagComplete:
     def refresh(self, everything=False):
         text = self.ent.get() + self.get_extra()
         start, tok = current_token(text)
+        if not everything and not tok.lstrip("#"):
+            return self.close()
         self.items = suggest(self.get_counts(), tok, list(tags_in(text[:start])) + list(self.get_have()), limit=40 if everything else 8)
         if not self.items:
             return self.close()
@@ -180,13 +203,15 @@ class TagBox(tk.Frame):
     initial 태그들이 칩으로 먼저 보이고(× 로 뺄 수 있다), 새 태그는 Enter(또는 공백·쉼표)로 칩이 된다.
     [확인] → on_confirm(태그 목록), [취소]·Esc → on_cancel(). 빈 입력칸에서 Enter 도 확인이다."""
 
-    def __init__(self, parent, initial, get_counts, colors, font, on_confirm, on_cancel, make_button, get_extra=lambda: "", cancel_ime=lambda: None):
+    def __init__(self, parent, initial, get_counts, colors, font, on_confirm, on_cancel, make_button, get_extra=lambda: "", cancel_ime=lambda: None,
+                 suggest_tags=None, suggest_label="본문에서 추천"):
         C = self.C = colors
         super().__init__(parent, bg=C["bg"])
         self.font = font
         self.tags = []
         self.on_confirm, self.on_cancel = on_confirm, on_cancel
         self.get_extra, self.cancel_ime = get_extra, cancel_ime
+        self.suggest_tags = suggest_tags
         self._chips = {}
         tk.Frame(self, height=1, bg=C["line"]).pack(fill="x")
         row = tk.Frame(self, bg=C["bg"])
@@ -204,6 +229,8 @@ class TagBox(tk.Frame):
         btns.pack(fill="x", padx=14, pady=(2, 8))
         make_button(btns, "취소", self.cancel, padx=14, pady=3).pack(side="right")
         make_button(btns, "확인", self.confirm, kind="primary", padx=14, pady=3).pack(side="right", padx=(0, 6))
+        if suggest_tags:
+            make_button(btns, suggest_label, self.recommend, padx=10, pady=3).pack(side="left", padx=(0, 8))
         tk.Label(btns, text="Enter: 태그 추가 · 빈 칸에서 Enter: 확인 · Esc: 취소", bg=C["bg"], fg=C["muted"], font=(font[0], max(font[1] - 1, 7))).pack(side="left")
         self.ac = TagComplete(self.ent, get_counts, colors, font, get_extra, get_have=lambda: self.tags, on_pick=self.add, cancel_ime=cancel_ime)
         arrow.bind("<Button-1>", lambda e: self.ac.toggle_all())
@@ -217,6 +244,14 @@ class TagBox(tk.Frame):
         for t in initial:
             self.add(t, refresh=False)
         self.reflow()
+
+    def recommend(self):
+        added = False
+        for tag in self.suggest_tags():
+            added = self.add(tag, refresh=False) or added
+        if added:
+            self.reflow()
+            self.ac.close()
 
     # ---- 칩
     def add(self, tag, refresh=True):
@@ -250,6 +285,7 @@ class TagBox(tk.Frame):
         row_h = 26
         for t in self.tags:
             c = self._chips[t]
+            c.update_idletasks()
             w = c.winfo_reqwidth()
             if x and x + w > width:
                 x, y = 0, y + row_h

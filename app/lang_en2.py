@@ -40,7 +40,6 @@ EN_DIALOGS_F = {
     "파일 {0:,}개 · 색인 {1:,}개": "{0:,} files · {1:,} indexed",
     "처음 색인을 만드는 중… {0:,} / {1:,} ({2:.0%})": "Building the index for the first time… {0:,} / {1:,} ({2:.0%})",
     "{0}  —  색인 {1:,}개": "{0}  —  {1:,} indexed",
-    "목록에서 뺀 폴더의 색인 {0:,}개": "{0:,} indexed items from folders removed from the list",
     "{0}\n\n에서 약 14MB 를 받아 설치합니다. 계속할까요?": "{0}\n\nAbout 14 MB will be downloaded from there and installed. Continue?",
     "받는 중… {0}MB": "Downloading… {0} MB",
     "설치하지 못했습니다: {0}": "Could not install: {0}",

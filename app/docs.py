@@ -266,7 +266,7 @@ class DocIndex:
 
     def __init__(self):
         self.db_path = os.path.join(os.path.dirname(st.config_path()), "docs-index.db")
-        self.content_search = bool(st.read_config().get("docContentSearch", False))   # 검색창의 '문서 안 글 포함' 체크
+        self.content_search = bool(st.read_config().get("docContentSearch", False))
 
     # ---- 설정 (config.json 의 "imports")
     def cfg(self):
@@ -293,11 +293,9 @@ class DocIndex:
         c["folders"].append({"path": path, "name": os.path.basename(path.rstrip("\\/")) or path})
         self.save_cfg(c)
         conn = self._db()
-        try:   # 예전에 뺐다가 다시 넣는 폴더면, 그때 만든 색인을 그대로 되살린다(다시 읽을 필요 없이 바뀐 파일만 읽는다)
-            if conn.execute("SELECT 1 FROM docs_old WHERE folder=? LIMIT 1", (self.fid(path),)).fetchone():
-                conn.execute("INSERT OR REPLACE INTO docs SELECT * FROM docs_old WHERE folder=?", (self.fid(path),))
-                conn.execute("DELETE FROM docs_old WHERE folder=?", (self.fid(path),))
-                conn.commit()
+        try:
+            conn.execute("DELETE FROM docs WHERE folder=?", (self.fid(path),))
+            conn.commit()
         finally:
             conn.close()
         return True
@@ -307,8 +305,7 @@ class DocIndex:
         c["folders"] = [f for f in c["folders"] if self.fid(f["path"]) != fid]
         self.save_cfg(c)
         conn = self._db()
-        try:   # 목록에서만 빼고 색인은 보관해 둔다(같은 폴더를 다시 넣으면 되살림)
-            conn.execute("INSERT OR REPLACE INTO docs_old SELECT * FROM docs WHERE folder=?", (fid,))
+        try:   # 원본 파일과 별도로 저장한 태그·메모는 유지한다
             conn.execute("DELETE FROM docs WHERE folder=?", (fid,))
             conn.commit()
         finally:
@@ -323,26 +320,20 @@ class DocIndex:
         ver = conn.execute("SELECT v FROM meta WHERE k='version'").fetchone()
         if not ver or ver[0] != str(DOC_VERSION):
             conn.execute("DROP TABLE IF EXISTS docs")
-            conn.execute("DROP TABLE IF EXISTS docs_old")
             conn.execute("INSERT OR REPLACE INTO meta VALUES ('version', ?)", (str(DOC_VERSION),))
         conn.execute("CREATE TABLE IF NOT EXISTS docs (path TEXT PRIMARY KEY, folder TEXT, ext TEXT, size INTEGER, mtime_ns INTEGER, "
                      "mtime REAL, ctime REAL, title TEXT, hay BLOB, body BLOB, content INTEGER, nhay BLOB)")
         conn.execute("CREATE INDEX IF NOT EXISTS docs_folder ON docs(folder)")
-        conn.execute("CREATE TABLE IF NOT EXISTS docs_old (path TEXT PRIMARY KEY, folder TEXT, ext TEXT, size INTEGER, mtime_ns INTEGER, "
-                     "mtime REAL, ctime REAL, title TEXT, hay BLOB, body BLOB, content INTEGER, nhay BLOB)")   # 목록에서 뺀 폴더의 색인 보관
+        conn.execute("DROP TABLE IF EXISTS docs_old")
         if "nhay" not in [r[1] for r in conn.execute("PRAGMA table_info(docs)")]:
-            # 이름·경로·태그·메모만의 검색용 사본('문서 안 글' 검색을 끈 채 찾을 때 쓴다). 이미 읽어 둔 색인은 파일을 다시 읽지 않고 DB 안의 값으로 채운다
             conn.execute("ALTER TABLE docs ADD COLUMN nhay BLOB")
-            roots = {self.fid(f["path"]): f["path"] for f in self.cfg()["folders"]}
-            ann = {p: (json.loads(t or "[]"), m or "") for p, t, m in conn.execute("SELECT path, tags, memo FROM annot")}
-            rows = []
-            for p, folder, title in conn.execute("SELECT path, folder, title FROM docs").fetchall():
-                tags, memo = ann.get(p, ([], ""))
-                rel = os.path.relpath(p, roots[folder]) if folder in roots else os.path.basename(p)
-                rows.append((self.make_hay(title, rel, "", tags, memo), p))
-            conn.executemany("UPDATE docs SET nhay=? WHERE path=?", rows)
         # 내가 붙인 태그·메모. 원본 파일은 건드리지 않고 여기에만 적으며, docs 표를 다시 만들어도(색인 판이 바뀌어도) 남는다
         conn.execute("CREATE TABLE IF NOT EXISTS annot (path TEXT PRIMARY KEY, tags TEXT, memo TEXT)")
+        if conn.execute("SELECT v FROM meta WHERE k='title_only_search'").fetchone() != ("1",):
+            rows = [(self.title_hay(title, ext), path)
+                    for path, title, ext in conn.execute("SELECT path, title, ext FROM docs")]
+            conn.executemany("UPDATE docs SET nhay=? WHERE path=?", rows)
+            conn.execute("INSERT OR REPLACE INTO meta VALUES ('title_only_search', '1')")
         conn.commit()
         return conn
 
@@ -361,12 +352,16 @@ class DocIndex:
         extra = " ".join("#" + t for t in tags) + "\n" + memo if (tags or memo) else ""
         return (title + "\n" + rel + "\n" + text + ("\n" + extra if extra else "")).lower().encode("utf-8", "ignore")
 
+    @staticmethod
+    def title_hay(title, ext):
+        return (title + "." + ext).lower().encode("utf-8", "ignore")
+
     def set_annot(self, path, tags=None, memo=None):
         """태그나 메모를 바꾼다(None 이면 그대로). 검색용 사본도 새로 만든다. 둘 다 비면 기록을 지운다"""
         roots = {self.fid(f["path"]): f["path"] for f in self.cfg()["folders"]}
         conn = self._db()
         try:
-            row = conn.execute("SELECT folder, title, body FROM docs WHERE path=?", (path,)).fetchone()
+            row = conn.execute("SELECT folder, title, body, ext FROM docs WHERE path=?", (path,)).fetchone()
             if not row or row[0] not in roots:
                 return False
             old = conn.execute("SELECT tags, memo FROM annot WHERE path=?", (path,)).fetchone()
@@ -381,7 +376,7 @@ class DocIndex:
             text = zlib.decompress(row[2]).decode("utf-8", "ignore") if row[2] else ""
             rel = os.path.relpath(path, roots[row[0]])
             conn.execute("UPDATE docs SET hay=?, nhay=? WHERE path=?",
-                         (self.make_hay(row[1], rel, text, tags, memo), self.make_hay(row[1], rel, "", tags, memo), path))
+                         (self.make_hay(row[1], rel, text, tags, memo), self.title_hay(row[1], row[3]), path))
             conn.commit()
             return True
         finally:
@@ -398,6 +393,18 @@ class DocIndex:
         finally:
             conn.close()
         return out
+
+    def untagged_count(self):
+        """태그가 없는 가져온 문서 수"""
+        conn = self._db()
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM docs d LEFT JOIN annot a ON a.path=d.path "
+                "WHERE a.path IS NULL OR a.tags IS NULL OR a.tags IN ('', '[]')"
+            ).fetchone()
+            return row[0]
+        finally:
+            conn.close()
 
     def rename_tags(self, olds, new):
         """olds 의 태그를 모두 new 로 바꾼다(None 이면 지운다) → 바뀐 문서 수"""
@@ -462,7 +469,7 @@ class DocIndex:
                     rel = os.path.relpath(p, f["path"])
                     batch.append((p, fid, ext, stt.st_size, stt.st_mtime_ns, stt.st_mtime, getattr(stt, "st_birthtime", stt.st_ctime),
                                   title, self.make_hay(title, rel, text, tags, memo), zlib.compress(text.encode("utf-8", "ignore"), 3),
-                                  1 if content else 0, self.make_hay(title, rel, "", tags, memo)))
+                                  1 if content else 0, self.title_hay(title, ext)))
                     count["done"] += 1
                     n[0] += 1
                     if len(batch) >= 40:
@@ -512,14 +519,6 @@ class DocIndex:
                            tags=set(tags), memo=memo, ext=ext, root=names[folder]["path"], _index=self))
         return out
 
-    def kept_counts(self):
-        """목록에서 뺐지만 색인을 보관 중인 폴더별 개수"""
-        conn = self._db()
-        try:
-            return dict(conn.execute("SELECT folder, COUNT(*) FROM docs_old GROUP BY folder"))
-        finally:
-            conn.close()
-
     def counts(self):
         conn = self._db()
         try:
@@ -539,7 +538,7 @@ class DocIndex:
         """검색식에 맞는 문서 → {경로: 점수} (노트 색인(store.Store.query_hits)과 같은 모양이라 search.run 에 그대로 쓴다)"""
         params = []
         cond = sql_cond(node, params)
-        col = "hay" if self.content_search else "nhay"   # 문서 안 글까지 찾을지, 이름·경로·태그·메모만 찾을지
+        col = "hay" if self.content_search else "nhay"
         cond = cond.replace("instr(hay,", f"instr({col},")
         conn = self._db()
         try:

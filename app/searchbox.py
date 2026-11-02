@@ -21,7 +21,6 @@ class SearchBoxMixin:
         e.bind("<Return>", self.ac_enter)
         e.bind("<Escape>", self.ac_esc)
         e.bind("<FocusOut>", self.ac_focus_out, add="+")
-        e.bind("<Button-1>", lambda ev: self.root.after(30, self.ac_show), add="+")   # 비어 있는 칸을 누르면 최근 검색
         e.bind("<FocusIn>", lambda ev: None if self.ac_visible() else setattr(self, "ac_sig", self.ac_signature()), add="+")   # 칸에 들어간 것만으로는 후보를 띄우지 않는다
         self.ac_ready = True
         if not getattr(self, "ac_polling", False):
@@ -122,10 +121,14 @@ class SearchBoxMixin:
             threading.Thread(target=work, daemon=True).start()
         return counts
 
-    def ac_candidates(self):
+    def ac_candidates(self, history=False):
         """지금 커서 앞의 낱말에 맞는 후보 → [(종류, 보여 줄 글, 넣을 글, 바꿀 시작, 바꿀 끝)] (최대 8개)"""
         text = self.q.get() + ime.composing()   # 조합 중인 마지막 글자까지 (아직 입력칸 값에 안 들어 있다)
         pos = len(text)   # 커서 위치는 쓰지 않는다: 한글 입력기(IME)는 커서를 한 글자씩 늦게 옮겨서, 치는 낱말이 비어 보이거나 한 글자 전 글이 잡힌다
+        if history:
+            return [("history", h, h, 0, len(self.q.get())) for h in self.search_history()[:8]]
+        if not text.strip():
+            return []
         m = re.search(r"\S*$", text)
         start, tok = m.start(), m.group(0)
         lead = re.match(r'^[(!&|"]+', tok)      # 괄호·부정·따옴표는 낱말 앞에서 떼어 둔다
@@ -134,9 +137,6 @@ class SearchBoxMixin:
             start += lead.end()
             tok = tok[lead.end():]
         items = []
-        hist = self.search_history()
-        if not text.strip():        # 빈 칸: 최근 검색
-            return [(tr("최근"), h, h, 0, len(text)) for h in hist[:8]]
         low = tok.lower()
         if low.startswith("#"):                   # 태그만: '#' 만 쳤을 때는 띄우지 않고, '#신' 처럼 한 글자라도 더 쳐야 그 글자로 시작하는 태그를 보여 준다
             key = low[1:]
@@ -162,11 +162,11 @@ class SearchBoxMixin:
             items.append((tr("제목"), title, ins, start, pos))
         return items[:8]
 
-    def ac_show(self):
+    def ac_show(self, history=False):
         self.ac_job = None
         if self.root.focus_get() is not self.search_entry:
             return
-        self.ac_items = self.ac_candidates()
+        self.ac_items = self.ac_candidates(history=history)
         if not self.ac_items:
             return self.ac_hide()
         if self.ac_list is None:
@@ -179,8 +179,8 @@ class SearchBoxMixin:
             lb.bind("<Motion>", lambda ev: (lb.selection_clear(0, "end"), lb.selection_set(lb.nearest(ev.y))))
         lb = self.ac_list
         lb.delete(0, "end")
-        for kind, label, _ins, _a, _b in self.ac_items:   # 제목·태그는 # 로 구분되니 표시를 달지 않고, 최근 검색만 '최근' 을 붙인다
-            lb.insert("end", tr('최근   {0}').format(label) if kind == tr("최근") else label)
+        for _kind, label, _ins, _a, _b in self.ac_items:
+            lb.insert("end", label)
         lb.config(height=len(self.ac_items))
         box = self.search_entry.master
         lb.place(in_=self.listf, x=box.winfo_rootx() - self.listf.winfo_rootx(),
@@ -251,10 +251,15 @@ class SearchBoxMixin:
         self.search_entry.icursor(a + len(ins))
         self.remember_search(new)
 
+    def show_search_history(self):
+        self.search_entry.focus_set()
+        self.ac_sig = self.ac_signature()
+        self.ac_show(history=True)
+
     def ac_focus_out(self, ev=None):
         if self.ac_click:                     # 후보를 누르는 중이면 ButtonRelease 가 처리한다
             return
-        self.root.after(150, self.ac_hide)
+        self.root.after(150, lambda: self.ac_hide() if self.root.focus_get() is not self.search_entry else None)
         if self.q.get().strip() and self.results:
             self.remember_search(self.q.get())
 

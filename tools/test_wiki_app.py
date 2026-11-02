@@ -48,6 +48,14 @@ for _ in range(20):
     app.root.update()
 
 check("노트 불러옴", len(app.all_notes) == 3)
+app.advanced_search_btn.command()
+app.root.update()
+advanced = [w for w in app.root.winfo_children()
+            if w.winfo_class() == "Toplevel" and w.title() == "고급 검색"]
+check("고급 검색 버튼이 조건 창을 엶", len(advanced) == 1)
+if advanced:
+    advanced[-1].destroy()
+    app.root.update()
 check("위키 기본 켜짐", app.wiki_on())
 check("같은 제목 중 최근 노트가 연결 대상", app.wiki_index()[notes.wikilinks.norm("회의록")]["path"].endswith(os.path.join("B", "회의록.md")))
 
@@ -133,6 +141,18 @@ app.nb = notes.ALL
 # --- 아웃라이너 폴더
 check("사이드바에 아웃라이너 폴더(즐겨찾기 바로 아래)", app.nb_keys[:4] == [notes.ALL, notes.QUICK, notes.FAVS, notes.OUTL])
 check("폴더는 볼트 안의 실제 폴더", os.path.isdir(os.path.join(vault, notes.OUTL)))
+app.feat["favs"] = False
+app.reload_notebooks()
+check("즐겨찾기를 꺼도 아웃라이너 폴더는 바로가기에 남음", notes.OUTL in app.nb_keys and notes.FAVS not in app.nb_keys)
+app.feat["favs"] = True
+app.reload_notebooks()
+app.nb = notes.OUTL
+app.feat["outl"] = False
+app.reload_notebooks()
+check("아웃라이너 기능을 끄면 전용 폴더가 사이드바에서 사라짐", notes.OUTL not in app.nb_keys)
+check("숨긴 아웃라이너 폴더를 보고 있었다면 모든 파일로 돌아감", app.nb == notes.ALL)
+app.feat["outl"] = True
+app.reload_notebooks()
 os.makedirs(os.path.join(vault, notes.OUTL), exist_ok=True)
 put(notes.OUTL + "/할일.md", "---\ntags: [x]\n---\n- a\n- b\n    - b1\n", now)
 app.nb = notes.ALL
@@ -324,6 +344,36 @@ for _ in range(30):
     time.sleep(0.02)
 check("하위가 없는 노트북은 폴더 줄이 없음", not app.folder_box.winfo_ismapped())
 app.go_nb(notes.ALL)
+
+app.go_nb(notes.OUTL)
+outliner_note = next(n for n in app.all_notes if n["nb"] == notes.OUTL)
+app.open_note(outliner_note)
+app.show_options("general")
+for _ in range(10):
+    app.root.update()
+
+def find_widget(root, cls, label):
+    for child in root.winfo_children():
+        if child.winfo_class() == cls and child.cget("text") == label:
+            return child
+        found = find_widget(child, cls, label)
+        if found:
+            return found
+    return None
+
+outliner_toggle = find_widget(app.opt, "Checkbutton", "아웃라이너 폴더")
+if outliner_toggle:
+    outliner_toggle.invoke()
+    for _ in range(10):
+        app.root.update()
+check("설정에서 즐겨찾기를 켠 채 아웃라이너를 끄면 사이드바에서 사라짐",
+      outliner_toggle is not None and notes.OUTL not in app.nb_keys)
+check("아웃라이너를 끄면 현재 선택이 전체 파일로 바뀜", app.nb == notes.ALL)
+if outliner_toggle:
+    outliner_toggle.invoke()
+    for _ in range(10):
+        app.root.update()
+check("아웃라이너 설정을 다시 켜면 바로가기로 복귀", notes.OUTL in app.nb_keys)
 
 app.root.destroy()
 print("실패 %d" % fails if fails else "전부 통과")

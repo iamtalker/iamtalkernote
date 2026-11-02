@@ -250,3 +250,50 @@ def run(notes, query="", sort="relevance", asc=False, date_from="", date_to="", 
     else:
         out.sort(key=lambda n: n["mtime"], reverse=not asc)
     return out, words
+
+
+def bad_advanced_dates(conditions):
+    bad = []
+    for i, cond in enumerate(conditions or []):
+        if cond.get("field") != "date":
+            continue
+        for label in ("from", "to"):
+            value = (cond.get(label) or "").strip()
+            if value and parse_date(value, end=label == "to") is None:
+                bad.append(f"조건 {i + 1} {label} {value}")
+    return bad
+
+
+def advanced_match(note, conditions, sort="relevance"):
+    """고급 검색의 필드 조건을 입력 순서대로 AND/OR/AND-NOT 결합한다."""
+    def one(cond):
+        field = cond.get("field")
+        if field == "date":
+            value = note.get("ctime" if sort == "ctime" else "mtime", note["mtime"])
+            start = parse_date(cond.get("from", ""))
+            end = parse_date(cond.get("to", ""), end=True)
+            return (start is None or value >= start) and (end is None or value <= end)
+        if field == "tag":
+            tags = note.get("tags", ())
+            return not tags if cond.get("untagged") else cond.get("value") in tags
+        if field == "folder":
+            return note.get("nb") == "@doc:" + str(cond.get("value", ""))
+        if field == "extension":
+            ext = str(note.get("ext") or "md").lower().lstrip(".")
+            return ext == str(cond.get("value", "")).lower().lstrip(".")
+        return False
+
+    if not conditions:
+        return True
+    first = one(conditions[0])
+    result = not first if conditions[0].get("op") == "NOT" else first
+    for cond in conditions[1:]:
+        value = one(cond)
+        op = cond.get("op", "AND")
+        if op == "OR":
+            result = result or value
+        elif op == "NOT":
+            result = result and not value
+        else:
+            result = result and value
+    return result

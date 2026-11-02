@@ -831,11 +831,14 @@ class DialogsMixin:
                 var = tk.BooleanVar(value=self.feat[key])
 
                 def set_feat(k=key, v=var):
+                    previous_nb = self.nb
                     self.feat[k] = v.get()
                     st.write_config(**({"cal_gongsu": v.get()} if k == "gongsu" else {"use_" + k: v.get()}))
                     if k == "gongsu" and self.planner_view is not None:
                         self.planner_view.refresh()
                     self.reload_notebooks()
+                    if self.nb != previous_nb:
+                        self.reload_notes()
                     if self.cur:
                         self.open_note(self.cur, record=False)
                 tk.Checkbutton(p, text=label, variable=var, command=set_feat, bg=C["bg"], activebackground=C["bg"], font=(self.ui, 10),
@@ -952,6 +955,29 @@ class DialogsMixin:
             Btn(row, tr("폴더 추가…"), add, padx=12, pady=3).pack(side="left")
             Btn(row, tr("목록에서 빼기"), remove, padx=12, pady=3).pack(side="left", padx=6)
             Btn(row, tr("지금 다시 읽기"), lambda: self.scan_docs(), padx=12, pady=3).pack(side="left")
+            scan_label = lab(p, "", fg=C["muted"], font=(self.ui, 9))
+            scan_bar = ttk.Progressbar(p, mode="determinate", length=440)
+            alive = {"on": True}
+            p.bind("<Destroy>", lambda e: alive.update(on=False) if e.widget is p else None)
+
+            def update_scan_progress():
+                if not alive["on"]:
+                    return
+                state = self.doc_scan_progress
+                if state:
+                    total = state["total"]
+                    done = min(state["done"], total)
+                    phase = (state["phase"] or "").replace("읽는 중 — ", "").strip()
+                    scan_label.config(text=tr("색인 진행 중: {0:,} / {1:,}  {2}").format(done, total, phase))
+                    scan_bar.configure(maximum=max(total, 1), value=done)
+                    if not scan_label.winfo_manager():
+                        scan_label.pack(anchor="w", pady=(6, 0))
+                        scan_bar.pack(anchor="w", fill="x", pady=(3, 0))
+                else:
+                    scan_label.pack_forget()
+                    scan_bar.pack_forget()
+                p.after(250, update_scan_progress)
+            update_scan_progress()
             lab(p, tr("빼도 원본 파일은 그대로입니다. 앱을 켜고 잠시 뒤 바뀐 파일은 저절로 다시 읽습니다."), fg=C["muted"], font=(self.ui, 9)).pack(anchor="w", pady=(6, 0))
             hr(p)
 
@@ -1270,11 +1296,11 @@ class DialogsMixin:
         def index_tab(p):
             title(p, tr("색인"), tr("노트와 가져온 폴더를 빨리 찾으려고 만들어 둔 목록의 상태입니다. 노트 파일이 원본이고, 색인은 언제든 다시 만듭니다."))
             rows = {}
-            for key, label in (("notes", tr("노트")), ("state", tr("상태")), ("docs", tr("가져온 폴더")), ("kept", tr("보관 중인 색인"))):
+            for key, label in (("notes", tr("노트")), ("state", tr("상태")), ("docs", tr("가져온 폴더"))):
                 lab(p, label, font=(self.ui, 10, "bold")).pack(anchor="w", pady=(10, 0))
                 rows[key] = lab(p, "…", fg=C["text"], wraplength=620)
                 rows[key].pack(anchor="w", pady=(2, 0))
-            lab(p, tr("가져온 폴더를 목록에서 빼도 이미 만든 색인은 지우지 않고 보관합니다. 같은 폴더를 다시 넣으면 그 색인을 되살리고 바뀐 파일만 읽습니다."),
+            lab(p, tr("가져온 폴더를 목록에서 빼면 이 앱의 색인은 지웁니다. 원본 파일과 문서에 붙인 태그·메모는 그대로 둡니다."),
                 fg=C["muted"], font=(self.ui, 9), wraplength=620).pack(anchor="w", pady=(14, 0))
             Btn(p, tr("노트 다시 훑기"), lambda: self.reload_notes(), padx=12, pady=4).pack(anchor="w", pady=(10, 0))
             alive = {"on": True}
@@ -1290,8 +1316,6 @@ class DialogsMixin:
                     rows["state"].config(text=(tr('처음 색인을 만드는 중… {0:,} / {1:,} ({2:.0%})').format(d, t, d / t) if t and d < t else tr("최신 상태입니다(바뀐 파일은 자동으로 다시 읽습니다)")))
                     counts, folders = self.docs.counts(), self.docs.folders()
                     rows["docs"].config(text="\n".join(tr('{0}  —  색인 {1:,}개').format(f.get('name') or f['path'], counts.get(f['id'], 0)) for f in folders) or tr("(없음)"))
-                    kept = self.docs.kept_counts()
-                    rows["kept"].config(text=tr('목록에서 뺀 폴더의 색인 {0:,}개').format(sum(kept.values())) if kept else tr("(없음)"))
                 except (tk.TclError, sqlite3.Error):
                     return
                 p.after(1000, tick)

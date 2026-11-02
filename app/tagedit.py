@@ -1,11 +1,11 @@
-"""태그 편집(맨 아래 태그 박스·메모·이름 바꾸기·삭제·합치기): App 에서 그대로 옮겨 온 메서드 묶음(동작 변경 없음).
+"""태그 편집(제목 아래 태그 박스·메모·이름 바꾸기·삭제·합치기): App 에서 그대로 옮겨 온 메서드 묶음.
 App 이 TagEditMixin 을 물려받아 self.메서드() 처럼 그대로 부른다."""
 from notes_shared import *  # noqa: F401,F403
 
 
 class TagEditMixin:
     def edit_tags(self, e=None):
-        """맨 아래 줄의 태그를 누르면 하단에 작은 박스가 열린다(조플린의 '태그 추가 및 제거'): 태그를 치고 Enter 하면 칩으로 쌓이고 다음 태그를 받는다.
+        """제목 아래 태그를 누르면 작은 박스가 열린다(조플린의 '태그 추가 및 제거'): 태그를 치고 Enter 하면 칩으로 쌓이고 다음 태그를 받는다.
         [확인] 을 눌러야 한꺼번에 들어가고 [취소](Esc)는 아무것도 바꾸지 않는다. 이미 있는 태그도 칩으로 보이며 × 로 뺀다."""
         if not self.cur or self.tag_edit:
             return
@@ -13,11 +13,16 @@ class TagEditMixin:
         self.ac_tagc = (0.0, self.ac_tagc[1])   # 박스를 여는 순간 뒤에서 태그 개수를 세기 시작한다(열린 뒤 키 입력은 기다리지 않는다)
         self.ac_tags()
         box = tagac.TagBox(self.main, sorted(self.cur.get("tags", ())), self.ac_tags, C, (self.ui, 9),
-                           lambda tags: self.finish_tags(True, tags), lambda: self.finish_tags(False), Btn, ime.composing, ime.cancel)
-        box.pack(side="bottom", fill="x", after=self.status_sep)   # 맨 아래 상태줄 바로 위
+                           lambda tags: self.finish_tags(True, tags), lambda: self.finish_tags(False), Btn, ime.composing, ime.cancel,
+                           self.suggest_content_tags, tr("본문에서 태그 추천"))
+        box.pack(side="top", fill="x", before=self.body)
         self.tagbtn.pack_forget()
         self.tag_edit = box
         box.ent.focus_set()
+
+    def suggest_content_tags(self):
+        body = self.cur.get("body", "") if self.doc_open else self.text.get("1.0", "end-1c")
+        return tagac.content_suggestions(body, self.cur.get("tags", ()))
 
     def finish_tags(self, save, tags=None):
         box = self.tag_edit

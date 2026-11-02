@@ -6,7 +6,7 @@ import sys
 from ctypes import wintypes
 
 GCS_COMPSTR = 0x0008
-NI_COMPOSITIONSTR, CPS_CANCEL = 0x0015, 0x0004
+NI_COMPOSITIONSTR, CPS_COMPLETE, CPS_CANCEL = 0x0015, 0x0001, 0x0004
 
 if sys.platform == "win32":
     # 앱의 다른 곳이 쓰는 windll.* 와 인자 형식 설정이 겹치지 않게 이 모듈 전용 핸들을 쓴다
@@ -69,6 +69,23 @@ def composing():
             _imm.ImmReleaseContext(hwnd, himc)
     except Exception:  # noqa: BLE001
         return ""
+
+
+def complete():
+    """현재 입력기의 조합을 확정한다. Windows 전용, 성공하면 True."""
+    if sys.platform != "win32":
+        return False
+    try:
+        hwnd = _user.GetFocus()
+        himc = _imm.ImmGetContext(hwnd) if hwnd else None
+        if not himc:
+            return False
+        try:
+            return bool(_imm.ImmNotifyIME(himc, NI_COMPOSITIONSTR, CPS_COMPLETE, 0))
+        finally:
+            _imm.ImmReleaseContext(hwnd, himc)
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def cancel():

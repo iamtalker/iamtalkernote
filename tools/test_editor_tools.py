@@ -55,8 +55,28 @@ pump(20)
 a.set_mode("edit")
 pump(10)
 labels = [w.label.cget("text") for w in walk(a.edit_tools) if w.__class__.__name__ == "Btn"]
-check("원문만 보기에서도 툴바가 있다(서식 + 그림 첨부)", {"B", "I", "🖼", "🔗", "•", "☐"} <= set(labels))
+check("원문만 보기에서도 툴바가 있다(되돌리기·다시 실행 + 서식 + 그림 첨부)",
+      {"↶", "↷", "B", "I", "🖼", "🔗", "•", "☐"} <= set(labels))
 check("원문만: 툴바가 편집 칸 위에 보인다", a.edit_tools.winfo_ismapped() and a.edit_tools.winfo_y() < a.text.winfo_rooty() - a.edit_frame.winfo_rooty())
+check("태그 표시가 제목 아래 편집 영역 위쪽에 있다",
+      a.tagbtn.master is a.tag_row and a.tag_row.winfo_y() < a.body.winfo_y())
+a.edit_tags()
+pump(5)
+check("태그 편집 상자도 본문 위쪽에 열린다",
+      a.tag_edit is not None and a.tag_edit.winfo_y() < a.body.winfo_y())
+a.finish_tags(False)
+pump(2)
+
+# 실행 취소·다시 실행
+a.text.edit_reset()
+before_undo = a.text.get("1.0", "end-1c")
+a.text.insert("end-1c", " 되돌리기 시험")
+a.undo_btn.command()
+pump(5)
+check("툴바 실행 취소가 직전 입력을 되돌린다", a.text.get("1.0", "end-1c") == before_undo)
+a.redo_btn.command()
+pump(5)
+check("툴바 다시 실행이 되돌린 입력을 복구한다", a.text.get("1.0", "end-1c") == before_undo + " 되돌리기 시험")
 
 # 굵게
 a.text.tag_add("sel", "1.0", "1.2")
