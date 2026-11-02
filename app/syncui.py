@@ -152,10 +152,16 @@ class SelText(tk.Text):
         super().__init__(parent, wrap="word", height=1, width=chars, borderwidth=0, highlightthickness=0, relief="flat", bg=bg, fg=fg,
                          font=font, cursor="xterm", padx=0, pady=0, insertwidth=0, takefocus=0, state="disabled", spacing1=0, spacing3=0)
         self._auto = not width and not wraplength   # 폭을 정하지 않은 글은 가장 긴 줄에 폭을 맞춘다(나중에 글이 바뀌어도)
+        self._wrap = bool(wraplength)               # 줄바꿈 폭을 준 안내문은 창 너비까지 가로로 펴서 긴 글이 좁은 세로 칸으로 보이지 않게 한다
         self.bind("<Button-1>", lambda e: self.focus_set())
         self.bind("<Control-a>", lambda e: (self.tag_add("sel", "1.0", "end-1c"), "break")[1])
         self.bind("<Configure>", lambda e: self._fit())
         self._set(text)
+
+    def pack(self, cnf=None, **kw):   # noqa: D102
+        if self._wrap:
+            kw.setdefault("fill", "x")
+        return super().pack(cnf or {}, **kw)
 
     def _set(self, text):
         self.configure(state="normal")

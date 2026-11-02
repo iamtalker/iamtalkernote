@@ -9,6 +9,7 @@
 from notes_shared import *  # noqa: E402,F401,F403   (가져오기·상수·색·Btn·보조 함수: notes_shared.py)
 import notes_shared as _shared  # noqa: E402
 import autotitle  # noqa: E402   (제목 없이 쓴 새 노트: 본문 첫 줄을 제목으로)
+import pdflink  # noqa: E402   (본문이 pdf 링크 하나뿐인 노트는 pdf 뷰어로: pdflink.py)
 from dialogs import DialogsMixin  # noqa: E402   (큰 대화창들: dialogs.py)
 from langbtn import LangButton  # noqa: E402   (오른쪽 위 언어 단추: langbtn.py)
 from searchbox import SearchBoxMixin  # noqa: E402   (검색창 자동완성·입력기 글꼴: searchbox.py)
@@ -53,6 +54,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         self.doc_scanning = False      # 가져온 폴더를 뒤에서 다시 읽는 중인가(겹쳐 돌지 않게)
         self.doc_scan_progress = None
         self.pv = winpreview.Preview() # 윈도 미리보기 처리기(pdf → Edge, mp3 → Media Player …)
+        self.pdf_note = None           # 본문이 pdf 링크 하나뿐인 노트를 열어 둔 중이면 그 pdf 경로
         self.pv_active = False         # 지금 노트 화면에 윈도 미리보기를 띄워 두었는가
         self.snap = sn.Snapshots(self.store)   # 복원 지점
         self.store.on_change = self.snap.preserve   # 노트를 바꾸기 직전에 그 내용을 복원 지점용으로 보관
@@ -66,6 +68,9 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         self.feat = {k: bool(cfg.get("use_" + k, d)) for k, d in (("favs", True), ("outl", True), ("cal", True))}   # 설정 → 일반 → 기능 체크
         self.feat["gongsu"] = bool(cfg.get("cal_gongsu", False))   # 공수달력은 기본으로 꺼져 있고 체크해서 켠다
         self.nb = win.get("nb") if isinstance(win.get("nb"), str) and not win["nb"].startswith("@smart") else ALL   # '*' 모든 노트 · '' 기본 · 그 밖은 노트북 폴더 이름(없어졌으면 읽은 뒤 '*' 로)
+        if (self.nb == FAVS and not self.feat["favs"]) or (self.nb == CAL and not self.feat["cal"]) \
+                or (not self.feat["outl"] and (self.nb == OUTL or self.nb.startswith(OUTL + "/"))):
+            self.nb = ALL              # 꺼 둔 기능의 항목을 보던 채로 닫았으면 처음 목록을 만들기 전에 '모든 파일' 로 (뒤에서 바꾸면 목록이 비어 남는다)
         self.tag = None                # 태그로 거르는 중이면 그 태그
         self.tag_none = False
         self.tag_global = bool(cfg.get("tagGlobal", False))
@@ -2353,9 +2358,34 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             self.open_doc_file(n)
         return "break"
 
+    def open_with_program(self, ext):
+        """확장자에 지정해 둔 연결 프로그램 경로(없거나 파일이 없어졌으면 None). 옵션에 따로 두지 않고 우클릭으로 지정한다."""
+        exe = (st.read_config().get("openWith") or {}).get(ext.lower().lstrip("."))
+        return exe if isinstance(exe, str) and os.path.isfile(exe) else None
+
+    def set_open_with(self, ext, exe):
+        table = dict(st.read_config().get("openWith") or {})
+        key = ext.lower().lstrip(".")
+        if exe:
+            table[key] = exe
+        else:
+            table.pop(key, None)
+        st.write_config(openWith=table)
+
+    def pick_open_with(self, n):
+        ext = n["ext"]
+        exe = filedialog.askopenfilename(parent=self.root, title=tr('.{0} 파일을 열 프로그램 고르기').format(ext),
+                                         filetypes=[(tr("프로그램"), "*.exe"), (tr("모든 파일"), "*.*")])
+        if exe:
+            self.set_open_with(ext, os.path.normpath(exe))
+
     def open_doc_file(self, n):
+        exe = self.open_with_program(n["ext"])
         try:
-            os.startfile(n["path"])
+            if exe:   # 사용자가 이 확장자에 지정한 프로그램(예: zip → 만화 뷰어). 셸을 거치지 않고 경로를 인자로만 넘긴다
+                subprocess.Popen([exe, os.path.normpath(n["path"])])
+            else:
+                os.startfile(n["path"])
         except OSError as ex:
             messagebox.showerror(APP, tr('파일을 열지 못했습니다.\n{0}').format(ex), parent=self.root)
 
@@ -2363,7 +2393,10 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         self.open_note(n)
         lm = self.listmenu
         lm.delete(0, "end")
-        lm.add_command(label=tr("기본 프로그램으로 열기"), command=lambda: self.open_doc_file(n))
+        lm.add_command(label=tr("연결 프로그램으로 열기") if self.open_with_program(n["ext"]) else tr("기본 프로그램으로 열기"), command=lambda: self.open_doc_file(n))
+        lm.add_command(label=tr('.{0} 파일을 열 프로그램 지정…').format(n["ext"]), command=lambda: self.pick_open_with(n))
+        if self.open_with_program(n["ext"]):
+            lm.add_command(label=tr('.{0} 연결 해제 (윈도 기본 프로그램으로)').format(n["ext"]), command=lambda: self.set_open_with(n["ext"], None))
         lm.add_command(label=tr("태그 추가·고치기…"), command=self.edit_tags)
         lm.add_command(label=tr("메모…"), command=self.edit_memo)
         lm.add_separator()
@@ -2596,6 +2629,48 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
     def toggle_doc_view(self):
         if self.doc_open and self.cur:
             self.show_doc(self.cur, native=not self.pv_active)
+        elif self.pdf_note and self.cur:   # pdf 링크 노트: pdf 뷰어 ↔ 노트 글
+            if self.pv_active:
+                self.pv.unload()
+                self.pv_active = False
+                self.apply_layout(self.mode)
+                self.render()
+                self.doc_toggle.config(text=tr("PDF 로 보기"))
+                self.update_status()
+            else:
+                self.show_pdf_note(self.pdf_note)
+
+    def try_pdf_note(self, n):
+        """본문이 pdf 파일 링크 하나뿐인 노트면 pdf 뷰어(윈도 미리보기 처리기)로 보여 준다. 노트 글은 머리줄 단추로 오간다."""
+        if n.get("trash") or not winpreview.available("pdf"):
+            return
+        path = pdflink.pdf_target(n["body"], n["path"])
+        if path and self.cur is n:
+            self.show_pdf_note(path)
+
+    def show_pdf_note(self, path):
+        self.apply_layout("pv")
+        self.root.update_idletasks()
+        self.pdf_note = path
+        self.pv_active = self.pv.show(self.pv_frame.winfo_id(), path, self.pv_frame.winfo_width(), self.pv_frame.winfo_height())
+        if not self.pv_active:
+            self.pdf_note = None
+            self.apply_layout(self.mode)
+            return
+        self.hide_find(focus=False)
+        if not self.doc_toggle.winfo_ismapped():
+            self.doc_toggle.pack(side="right", padx=(8, 0), before=self.mode_seg if self.mode_seg.winfo_manager() else self.mode_anchor)
+        self.doc_toggle.config(text=tr("노트 글로 보기"))
+        self.status.config(text=tr('PDF 미리보기 (윈도 기본 프로그램)   ·   {0}').format(path))
+
+    def leave_pdf_note(self):
+        if not self.pdf_note:
+            return
+        self.pdf_note = None
+        self.pv.unload()
+        self.pv_active = False
+        self.doc_toggle.pack_forget()
+        self.apply_layout(self.mode)
 
     def leave_doc(self):
         """가져온 문서를 보던 상태를 풀고 노트 편집 상태로 돌아간다"""
@@ -2619,6 +2694,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             return self.open_doc(n, record)
         self.flush()
         self.leave_doc()
+        self.leave_pdf_note()
         if self.cur is not None and self.cur is not n:
             self.hide_find(focus=False)   # 다른 노트로 가면 찾기 막대는 닫는다
         if self.cur is not None and self.cur is not n and not self.dirty:
@@ -2649,6 +2725,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             self.apply_layout(self.mode)
         self.render()
         self.mark_selected()
+        self.try_pdf_note(n)
         count, size = st.embedded_images(n["body"])
         if count and size > 200_000 and n["path"] not in self.declined:
             self.root.after(150, lambda: self.offer_split(n, count, size))
@@ -2686,6 +2763,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
 
     def close_note(self):
         self.leave_doc()
+        self.leave_pdf_note()
         self.cur = None
         self.update_star()
         self.dirty = False
@@ -3428,9 +3506,11 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         else:
             lk = self.link_at(e)
             fpath = self.local_file(lk[1]) if lk and lk[0] == "url" else None
+            raw = self.find_local_image(lk[1]) if lk and lk[0] == "url" and not fpath and not re.match(r"(?i)^(https?|ftp|mailto|javascript|data):", lk[1] or "") else None
             if fpath:
                 m.add_command(label=tr("열기"), command=lambda: self.open_local_file(lk[1]))
-                m.add_command(label=tr("파일 위치 열기"), command=lambda: self.reveal_file(fpath))
+            if fpath or raw:   # 실행 파일 종류는 열지 않지만, 탐색기에서 그 위치를 보는 것은 된다
+                m.add_command(label=tr("파일 위치 열기"), command=lambda: self.reveal_file(fpath or raw))
                 m.add_separator()
         m.add_command(label=tr("복사"), command=lambda: v.event_generate("<<Copy>>"), state="normal" if v.tag_ranges("sel") else "disabled")
         m.add_command(label=tr("모두 선택"), command=lambda: v.tag_add("sel", "1.0", "end-1c"))
@@ -4181,6 +4261,8 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             self.pv_was_active = False
             if self.doc_open and self.cur:
                 self.show_doc(self.cur, native=True)
+            elif self.pdf_note and self.cur:
+                self.show_pdf_note(self.pdf_note)
 
     def quit(self):
         self.tray_hidden = False

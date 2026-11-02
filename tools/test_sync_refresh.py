@@ -86,7 +86,8 @@ def banner_ok(top):
     """맨 위 안내가 줄바꿈돼도 전부 보인다(높이가 줄 수에 맞고 스크롤 없이 처음부터 끝까지)"""
     for w in walk(top):
         if w.winfo_class() == "Text" and "같아야 동기화됩니다" in w.get("1.0", "end"):
-            return int(w.cget("height")) >= 2 and w.yview() == (0.0, 1.0)
+            lines = (w.count("1.0", "end", "displaylines") or (1,))[0]   # 창이 넓으면 한 줄, 좁으면 여러 줄 — 몇 줄이든 높이가 줄 수와 같아야 한다
+            return int(w.cget("height")) == lines and w.yview() == (0.0, 1.0)
     return False
 
 

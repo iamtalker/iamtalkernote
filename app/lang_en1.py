@@ -239,7 +239,6 @@ EN_DIALOGS = {
     "최신 상태입니다(바뀐 파일은 자동으로 다시 읽습니다)": "Up to date (changed files are re-read automatically)",
     "(없음)": "(none)",
     "달력과 할일, 그리고 일용직·건설직의 공수달력을 정합니다.": "Set up the calendar and to-do list, and the work-day calendar for day and construction workers.",
-    "달력·할일 사용 (노트북 목록의 '바로가기'에 나타납니다)": "Use Calendar · To-do (appears under 'Shortcuts' in the notebook list)",
     "구글 달력에서 대한민국 공휴일 가져오기 (로그인 없이 공개 달력을 한 달에 한 번 받음)": "Get South Korean public holidays from Google Calendar (the public calendar is fetched once a month, no login)",
     "공수달력 사용 (날을 누르면 공수 0.5·1·1.5·2 를 적고, 달마다 합계를 계산)": "Use work-day calendar (click a day to enter 0.5·1·1.5·2 work units; monthly totals are calculated)",
     "단가 (1공수, 원)": "Rate (per work unit, KRW)",

@@ -1324,23 +1324,15 @@ class DialogsMixin:
         def planner_tab(p):
             title(p, tr("달력·할일"), tr("달력과 할일, 그리고 일용직·건설직의 공수달력을 정합니다."))
             entries = []
-            on = tk.BooleanVar(value=self.feat["cal"])
             gs = tk.BooleanVar(value=bool(st.read_config().get("cal_gongsu", False)))
 
-            def apply_cal():
-                self.feat["cal"] = on.get()
+            def apply_cal():   # 달력·할일을 쓰는지는 일반 탭의 '기능' 체크 하나로만 정한다
                 self.feat["gongsu"] = gs.get()
-                st.write_config(use_cal=on.get(), cal_gongsu=gs.get())
+                st.write_config(cal_gongsu=gs.get())
                 lock_entries()
                 if self.planner_view is not None:
                     self.planner_view.refresh()
-                self.reload_notebooks()
-                if self.nb == CAL:
-                    self.show_empty(True)
-            tk.Checkbutton(p, text=tr("달력·할일 사용 (노트북 목록의 '바로가기'에 나타납니다)"), variable=on, command=apply_cal, bg=C["bg"],
-                           activebackground=C["bg"], font=(self.ui, 10), selectcolor=C["bg"]).pack(anchor="w")
-            hr(p)
-            gg = tk.BooleanVar(value=bool(st.read_config().get("cal_google", True)))
+            gg =tk.BooleanVar(value=bool(st.read_config().get("cal_google", True)))
 
             def set_google():
                 st.write_config(cal_google=gg.get())
