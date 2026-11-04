@@ -17,6 +17,31 @@ if sys.platform == "win32":
     ole32 = ctypes.OleDLL("ole32")
     shlwapi = ctypes.OleDLL("shlwapi")
     shell32 = ctypes.OleDLL("shell32")
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    user32.GetParent.argtypes = [wintypes.HWND]
+    user32.GetParent.restype = wintypes.HWND
+    user32.IsWindowVisible.argtypes = [wintypes.HWND]
+    user32.IsWindowVisible.restype = wintypes.BOOL
+    user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
+                                    ctypes.c_int, ctypes.c_int, wintypes.UINT]
+    user32.SetWindowPos.restype = wintypes.BOOL
+    user32.EnumChildWindows.argtypes = [wintypes.HWND, ctypes.c_void_p, wintypes.LPARAM]
+    user32.EnumChildWindows.restype = wintypes.BOOL
+
+
+def _fill_host_children(host, width, height):
+    """Windows preview handler 가 만든 직접 자식 창을 호스트 전체 크기로 맞춘다."""
+    if sys.platform != "win32" or not host:
+        return
+
+    def resize_child(hwnd, _):
+        if user32.GetParent(hwnd) == host and user32.IsWindowVisible(hwnd):
+            # preview handlers may create their native child at a smaller default size
+            user32.SetWindowPos(hwnd, None, 0, 0, max(width, 10), max(height, 10), 0x0014)
+        return True
+
+    callback = WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)(resize_child)
+    user32.EnumChildWindows(host, callback, 0)
 
 
 class GUID(ctypes.Structure):
@@ -86,6 +111,7 @@ class Preview:
 
     def __init__(self):
         self.handler = None
+        self.hwnd = None
         self.keep = []   # 초기화에 쓴 스트림 등(미리보기가 떠 있는 동안 살려 둔다)
         self.inited = False
 
@@ -121,6 +147,11 @@ class Preview:
             rect = wintypes.RECT(0, 0, max(width, 10), max(height, 10))
             obj.call(3, [wintypes.HWND, POINTER(wintypes.RECT)], hwnd, byref(rect))   # SetWindow
             obj.call(5, [])                                                          # DoPreview
+            # Some preview handlers create their child window only in DoPreview and
+            # initially keep its default size. Apply the host bounds again afterwards.
+            obj.call(4, [POINTER(wintypes.RECT)], byref(rect))                       # SetRect
+            self.hwnd = hwnd
+            _fill_host_children(hwnd, width, height)
             return True
         except Exception:  # noqa: BLE001  (처리기가 이상하게 동작해도 앱은 글 보기로 돌아간다)
             self.unload()
@@ -147,11 +178,13 @@ class Preview:
             try:
                 rect = wintypes.RECT(0, 0, max(width, 10), max(height, 10))
                 self.handler.call(4, [POINTER(wintypes.RECT)], byref(rect))   # SetRect
+                _fill_host_children(self.hwnd, width, height)
             except Exception:  # noqa: BLE001
                 pass
 
     def unload(self):
         h, self.handler = self.handler, None
+        self.hwnd = None
         if h:
             try:
                 h.call(6, [])   # Unload

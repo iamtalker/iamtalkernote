@@ -869,27 +869,19 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
     def build_list(self):
         f = self.listf = tk.Frame(self.pane, bg=C["bg"])
         top = tk.Frame(f, bg=C["bg"])
-        top.pack(fill="x", padx=14, pady=(14, 8))
-        Btn(top, tr("＋ 새 노트"), self.new_note, kind="primary", bold=True, pady=6).pack(side="right", padx=(8, 0))
-        refresh = Btn(top, "⟳", self.refresh_all, pady=6, font=(self.ui, 12))
-        refresh.pack(side="right", padx=(8, 0))
-        self.tip(refresh, tr("새로 고침 (F5): 탐색기 등 앱 밖에서 폴더·노트를 지우거나 옮겼을 때 다시 읽습니다"))
-        Btn(top, tr("검색"), self.search_now, pady=6).pack(side="right", padx=(8, 0))   # 치는 즉시 검색하지만, 눌러서 바로 다시 검색할 수도 있다
-        self.advanced_search_btn = Btn(top, tr("고급 검색"), self.open_advanced_search, pady=6)
-        self.advanced_search_btn.pack(side="right", padx=(8, 0))
-        box = tk.Frame(top, bg=C["panel"], highlightthickness=1, highlightbackground=C["line"], highlightcolor=C["accent"])
+        top.pack(fill="x", padx=14, pady=(14, 4))
+        search_row = tk.Frame(top, bg=C["bg"])
+        search_row.pack(fill="x")
+        box = tk.Frame(search_row, bg=C["panel"], highlightthickness=1, highlightbackground=C["line"], highlightcolor=C["accent"])
         box.pack(side="left", fill="x", expand=True)
         self.q = tk.StringVar()
         self.q.trace_add("write", lambda *a: (self.schedule_search(), self.update_placeholder()))
         self.search_entry = tk.Entry(box, textvariable=self.q, relief="flat", bd=0, bg=C["panel"], fg=C["text"],
                                      insertbackground=C["text"], insertwidth=2, insertborderwidth=0, insertontime=600, insertofftime=400,
                                      font=(self.ui, 10))   # 세로 막대 커서가 깜빡인다
-        self.search_entry.pack(fill="x", padx=(10, 52), pady=7)
-        self.history_btn = tk.Label(box, text="◷", bg=C["panel"], fg=C["muted"], font=(self.ui, 12), cursor="hand2")
-        self.history_btn.place(relx=1.0, x=-30, rely=0.5, anchor="e")
-        self.history_btn.bind("<Button-1>", lambda e: self.show_search_history())
-        self.history_btn.bind("<Enter>", lambda e: self.history_btn.config(fg=C["text"]))
-        self.history_btn.bind("<Leave>", lambda e: self.history_btn.config(fg=C["muted"]))
+        self.search_entry.pack(fill="x", padx=(10, 32), pady=7)
+        self.history_btn = Btn(search_row, "◷", self.show_search_history, padx=6, pady=4, font=(self.ui, 12))
+        self.history_btn.pack(side="left", padx=(7, 0))
         self.tip(self.history_btn, tr("최근 검색"))
         self.clear_btn = tk.Label(box, text="×", bg=C["panel"], fg=C["muted"], font=(self.ui, 13), cursor="hand2")   # 오른쪽 끝 × : 검색 초기화
         self.clear_btn.bind("<Button-1>", lambda e: self.clear_search())
@@ -901,6 +893,29 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         self.search_entry.bind("<FocusIn>", lambda e: self.update_placeholder())    # 안내 문구가 커서를 가리지 않게
         self.search_entry.bind("<FocusOut>", lambda e: self.update_placeholder())
         self.ac_init()
+        action_bar = tk.Frame(top, bg=C["bg"])
+        action_bar.pack(fill="x", pady=(5, 0))
+        left_actions = tk.Frame(action_bar, bg=C["bg"])
+        left_actions.pack(side="left")
+        right_actions = tk.Frame(action_bar, bg=C["bg"])
+        right_actions.pack(side="right")
+        Btn(right_actions, tr("＋ 새 노트"), self.new_note, kind="primary", bold=True, pady=5).pack(side="right", padx=(7, 0))
+        refresh = Btn(right_actions, "⟳", self.refresh_all, pady=5, font=(self.ui, 12))
+        refresh.pack(side="right", padx=(7, 0))
+        self.tip(refresh, tr("새로 고침 (F5): 탐색기 등 앱 밖에서 폴더·노트를 지우거나 옮겼을 때 다시 읽습니다"))
+        self.search_btn = Btn(left_actions, tr("검색"), self.search_now, bold=True, pady=5)
+        self.search_btn.configure(highlightthickness=1, highlightbackground=C["line"])
+        self.search_btn.pack(side="left", padx=(4, 0))   # 치는 즉시 검색하지만, 눌러서 바로 다시 검색할 수도 있다
+        self.advanced_search_btn = Btn(left_actions, tr("고급 검색"), self.open_advanced_search, pady=5)
+        self.advanced_search_btn.configure(highlightthickness=1, highlightbackground=C["line"])
+        self.advanced_search_btn.pack(side="left", padx=(7, 0))
+        self.v_content = tk.BooleanVar(value=self.docs.content_search)
+        self.opt_row = tk.Frame(left_actions, bg=C["bg"])
+        self.cb_content = tk.Checkbutton(self.opt_row, text=tr("문서 내부 검색"), variable=self.v_content, command=self.on_content_toggle, relief="flat",
+                                         bd=0, takefocus=False, bg=C["bg"], fg=C["sub"], activebackground=C["soft"], selectcolor=C["bg"],
+                                         cursor="hand2", font=(self.ui, 9))
+        self.cb_content.pack(side="left")
+        self.tip(self.cb_content, tr("켜면 가져온 pdf·txt 등의 본문까지 찾고, 끄면 파일 제목만 찾습니다"))
         bar = tk.Frame(f, bg=C["bg"])
         bar.pack(fill="x", padx=10, pady=(0, 2))
         self.sort_names = {"relevance": tr("관련도순"), "time": tr("수정순"), "ctime": tr("생성순"), "title": tr("제목순")}
@@ -908,14 +923,6 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         self.b_date = Btn(bar, tr("기간"), self.toggle_date, padx=6, pady=3)
         for b in (*self.sort_btns.values(), self.b_date):
             b.pack(side="left", padx=1)
-        # 가져온 파일의 본문까지 찾을지. 가져온 폴더가 있을 때만 보인다.
-        self.v_content = tk.BooleanVar(value=self.docs.content_search)
-        self.opt_row = tk.Frame(f, bg=C["bg"])      # 정렬 줄이 이미 꽉 차서 체크박스는 아래 줄에 둔다
-        self.cb_content = tk.Checkbutton(self.opt_row, text=tr("문서 내부 검색"), variable=self.v_content, command=self.on_content_toggle, relief="flat",
-                                         bd=0, takefocus=False, bg=C["bg"], fg=C["sub"], activebackground=C["soft"], selectcolor=C["bg"],
-                                         cursor="hand2", font=(self.ui, 9))
-        self.cb_content.pack(side="left")
-        self.tip(self.cb_content, tr("켜면 가져온 pdf·txt 등의 본문까지 찾고, 끄면 파일 제목만 찾습니다"))
         b_save = Btn(bar, tr("저장"), self.save_search, padx=6, pady=3)   # 지금의 검색식·기간·태그·정렬을 '저장된 검색'으로
         b_save.pack(side="right", padx=1)
         self.tip(b_save, tr("지금의 검색을 왼쪽 '저장된 검색'에 이름을 붙여 저장합니다(스마트 폴더)"))
@@ -988,7 +995,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         """'문서 내부 검색' 체크박스는 가져온 폴더가 있을 때만 보인다"""
         if self.docs.folders():
             if not self.opt_row.winfo_ismapped():
-                self.opt_row.pack(fill="x", padx=14, before=self.count)
+                self.opt_row.pack(side="left", padx=(8, 0))
         else:
             self.opt_row.pack_forget()
 
@@ -1159,9 +1166,9 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         self.text.bind("<<Modified>>", self.on_modified)
 
         # 윈도 미리보기 처리기가 그림을 그리는 자리. 한 번 미리보기를 품은 틀은 숨겼다 다시 붙이면 화면에 안 올라오므로(Tk 의 map/unmap)
-        # 숨기지 않고 항상 이 자리에 둔 채 위로 올리고(미리보기) 아래로 내린다(평소). 평소에는 편집·렌더링 칸이 그 위를 완전히 덮는다.
+        # 숨기지 않고 본문 전체에 place 한 채 위로 올리고(미리보기) 아래로 내린다(평소). grid 칸 너비에 영향을 받지 않는다.
         self.pv_frame = tk.Frame(self.body, bg=C["bg"])
-        self.pv_frame.grid(row=0, column=0, columnspan=2, sticky="nsew")
+        self.pv_frame.place(relx=0, rely=0, relwidth=1, relheight=1)
         self.pv_frame.lower()
         self.pv_frame.bind("<Configure>", lambda e: self.pv_active and self.pv.resize(e.width, e.height))
 
@@ -1569,16 +1576,19 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             elif key == CAL:
                 label, count, parent = tr("달력·할일"), sum(1 for t in self.planner.todos if not t["done"]), f"nb{idx[QUICK]}"
             elif key == ALL:
-                label, count, parent = tr("모든 파일"), len(self.all_notes) + sum(doc_counts.get("@doc:" + f["id"], 0) for f in dfolders), ""   # 노트 + 가져온 문서
+                label, count, parent = tr("모든 파일"), len(self.all_notes) + sum(doc_counts.get(f["id"], 0) for f in dfolders), ""   # 노트 + 가져온 문서
             elif key == "":
                 label, count, parent = self.store.root_name, None, ""   # 저장 폴더 줄에는 숫자를 달지 않는다(아래 노트북들이 실제 내용)
             elif key == "@docs":
-                label, count, parent = tr("가져온 폴더"), sum(doc_counts.get("@doc:" + f["id"], 0) for f in dfolders), ""
+                n_docs = sum(doc_counts.get(f["id"], 0) for f in dfolders)
+                label, count, parent = tr("가져온 폴더"), n_docs or None, ""
             elif key.startswith("@doc:"):
                 fid, rel = self.doc_key_parts(key)
                 root_key = "@doc:" + fid
                 label = self.nb_label(key)
-                count = doc_counts.get(key, 0)
+                # 최상위 가져온 폴더는 하위 폴더까지 포함한 전체 수, 하위 폴더는 그 폴더 아래 수.
+                n_docs = doc_counts.get(fid, 0) if not rel else doc_counts.get(key, 0)
+                count = n_docs or None
                 parent_key = root_key + ("/" + rel.rpartition("/")[0] if "/" in rel else "") if rel else "@docs"
                 parent = f"nb{idx[parent_key]}"
             elif key == "@smarts":
@@ -2586,8 +2596,11 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
     def open_doc(self, n, record=True):
         """가져온 문서(pdf·txt·mp3 …)를 읽기 전용으로 연다: 색인해 둔 글을 편집 칸에 보여 준다(Ctrl+F 로 문서 안에서 찾을 수 있다)"""
         self.flush()
-        if self.cur is not None and self.cur is not n:
-            self.hide_find(focus=False)
+        # '모든 파일' 목록에서는 노트에서 가져온 파일로 바로 이동할 수 있다.
+        # 노트북을 바꿀 때처럼 기존 보기·미리보기를 정리하고 화면을 다시 붙여,
+        # Markdown 렌더링 칸이 가져온 파일 미리보기 아래에 남지 않게 한다.
+        self.close_note()
+        self.root.update_idletasks()
         self.cur = n
         self.doc_open = True
         self.snap_done = False
@@ -2609,6 +2622,14 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
     def doc_can_preview(self, n):
         return n["ext"] in PREVIEW_EXT and winpreview.available(n["ext"])
 
+    def schedule_preview_fit(self):
+        """일부 미리보기 처리기는 DoPreview 뒤늦게 창을 만들므로 본문 크기를 다시 맞춘다."""
+        def fit():
+            if self.pv_active:
+                self.pv.resize(self.body.winfo_width(), self.body.winfo_height())
+        for delay in (0, 100, 350):
+            self.root.after(delay, fit)
+
     def show_doc(self, n, native):
         """가져온 문서를 보여 준다. native=True 이고 윈도에 그 형식의 미리보기 처리기가 있으면 그 프로그램(pdf → Edge, mp3 → Media Player …)이
         노트 화면 안에 직접 그리고, 아니면(또는 실패하면) 색인해 둔 글을 읽기 전용으로 보여 준다(Ctrl+F 로 찾을 수 있다)."""
@@ -2616,9 +2637,26 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         self.pv_active = False
         can = self.doc_can_preview(n)
         if native and can:
+            # 원본 미리보기는 별도 창으로 그려진다. 이전에 보던 문서의
+            # 편집·렌더링 글이 밑에 남으면 새 미리보기와 겹쳐 보일 수 있다.
+            self.text.config(state="normal")
+            self.set_text("")
+            self.text.config(state="disabled")
+            self.view.config(state="normal")
+            self.view.delete("1.0", "end")
+            self.view.config(state="disabled")
             self.apply_layout("pv")
             self.root.update_idletasks()
-            self.pv_active = self.pv.show(self.pv_frame.winfo_id(), n["path"], self.pv_frame.winfo_width(), self.pv_frame.winfo_height())
+            self.pv_active = self.pv.show(self.pv_frame.winfo_id(), n["path"], self.body.winfo_width(), self.body.winfo_height())
+            if self.pv_active:
+                # IPreviewHandler creates a native child window during show(); re-raise
+                # its host afterwards so sibling Tk panes cannot show around the edges.
+                self.pv_frame.lift()
+                self.root.after_idle(self.pv_frame.lift)
+                # Match the resize sequence that occurs when the syntax sidebar is toggled.
+                self.relayout()
+                self.root.update_idletasks()
+                self.schedule_preview_fit()
         if self.pv_active:
             self.hide_find(focus=False)
             self.status.config(text=tr('원본 미리보기 (윈도 기본 프로그램)   ·   {0}   ·   글로 바꾸면 Ctrl+F 로 찾을 수 있습니다').format(n['path']))
@@ -2679,11 +2717,16 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         self.apply_layout("pv")
         self.root.update_idletasks()
         self.pdf_note = path
-        self.pv_active = self.pv.show(self.pv_frame.winfo_id(), path, self.pv_frame.winfo_width(), self.pv_frame.winfo_height())
+        self.pv_active = self.pv.show(self.pv_frame.winfo_id(), path, self.body.winfo_width(), self.body.winfo_height())
         if not self.pv_active:
             self.pdf_note = None
             self.apply_layout(self.mode)
             return
+        self.pv_frame.lift()
+        self.root.after_idle(self.pv_frame.lift)
+        self.relayout()
+        self.root.update_idletasks()
+        self.schedule_preview_fit()
         self.hide_find(focus=False)
         if not self.doc_toggle.winfo_ismapped():
             self.doc_toggle.pack(side="right", padx=(8, 0), before=self.mode_seg if self.mode_seg.winfo_manager() else self.mode_anchor)

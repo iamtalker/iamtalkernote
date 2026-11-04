@@ -9,9 +9,11 @@ import time
 tmp = tempfile.mkdtemp(prefix="nbcol-")
 vault = os.path.join(tmp, "v")
 src = os.path.join(tmp, "소설")
+empty_src = os.path.join(tmp, "빈 폴더")
 os.makedirs(os.path.join(vault, "업무", "회의"))
 os.makedirs(os.path.join(src, "A 소설"))
 os.makedirs(os.path.join(src, "B 소설", "외전"))
+os.makedirs(empty_src)
 for rel in (os.path.join("A 소설", "a1.txt"), os.path.join("B 소설", "외전", "x.txt")):
     with open(os.path.join(src, rel), "w", encoding="utf-8") as fh:
         fh.write("글")
@@ -45,8 +47,10 @@ def pump(n=30):
 
 pump(60)
 a.docs.add_folder(src)
+a.docs.add_folder(empty_src)
 a.docs.scan()
-fid = a.docs.folders()[0]["id"]
+fid = next(f["id"] for f in a.docs.folders() if f["path"] == src)
+empty_id = next(f["id"] for f in a.docs.folders() if f["path"] == empty_src)
 a.reload_notes()
 pump(20)
 root_key, a_key, b_key, g_key = "@doc:" + fid, "@doc:" + fid + "/A 소설", "@doc:" + fid + "/B 소설", "@doc:" + fid + "/B 소설/외전"
@@ -56,10 +60,18 @@ def is_open(key):
     return bool(a.nbtree.item(f"nb{a.nb_keys.index(key)}", "open"))
 
 
+def shown_count(key):
+    return a.nbtree.item(f"nb{a.nb_keys.index(key)}", "values")[0]
+
+
 check("'가져온 폴더' 머리글은 펼쳐져 폴더 이름이 보인다", is_open("@docs"))
 check("가져온 폴더(맨 위)는 기본으로 접혀 있다", not is_open(root_key))
 check("가져온 폴더의 하위 폴더도 기본으로 접혀 있다", not is_open(b_key))
 check("내 노트북은 그대로 펼쳐져 있다", is_open("업무"))
+check("가져온 폴더 머리글은 하위 폴더의 문서 수를 합산한다", shown_count("@docs") == "2")
+check("Cloud 폴더는 하위 문서를 포함한 수를 표시한다", shown_count(root_key) == "2")
+check("문서가 없는 가져온 폴더는 0 대신 숫자를 숨긴다", shown_count("@doc:" + empty_id) == "")
+check("모든 파일 개수에는 가져온 문서도 포함한다", shown_count("*") == "3")
 
 # 사용자가 하나 펼치면(삼각형) 목록을 다시 그려도 그대로
 iid = f"nb{a.nb_keys.index(root_key)}"
