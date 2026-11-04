@@ -281,6 +281,24 @@ def touch_updated(body):
     return fm_set(body, "updated", time.time())[0]
 
 
+def ensure_dates(body, created, updated):
+    """날짜가 없는 노트를 저장할 때 기존 기준일을 UTC 머리말로 고정한다."""
+    meta = parse_meta(body)
+    for key, epoch in (("created", created), ("updated", updated)):
+        if meta[key] is not None:
+            continue
+        value = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(epoch))
+        m = FM_RE.match(body)
+        if not m:
+            body = "---\n" + key + ": " + value + "\n---\n\n" + body
+        else:
+            fm = m.group(1)
+            pattern = re.compile(r"(?m)^" + key + r":[^\r\n]*")
+            fm = pattern.sub(key + ": " + value, fm) if pattern.search(fm) else fm.rstrip("\r\n") + "\n" + key + ": " + value
+            body = body[:m.start(1)] + fm + body[m.end(1):]
+    return body
+
+
 def note_source(body, meta=None):
     """노트의 원본 주소: 머리말 source, 없으면 클리퍼가 맨 위에 적는 '원본: <주소>'"""
     meta = meta or parse_meta(body)
@@ -862,7 +880,7 @@ class Store:
             upd, cre, tags = info.get(key, (None, None, set()))
             out.append(Note(nb=s, key=key, title=note_title(name), path=path, size=stt.st_size, file_mtime=stt.st_mtime,
                             mtime=upd or stt.st_mtime,                                  # 수정 시각: 머리말 updated, 없으면 파일
-                            ctime=cre or getattr(stt, "st_birthtime", stt.st_ctime),    # 생성 시각: 머리말 created, 없으면 파일
+                            ctime=cre or upd or stt.st_mtime, created_known=bool(cre),  # 폰과 같은 기준. 기기별 파일 생성일은 쓰지 않는다.
                             tags=tags))
         return out
 
@@ -939,6 +957,8 @@ class Store:
             name = f"{title} ({i})"
             i += 1
         p = os.path.join(d, md_name(name))
+        now = time.time()
+        body = ensure_dates(body, now, now)
         with open(p, "w", encoding="utf-8", newline="\n") as f:
             f.write(body)
         self.journal("create", p)
@@ -947,6 +967,19 @@ class Store:
     def save(self, path, body, versioned=True, force=False, touch=True, ev="edit"):
         """저장. 버전 기능이 켜져 있으면 덮어쓰기 전의 내용을 이전 버전으로 남긴다.
         force=True 면 간격과 상관없이 남긴다(노트를 연 뒤 처음 고칠 때)."""
+        stat_before = None
+        previous = parse_meta("")
+        fallback = time.time()
+        try:
+            stat_before = os.stat(path)
+            with open(path, "rb") as f:
+                previous = parse_meta(decode(f.read()))
+            fallback = stat_before.st_mtime
+        except FileNotFoundError:
+            pass  # 충돌 사본에서 사라진 원본을 되살리는 저장도 지원한다.
+        created = previous["created"] or previous["updated"] or fallback
+        updated = previous["updated"] or fallback
+        body = ensure_dates(body, created, updated)
         v = version_settings()
         if touch:
             body = touch_updated(body)   # 머리말에 updated 가 있으면 지금 시각으로

@@ -251,6 +251,7 @@ def run(notes, query="", sort="relevance", asc=False, date_from="", date_to="", 
                 n["_score"] = score(n["_hay"], n["title"], words, q)
         out.sort(key=lambda n: n["_score"], reverse=not asc)
     elif sort == "ctime":
+        out.sort(key=lambda n: (n["title"].lower(), str(n.get("key", n["path"])).lower()))
         out.sort(key=lambda n: n.get("ctime", n["mtime"]), reverse=not asc)
     elif sort == "title":
         out.sort(key=lambda n: n["title"].lower(), reverse=asc)   # 기본은 가나다순

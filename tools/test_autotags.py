@@ -15,6 +15,28 @@ import tagac
 
 
 class AutoTagsTest(unittest.TestCase):
+    def test_existing_only_does_not_fill_missing_slots(self):
+        self.assertEqual(autotags.recommendations('새단어 새단어 재즈', '노래', known=['재즈'], existing_only=True), ['재즈'])
+        self.assertEqual(autotags.recommendations('새단어만 있음', '노트', known=[], existing_only=True), [])
+        self.assertEqual(autotags.recommendations('', '재즈_새문구.mp3', known=['재즈'], extension='mp3', existing_only=True), ['재즈', 'mp3'])
+
+    def test_extension_tag_is_required_in_addition_to_three_words(self):
+        tags = autotags.recommendations('사과 사과 바나나 바나나 포도 포도', '노래.mp3', extension='MP3')
+        self.assertEqual(tags, ['바나나', '사과', '포도', 'mp3'])
+        self.assertEqual(autotags.recommendations('', '123.pdf', extension='pdf'), ['pdf'])
+        self.assertEqual(autotags.recommendations('', '123.pdf', have=['PDF'], extension='pdf'), [])
+        for ext in ['txt', 'md', 'TXT', 'MD', '']:
+            self.assertEqual(autotags.recommendations('', '123.' + ext, extension=ext), [])
+
+    def test_empty_body_uses_music_or_comic_title_without_extension(self):
+        for title in ['재즈_피아노-연주.mp3', '판타지_모험-만화.cbz']:
+            text = autotags.suggestion_text('', title)
+            tags = autotags.additions(text)
+            self.assertEqual(len(tags), 3)
+            self.assertFalse({'mp3', 'cbz'} & set(tags))
+        self.assertEqual(autotags.suggestion_text('---\nsource: url\n---\n\n', '재즈.mp3'), '재즈')
+        self.assertEqual(autotags.suggestion_text('실제 본문', '다른 제목.mp3'), '실제 본문')
+
     def test_korean_first_and_metadata(self):
         text = '---\nip: link link link\nmemo: 메모 메모 메모\n---\n'
         text += '[정부](https://example.com/link) 북한은 북한의 병원은 병원을 의료장비는 의료장비를 '

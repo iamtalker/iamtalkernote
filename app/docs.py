@@ -431,24 +431,45 @@ class DocIndex:
         finally:
             conn.close()
 
-    def rename_tags(self, olds, new):
-        """olds 의 태그를 모두 new 로 바꾼다(None 이면 지운다) → 바뀐 문서 수"""
-        olds = set(olds)
+    def rename_tags(self, olds, new, progress=None):
+        """가져온 문서의 여러 태그를 한 번 읽고 한 트랜잭션으로 저장한다."""
+        olds = set(olds) - {new}
+        roots = {self.fid(f["path"]): f["path"] for f in self.cfg()["folders"]}
+        conn = self._db()
         changed = 0
-        for path, (tags, memo) in self.annots().items():
-            if not olds & set(tags):
-                continue
-            moved = [t for t in tags if t not in olds]
-            if new and new not in moved:
-                moved.append(new)
-            if self.set_annot(path, tags=moved):
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            rows = conn.execute("SELECT d.path,d.folder,d.title,d.body,d.ext,a.tags,a.memo FROM docs d JOIN annot a ON a.path=d.path").fetchall()
+            for i, (path, fid, title, body, ext, raw_tags, memo) in enumerate(rows):
+                tags = json.loads(raw_tags or "[]")
+                if fid not in roots or not olds.intersection(tags):
+                    continue
+                moved = [t for t in tags if t not in olds]
+                if new and new not in moved:
+                    moved.append(new)
+                if moved or memo:
+                    conn.execute("UPDATE annot SET tags=? WHERE path=?", (json.dumps(moved, ensure_ascii=False), path))
+                else:
+                    conn.execute("DELETE FROM annot WHERE path=?", (path,))
+                text = zlib.decompress(body).decode("utf-8", "ignore") if body else ""
+                rel = os.path.relpath(path, roots[fid])
+                conn.execute("UPDATE docs SET hay=? WHERE path=?", (self.make_hay(title, rel, text, moved, memo or ""), path))
                 changed += 1
-        return changed
+                if progress and changed % 50 == 0:
+                    progress(i + 1, len(rows))
+            conn.commit()
+            return changed
+        finally:
+            conn.close()  # 예외가 났으면 진행 중인 트랜잭션은 롤백된다.
 
     def tag_use_count(self, tags):
-        """tags 중 하나라도 붙은 가져온 문서 수"""
         want = set(tags)
-        return sum(1 for tg, _m in self.annots().values() if want & set(tg))
+        conn = self._db()
+        try:
+            return sum(1 for (raw,) in conn.execute("SELECT a.tags FROM annot a JOIN docs d ON d.path=a.path")
+                       if want.intersection(json.loads(raw or "[]")))
+        finally:
+            conn.close()
 
     def scan(self, progress=None, cancelled=None, only=None):
         """가져온 폴더를 훑어 새로 생기거나 바뀐 파일만 읽고, 사라진 파일은 색인에서 뺀다 → (읽은 수, 뺀 수, 총 수)

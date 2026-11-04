@@ -71,21 +71,22 @@ def clean_tag_name(name):
     return t if t and len(t) <= 30 and not re.search(r"[\[\]()/<>,]", t) else ""
 
 
-def edit_tag(body, old, new):
+def edit_tags(body, olds, new):
     """노트 본문에서 태그 old 를 new 로 바꾼다(new 가 None 이면 지운다) → (새 본문, 센 수)
     태그는 세 군데에서 온다: 머리말 tags('fm'), 글 아래의 '태그: #a #b' 줄('line'), 본문 속 #해시태그('inline').
     코드·주소 속의 #는 태그가 아니라서 건드리지 않고, 본문에 못 쓰는 이름(공백·기호가 든 것)으로는 본문 #태그를 못 바꿔서 'stuck' 으로 센다."""
+    olds = set(olds) - {new}
     counts = {"fm": 0, "line": 0, "inline": 0, "stuck": 0}
-    body, counts["fm"] = st.fm_edit_tags(body, lambda t: (new if new else None) if t == old else t)
+    body, counts["fm"] = st.fm_edit_tags(body, lambda t: (new if new else None) if t in olds else t)
     m = st.FM_RE.match(body)
     head, rest = (body[:m.end()], body[m.end():]) if m else ("", body)
     for m in reversed(list(TAG_LINE.finditer(rest))):   # 글 아래의 '태그: …' 줄
         toks = re.findall(r"[^,\s]+", m.group(1))
-        if not any(t.lstrip("#") == old and len(t) <= 31 for t in toks):
+        if not any(t.lstrip("#") in olds and len(t) <= 31 for t in toks):
             continue
         out = []
         for t in toks:
-            if t.lstrip("#") == old:
+            if t.lstrip("#") in olds:
                 t = ("#" if t.startswith("#") else "") + new if new else None
             if t and t.lstrip("#") not in [x.lstrip("#") for x in out]:
                 out.append(t)
@@ -100,7 +101,7 @@ def edit_tag(body, old, new):
         out, pos = [], 0
         for mm in HASH_FAST.finditer(masked):
             i = mm.start()
-            if mm.group(1) != old or (i and (masked[i - 1].isalnum() or masked[i - 1] == "_" or masked[i - 1] in BAD_PREV)):
+            if mm.group(1) not in olds or (i and (masked[i - 1].isalnum() or masked[i - 1] == "_" or masked[i - 1] in BAD_PREV)):
                 continue
             if new is None:   # 지우기: '#이름' 과 바로 뒤의 공백 하나
                 end = mm.end() + 1 if rest[mm.end():mm.end() + 1] == " " else mm.end()
@@ -115,6 +116,10 @@ def edit_tag(body, old, new):
             counts["inline"] += 1
         rest = "".join(out) + rest[pos:]
     return head + rest, counts
+
+
+def edit_tag(body, old, new):
+    return edit_tags(body, [old], new)
 
 
 def add_tag(body, tag):

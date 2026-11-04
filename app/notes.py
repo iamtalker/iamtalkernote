@@ -2263,6 +2263,8 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             L.insert("end", n["title"] + "\n", "title")
             shown_t = n.get("ctime", n["mtime"]) if self.sort == "ctime" else n["mtime"]   # 생성순이면 생성 시각을 보여 준다
             meta = time.strftime("%Y.%m.%d %H:%M", time.localtime(shown_t))
+            if self.sort == "ctime" and n.get("created_known") is False:
+                meta += " " + tr("(기준일)")
             if n.get("trash"):
                 meta += "   " + (tr("삭제까지 %d일") % n["left"] if n["left"] is not None else tr("자동 삭제 안 함")) + "   ← " + n["orig"]
             elif self.scope_all() or n["nb"] != self.nb:   # 모든 노트이거나 하위 노트북의 노트면 어느 노트북인지 보여 준다
@@ -3021,6 +3023,9 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         n = next((x for x in self.notes if x["path"] == made["path"]), None)
         if n:
             self.open_note(n)
+            if not body_after_fm(n["body"]).strip():
+                self.set_text("")  # 새 노트의 날짜 머리말은 파일에 보관하고 입력은 빈 본문에서 시작한다.
+                self.render()
             self.fresh = made["path"]            # 제목을 아직 안 쓴 새 노트(파일 이름만 임시로 '제목 없음')
             self.title_var.set("")
             self.text.focus_set()                # 바로 본문부터 쓴다(제목은 위 칸에서 나중에도 쓸 수 있다)
@@ -3168,10 +3173,13 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
 
     def draw_view(self, segs):
         v = self.view
+        self._render_img_avail = self.img_avail()
+        self._drawing_view = True
         self.view_sb_frozen = True
         try:
             self.draw_view_body(segs)
         finally:
+            self._drawing_view = False
             self.view_sb_frozen = False
             self.view_scroll(*v.yview())
 
@@ -3383,6 +3391,8 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
     def img_avail(self):
         """렌더링 화면에서 그림이 쓸 수 있는 너비(픽셀): 렌더링 칸 너비 - 여백(스크롤바 포함). 50 단위로 내려서 변환 캐시가 늘지 않게.
         스크롤바가 생겼다 사라져도 값이 같도록 스크롤바가 들어가는 바깥 칸의 너비로 잰다."""
+        if getattr(self, "_drawing_view", False):
+            return self._render_img_avail
         box = self.view.master
         box.update_idletasks()
         w = box.winfo_width()

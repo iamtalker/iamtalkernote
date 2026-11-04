@@ -8,6 +8,16 @@ LANGS = {"en": "English", "ko": "한국어"}
 _lang = "ko"
 
 EN = {
+    '이미 존재하는 태그로만 추가 (부족해도 새 단어로 채우지 않음)': 'Use existing tags only (do not fill remaining slots with new words)',
+    '본문이 없으면 제목을 분석합니다. 확장자 태그는 별도로 추가합니다 (txt·md 제외).': 'Use the title when the body is empty. Extension tags are added separately (except txt and md).',
+    '문서마다 키워드 최대 3개와 확장자 태그를 추가합니다.\n기존 태그는 유지합니다. 본문이 없으면 제목을 분석합니다. 가져온 파일은 색인된 본문을 사용합니다.': 'Add up to three keywords and an extension tag per document.\nExisting tags are kept. Empty documents use their title; imported files use indexed text.',
+    '기존 태그는 유지하고 중복은 추가하지 않습니다. 적용 전에 내용이 바뀐 문서는 건너뜁니다.': 'Keep existing tags and avoid duplicates. Skip documents changed since analysis.',
+    '노트 태그 저장 중…': 'Saving note tags…',
+    '가져온 문서 태그 저장 중…': 'Saving imported document tags…',
+    '가져온 문서': 'Imported documents',
+    '태그 목록 갱신': 'Refreshing tags',
+    '변경되어 건너뜀 {0}개 · 실패 {1}개': 'Changed and skipped {0} · Failed {1}',
+    '(기준일)': '(reference date)',
     "이름순": "Name", "빈도순": "Frequency",
     "이름순 (한글 → 영어)": "Name (Korean → English)",
     "태그 정렬: 빈도순 또는 이름순 (한글·영문 구분)": "Sort tags by frequency or name (Korean and English grouped)",

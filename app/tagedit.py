@@ -7,21 +7,29 @@ import autotags
 class TagEditMixin:
     def show_auto_tags(self):
         """전체 문서 또는 현재 검색 결과를 분석하고, 미리 본 뒤 일괄 추가한다."""
-        top = self.tool_window(tr("자동 태그 추가"), "560x240")
+        top = self.tool_window(tr("자동 태그 추가"), "620x330")
         scope = tk.StringVar(value="all")
-        tk.Label(top, text=tr("문서마다 자주 나온 단어를 최대 3개씩 태그로 추가합니다.\n본문에 나온 기존 태그 이름을 언어 구분 없이 우선합니다. 기존 태그는 유지하며, 가져온 파일은 색인된 본문을 분석합니다."),
+        existing_only = tk.BooleanVar(value=st.read_config().get("autoTagsExistingOnly", True))
+        tk.Label(top, text=tr("문서마다 키워드 최대 3개와 확장자 태그를 추가합니다.\n기존 태그는 유지합니다. 본문이 없으면 제목을 분석합니다. 가져온 파일은 색인된 본문을 사용합니다."),
                  bg=C["bg"], fg=C["text"], wraplength=520, justify="left").pack(padx=20, pady=18)
         for value, label in (("all", tr("전체 문서 (가져온 폴더 포함)")), ("results", tr("현재 검색 결과 전체"))):
             tk.Radiobutton(top, text=label, variable=scope, value=value, bg=C["bg"], fg=C["text"],
                            selectcolor=C["panel"], anchor="w").pack(fill="x", padx=20)
+        tk.Checkbutton(top, text=tr("이미 존재하는 태그로만 추가 (부족해도 새 단어로 채우지 않음)"),
+                       variable=existing_only, bg=C["bg"], fg=C["text"], selectcolor=C["panel"],
+                       anchor="w", wraplength=570).pack(fill="x", padx=20, pady=(12, 0))
+        tk.Label(top, text=tr("본문이 없으면 제목을 분석합니다. 확장자 태그는 별도로 추가합니다 (txt·md 제외)."),
+                 bg=C["bg"], fg=C["muted"], wraplength=570, justify="left").pack(fill="x", padx=20, pady=(6, 0))
 
         def start():
             self.flush()
             targets = (list(self.all_notes) + self.docs.list_docs()) if scope.get() == "all" else list(self.results)
             targets = list({(isinstance(n, docidx.Doc), n["path"]): n for n in targets if not n.get("trash")}.values())
             known = self.known_content_tags()
+            only = existing_only.get()
+            st.write_config(autoTagsExistingOnly=only)
             top.destroy()
-            self.run_task(tr("자동 태그 분석"), lambda p, c: autotags.plan(targets, p, c, known),
+            self.run_task(tr("자동 태그 분석"), lambda p, c: autotags.plan(targets, p, c, known, only),
                           lambda result: self.preview_auto_tags(result, len(targets)))
         Btn(top, tr("분석 후 미리보기"), start, kind="primary", padx=18, pady=6).pack(pady=15)
 
@@ -30,7 +38,7 @@ class TagEditMixin:
         top = self.tool_window(tr("자동 태그 미리보기"), "900x560")
         summary = tr("분석 {0}개 · 추가할 문서 {1}개 · 읽기 실패 {2}개").format(total, len(rows), len(errors))
         tk.Label(top, text=summary, bg=C["bg"], fg=C["text"], padx=16, pady=12).pack(anchor="w")
-        tk.Label(top, text=tr("본문이 없거나 상위 단어가 이미 태그이면 추가하지 않습니다. 적용 전에 내용이 바뀐 문서는 건너뜁니다."),
+        tk.Label(top, text=tr("기존 태그는 유지하고 중복은 추가하지 않습니다. 적용 전에 내용이 바뀐 문서는 건너뜁니다."),
                  bg=C["bg"], fg=C["muted"], wraplength=850).pack(padx=16)
         frame = tk.Frame(top, bg=C["bg"])
         frame.pack(fill="both", expand=True, padx=16, pady=12)
@@ -95,7 +103,8 @@ class TagEditMixin:
 
     def suggest_content_tags(self):
         body = self.cur.get("body", "") if self.doc_open else self.text.get("1.0", "end-1c")
-        return tagac.content_suggestions(body, self.cur.get("tags", ()), known=self.known_content_tags())
+        return autotags.recommendations(body, self.cur["title"], self.cur.get("tags", ()),
+                                        self.known_content_tags(), self.cur.get("ext", "md") if self.doc_open else "md")
 
     def finish_tags(self, save, tags=None):
         box = self.tag_edit
@@ -282,21 +291,17 @@ class TagEditMixin:
                 if i % 50 == 0:
                     prog(i, len(targets))
                 body = orig = n.read()
-                for t in tags:
-                    if t == new:
-                        continue
-                    body, c = edit_tag(body, t, new)
-                    for k in total:
-                        total[k] += c[k]
+                body, c = edit_tags(body, tags, new)
+                for k in total:
+                    total[k] += c[k]
                 if body != orig:
-                    out.append((n, body))
-            return out, total
+                    out.append((n, autotags.digest(orig), body))
+            return out, total, self.docs.tag_use_count(tags)
 
         def confirm(res):
             if res is None:
                 return
-            items, c = res
-            dcount = self.docs.tag_use_count(tags)   # 가져온 파일에 붙인 같은 태그(원본은 그대로, 앱의 DB 만 바뀐다)
+            items, c, dcount = res
             if not items and not dcount:
                 return messagebox.showinfo(APP, tr("바꿀 곳이 없습니다.") + (tr('\n(본문 속 #태그 {0}곳은 이 이름으로 바꿀 수 없습니다)').format(c['stuck']) if c["stuck"] else ""), parent=self.root)
             parts = [tr('{0} {1}곳').format(label, c[k]) for k, label in (("fm", tr("머리말")), ("line", tr("태그 줄")), ("inline", tr("본문 #태그"))) if c[k]]
@@ -315,26 +320,44 @@ class TagEditMixin:
 
     def tag_write(self, items, tags, new):
         cur_path = self.cur["path"] if self.cur else None
-        top = self.tool_window(tr("태그 바꾸는 중"), "420x110", native=True)
-        msg = tk.Label(top, text="", bg=C["bg"], fg=C["text"], font=(self.ui, 10), pady=24)
-        msg.pack()
-        top.protocol("WM_DELETE_WINDOW", lambda: None)
-        done = 0
-        for i, (n, body) in enumerate(items):
-            if i % 10 == 0:
-                msg.config(text=tr('노트의 태그를 바꾸는 중… {0:,} / {1:,}').format(i, len(items)))
-                top.update()
-            try:   # 수정 시각은 그대로 두고(touch=False), 이전 내용은 버전으로 남긴다(force)
-                self.store.save(n["path"], body, versioned=True, force=True, touch=False, ev="tags")
-                done += 1
-            except OSError:
-                pass
-        top.destroy()
-        dn = self.docs.rename_tags(tags, new)   # 가져온 파일의 태그
-        if self.tag in tags:
-            self.tag = new
-        self.after_tag_change(cur_path)
-        messagebox.showinfo(APP, tr('노트 {0:,}개').format(done) + (tr(', 가져온 파일 {0:,}개').format(dn) if dn else "") + tr("의 태그를 ") + (tr("바꿨습니다.") if new else tr("지웠습니다.")), parent=self.root)
+
+        def work(progress, cancelled):
+            done, skipped, errors = 0, 0, []
+            for i, (n, before, body) in enumerate(items):
+                try:
+                    if autotags.digest(n.read()) != before:
+                        skipped += 1
+                    else:
+                        self.store.save(n["path"], body, versioned=True, force=True, touch=False, ev="tags")
+                        done += 1
+                except Exception as ex:
+                    errors.append((n["path"], str(ex)))
+                progress(i + 1, len(items), tr("노트 태그 저장 중…"))
+            try:
+                dn = self.docs.rename_tags(tags, new, progress=lambda d, t: progress(d, t, tr("가져온 문서 태그 저장 중…")))
+            except Exception as ex:
+                dn = 0
+                errors.append((tr("가져온 문서"), str(ex)))
+            return done, dn, skipped, errors
+
+        def finished(result):
+            done, dn, skipped, errors = result
+            if self.tag in tags:
+                self.tag = new
+            message = tr('노트 {0:,}개').format(done) + (tr(', 가져온 파일 {0:,}개').format(dn) if dn else "") + tr("의 태그를 ") + (tr("바꿨습니다.") if new else tr("지웠습니다."))
+            if skipped or errors:
+                message += "\n" + tr("변경되어 건너뜀 {0}개 · 실패 {1}개").format(skipped, len(errors))
+            if errors:
+                message += "\n" + "\n".join(p + ": " + e for p, e in errors[:10])
+            # 마지막 목록 재색인도 worker에서 읽고 UI에는 결과만 적용한다.
+            def loaded(notes):
+                self.apply_loaded(notes, keep_scroll=True)
+                n = next((x for x in self.notes if x["path"] == cur_path), None) if cur_path else None
+                if n:
+                    self.open_note(n, record=False)
+                messagebox.showinfo(APP, message, parent=self.root)
+            self.run_task(tr("태그 목록 갱신"), lambda p, c: self.read_all_notes(), loaded, cancellable=False)
+        self.run_task(tr("태그 바꾸는 중"), work, finished, text=tr("노트 태그 저장 중…"), cancellable=False)
 
     def after_tag_change(self, cur_path):
         """태그를 바꾼 뒤: 노트를 다시 읽고 사이드바·목록·열려 있던 노트를 갱신한다"""
