@@ -99,6 +99,23 @@ app.refresh()
 checks.append([n["title"] for n in app.results] == ["without-tag"])
 print(("  ✔ " if checks[-1] else "  ✘ ") + "태그 없는 항목만 검색 결과로 남음")
 
+# 정렬을 바꿔도 태그 없음·현재 태그 필터와 가져온 문서 합산이 유지된다.
+app.all_notes = [{"tags": {"다라", "beta"}}, {"tags": {"가나", "beta"}}]
+app.docs = SimpleNamespace(tag_counts=lambda: {"Alpha": 9}, untagged_count=lambda: 0)
+app.tag_sort_btn = Button()
+app.tag_none = False
+app.tag = "beta"
+app.change_tag_sort("name")
+checks.append(app.tag_keys == [None, "가나", "다라", "Alpha", "beta"]
+              and saved.get("tagSort") == "name" and app.tagtree.selected == ("tg4",))
+print(("  ✔ " if checks[-1] else "  ✘ ") + "이름순은 한글·영문을 묶고 정렬 후 기존 태그 선택을 유지")
+app.change_tag_sort("frequency")
+checks.append(app.tag_keys[:3] == [None, "Alpha", "beta"] and saved.get("tagSort") == "frequency")
+print(("  ✔ " if checks[-1] else "  ✘ ") + "빈도순으로 복귀하고 설정 저장")
+checks.append(notes.tagac.ordered_tags({"banana": 1, "Apple": 1, "가나": 1, "Zulu": 1}, "name")
+              == ["가나", "Apple", "banana", "Zulu"])
+print(("  ✔ " if checks[-1] else "  ✘ ") + "영문 이름은 대소문자 구분 없이 알파벳순")
+
 notes.search.run = old_search
 notes.st.write_config = old_write_config
 raise SystemExit(0 if all(checks) else 1)

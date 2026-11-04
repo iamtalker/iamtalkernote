@@ -74,6 +74,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         self.tag = None                # 태그로 거르는 중이면 그 태그
         self.tag_none = False
         self.tag_global = bool(cfg.get("tagGlobal", False))
+        self.tag_sort = "name" if cfg.get("tagSort") == "name" else "frequency"
         self.adv_conditions = []
         self.nb_keys, self.tag_keys = [], []
         self.nb_open = {}              # 노트북 목록에서 펼침(True)·접음(False)을 사용자가 정한 항목. 정한 적 없으면 가져온 폴더 쪽은 접고 나머지는 펼친다
@@ -859,6 +860,10 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
                                  kind="ghost", padx=5, pady=0, font=(self.ui, 8))
         self.tag_scope_btn.pack(side="right")
         self.tip(self.tag_scope_btn, tr("태그 목록 범위를 전체와 현재 노트북 사이에서 바꿉니다"))
+        self.tag_sort_btn = Btn(tag_head, tr("이름순") if self.tag_sort == "name" else tr("빈도순"), self.show_tag_sort,
+                                padx=5, pady=0, font=(self.ui, 8))
+        self.tag_sort_btn.pack(side="right")
+        self.tip(self.tag_sort_btn, tr("태그 정렬: 빈도순 또는 이름순 (한글·영문 구분)"))
         self.tagtree = self.make_tree(self.tag_sec)
         self.tagtree.config(selectmode="extended")   # Ctrl/Shift+클릭으로 태그 여러 개를 골라 한꺼번에 이름 변경·삭제
         self.tagtree.bind("<ButtonRelease-1>", self.on_tag_click)
@@ -1632,7 +1637,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
                 counts[t] = counts.get(t, 0) + 1
         for t, c in doc_counts.items():
             counts[t] = counts.get(t, 0) + c
-        self.tag_keys = [None] + sorted(counts, key=lambda t: (-counts[t], t.lower()))
+        self.tag_keys = [None] + tagac.ordered_tags(counts, getattr(self, "tag_sort", "frequency"))
         self.quiet = True
         self.tagtree.delete(*self.tagtree.get_children())
         self.tagtree.insert("", "end", iid="tg0", text=f"  {tr('태그 없음')}   {untagged:,}", values=(f"{untagged:,}",))
@@ -1647,6 +1652,25 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             self.tagtree.selection_set(f"tg{self.tag_keys.index(self.tag)}")
         self.fit_count(self.tagtree, [f"{untagged:,}"] + [f"{c:,}" for c in list(counts.values())[:200]])
         self.quiet = False
+
+    def show_tag_sort(self):
+        if getattr(self, "tag_sort_menu", None):
+            self.tag_sort_menu.destroy()
+        menu = self.tag_sort_menu = tk.Menu(self.root, tearoff=0)
+        selected = self.tag_sort_selection = tk.StringVar(master=self.root, value=self.tag_sort)
+        for value, label in (("frequency", tr("빈도순")), ("name", tr("이름순 (한글 → 영어)"))):
+            menu.add_radiobutton(label=label, variable=selected, value=value,
+                                 command=lambda value=value: self.change_tag_sort(value))
+        try:
+            menu.tk_popup(self.tag_sort_btn.winfo_rootx(), self.tag_sort_btn.winfo_rooty() + self.tag_sort_btn.winfo_height())
+        finally:
+            menu.grab_release()
+
+    def change_tag_sort(self, mode):
+        self.tag_sort = "name" if mode == "name" else "frequency"
+        st.write_config(tagSort=self.tag_sort)
+        self.tag_sort_btn.config(text=tr("이름순") if self.tag_sort == "name" else tr("빈도순"))
+        self.reload_tags()
 
     def toggle_tag_scope(self):
         self.tag_global = not self.tag_global

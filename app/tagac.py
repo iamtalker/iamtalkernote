@@ -6,6 +6,17 @@ import html
 import tkinter as tk
 
 
+def ordered_tags(counts, mode="frequency"):
+    """이름순은 한글·영문·그 밖 순서로 묶고, 영어 대소문자는 구분하지 않는다."""
+    def name_key(tag):
+        word = tag.casefold()
+        group = 0 if re.match(r"[가-힣ㄱ-ㅎㅏ-ㅣ]", word) else 1 if re.match(r"[a-z]", word) else 2
+        return group, word, tag
+    if mode == "name":
+        return sorted(counts, key=name_key)
+    return sorted(counts, key=lambda t: (-counts[t], t.casefold(), t))
+
+
 def current_token(text):
     """입력 글에서 지금 치고 있는 낱말(공백·쉼표 뒤) → (시작 위치, 낱말('#' 포함))"""
     m = re.search(r"[^\s,]*$", text)

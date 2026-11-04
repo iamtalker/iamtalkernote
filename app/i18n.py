@@ -8,6 +8,9 @@ LANGS = {"en": "English", "ko": "한국어"}
 _lang = "ko"
 
 EN = {
+    "이름순": "Name", "빈도순": "Frequency",
+    "이름순 (한글 → 영어)": "Name (Korean → English)",
+    "태그 정렬: 빈도순 또는 이름순 (한글·영문 구분)": "Sort tags by frequency or name (Korean and English grouped)",
     '자동 태그 추가…': 'Add automatic tags…',
     '자동 태그 추가': 'Add automatic tags',
     '자동 태그 분석': 'Analyzing automatic tags',
