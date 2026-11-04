@@ -5,6 +5,7 @@ import threading
 import time
 import webbrowser
 import tkinter as tk
+import tkinter.font as tkfont
 from tkinter import filedialog, messagebox, ttk
 
 import store as st
@@ -169,7 +170,12 @@ class SelText(tk.Text):
         self.insert("1.0", str(text))
         self.configure(state="disabled")
         if self._auto:
-            tk.Text.configure(self, width=max(2, max(len(x) for x in str(text).split(chr(10))) + 2))
+            # Text의 width 단위는 '0' 한 글자 폭이다. 한글은 그보다 넓으므로
+            # 글자 수만 넣으면 충분히 넓은 창에서도 단어마다 줄이 꺾인다.
+            font = tkfont.Font(root=self, font=self.cget("font"))
+            unit = max(1, font.measure("0"))
+            pixels = max(font.measure(line.expandtabs(8)) for line in str(text).split("\n"))
+            tk.Text.configure(self, width=max(2, (pixels + unit - 1) // unit + 2))
         self._fit()
 
     def _fit(self):
