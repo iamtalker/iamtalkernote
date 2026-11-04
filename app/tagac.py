@@ -2,6 +2,7 @@
 [확인] 을 눌러야 한꺼번에 노트에 들어가고 [취소] 는 아무것도 바꾸지 않는다. 치는 동안 기존 태그를 후보 목록으로 보여 주고(↓↑ Tab Enter 클릭),
 오른쪽 ▾ 를 누르면 모든 태그를 펼친다. 후보 계산(suggest 등)은 화면을 모르는 순수 함수라 따로 시험한다."""
 import re
+import html
 import tkinter as tk
 
 
@@ -28,26 +29,32 @@ def tags_in(text):
     return [t.lstrip("#") for t in re.split(r"[,\s]+", text) if t.lstrip("#")]
 
 
-def content_suggestions(body, have=(), limit=3):
+def content_suggestions(body, have=(), limit=3, known=()):
     """본문에서 흔한 단어를 태그 후보로 돌려준다. 자주 붙는 한국어 조사는 어근에서 떼고 기존 태그는 건너뛴다."""
-    body = re.sub(r"(?s)```.*?```|`[^`]*`", " ", str(body))
+    body = re.sub(r"\A---[^\n]*\n.*?\n---[^\n]*(?:\n|$)", " ", str(body), flags=re.S)
+    body = html.unescape(body)
+    body = re.sub(r"(?s)```.*?```|`[^`]*`", " ", body)
+    body = re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", body)
+    body = re.sub(r"<[^>]+>", " ", body)
     body = re.sub(r"https?://\S+", " ", body)
     body = re.sub(r"(?m)^\s*태그\s*:.*$", " ", body)
     particles = ("에게서", "으로부터", "에서", "에게", "한테", "으로", "까지", "부터", "처럼",
                  "보다", "이랑", "랑", "은", "는", "이", "가", "을", "를", "에", "의", "로", "와", "과", "도", "만", "께")
     stopwords = {"그리고", "그런데", "그래서", "하지만", "또는", "또한", "이것", "그것", "저것", "무엇", "정말", "그냥", "때문"}
+    stopwords.update(particles)
+    known_names = {str(tag).casefold(): str(tag) for tag in sorted(known)}
     counts, display = {}, {}
     for token in re.findall(r"[가-힣A-Za-z][가-힣A-Za-z0-9_-]*", body):
         word = token.casefold().strip("_-")
         suffix = next((p for p in particles if word.endswith(p) and len(word) - len(p) >= 2), None)
-        if suffix:
+        if suffix and word not in known_names:
             word = word[:-len(suffix)]
         if len(word) < 2 or len(word) > 30 or word in stopwords:
             continue
-        display.setdefault(word, word)
+        display.setdefault(word, known_names.get(word, word))
         counts[word] = counts.get(word, 0) + 1
     existing = {str(tag).casefold() for tag in have}
-    ranked = sorted((word for word in counts if word not in existing), key=lambda word: (-counts[word], word))
+    ranked = sorted((word for word in counts if word not in existing), key=lambda word: (word not in known_names, word not in known_names and not bool(re.search(r"[가-힣]", word)), -counts[word], word))
     return [display[word] for word in ranked[:limit]]
 
 

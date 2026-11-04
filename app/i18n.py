@@ -8,6 +8,25 @@ LANGS = {"en": "English", "ko": "한국어"}
 _lang = "ko"
 
 EN = {
+    '자동 태그 추가…': 'Add automatic tags…',
+    '자동 태그 추가': 'Add automatic tags',
+    '자동 태그 분석': 'Analyzing automatic tags',
+    '자동 태그 미리보기': 'Preview automatic tags',
+    '자동 태그 추가 전': 'Before adding automatic tags',
+    '문서마다 자주 나온 단어를 최대 3개씩 태그로 추가합니다.\n본문에 나온 기존 태그 이름을 언어 구분 없이 우선합니다. 기존 태그는 유지하며, 가져온 파일은 색인된 본문을 분석합니다.': 'Add up to three frequent words per document as tags.\nExisting tag names in the text have priority in any language. Existing tags are kept; imported files use indexed text.',
+    '전체 문서 (가져온 폴더 포함)': 'All documents (including imported folders)',
+    '현재 검색 결과 전체': 'All current search results',
+    '분석 후 미리보기': 'Analyze and preview',
+    '분석 {0}개 · 추가할 문서 {1}개 · 읽기 실패 {2}개': 'Analyzed {0} · Documents to update {1} · Read failures {2}',
+    '본문이 없거나 상위 단어가 이미 태그이면 추가하지 않습니다. 적용 전에 내용이 바뀐 문서는 건너뜁니다.': 'No additions when text is unavailable or top words are already tags. Documents changed after analysis are skipped.',
+    '문서': 'Document',
+    '추가할 태그': 'Tags to add',
+    '이전': 'Previous',
+    '다음': 'Next',
+    '읽기 실패 보기': 'Show read failures',
+    '이 태그들 추가': 'Add these tags',
+    '추가 완료 {0}개 · 변경되어 건너뜀 {1}개 · 실패 {2}개': 'Updated {0} · Changed and skipped {1} · Failed {2}',
+    '「{0}」을(를) 가져온 폴더 목록에서 뺄까요?\n(원본 파일과 태그·메모는 유지합니다. 색인은 3일 뒤 삭제하며, 그 안에 다시 넣으면 재사용합니다)': 'Remove “{0}” from imported folders?\nOriginal files, tags and memos are kept. The index is kept for three days and reused if you add the folder again during that time.)',
     # ---- 메뉴줄
     "파일": "File", "편집": "Edit", "보기": "View", "이동": "Go", "도구": "Tools", "설정": "Settings", "도움말": "Help",
     "새 노트": "New note", "새 노트북": "New notebook", "새 하위 노트북": "New sub-notebook", "폴더 가져오기…": "Import folder…",

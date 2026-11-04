@@ -286,6 +286,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         m.add_command(label=tr("복원 지점…"), command=self.show_snapshots)
         m.add_command(label=tr("전체 변경 이력…"), command=self.show_journal)
         m.add_separator()
+        m.add_command(label=tr("자동 태그 추가…"), command=self.show_auto_tags)
         m.add_command(label=tr("중복 노트 찾기…"), command=self.show_duplicates)
         m.add_command(label=tr("스크랩 군더더기 정리…"), command=self.show_cleanup)
         m.add_command(label=tr("안 쓰는 미디어 파일 정리…"), command=self.show_unused_media)
@@ -1080,11 +1081,11 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
 
         self.tag_row = tk.Frame(self.main, bg=C["bg"])
         self.tag_row.pack(fill="x", padx=18, pady=(0, 3))
-        self.tagbtn = tk.Label(self.tag_row, text="", anchor="w", bg=C["bg"], fg=C["accent"], font=(self.ui, 9), cursor="hand2", pady=2)
-        self.tagbtn.pack(side="left")
-        self.tagbtn.bind("<Button-1>", self.edit_tags)
-        self.tagbtn.bind("<Enter>", lambda e: self.tagbtn.config(font=(self.ui, 9, "underline")))
-        self.tagbtn.bind("<Leave>", lambda e: self.tagbtn.config(font=(self.ui, 9)))
+        self.tagbtn = Btn(self.tag_row, tr("태그 추가"), self.edit_tags, kind="primary", padx=10, pady=3)
+        self.tagbtn.pack(side="left", padx=(0, 8))
+        self.tag_labels = tk.Label(self.tag_row, text="", anchor="w", bg=C["bg"], fg=C["accent"], font=(self.ui, 9), cursor="hand2", pady=2)
+        self.tag_labels.pack(side="left")
+        self.tag_labels.bind("<Button-1>", self.edit_tags)
         tk.Frame(self.main, height=1, bg=C["line"]).pack(fill="x")
         self.statusbar = tk.Frame(self.main, bg=C["bg"])
         self.statusbar.pack(side="bottom", fill="x")
@@ -1903,7 +1904,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
 
     def remove_doc_folder(self, fid):
         f = next((f for f in self.docs.folders() if f["id"] == fid), None)
-        if not f or not messagebox.askyesno(APP, tr('「{0}」을(를) 가져온 폴더 목록에서 뺄까요?\n(원본 파일은 그대로 두고, 이 앱의 색인만 지웁니다)').format(f['path']), parent=self.root):
+        if not f or not messagebox.askyesno(APP, tr('「{0}」을(를) 가져온 폴더 목록에서 뺄까요?\n(원본 파일과 태그·메모는 유지합니다. 색인은 3일 뒤 삭제하며, 그 안에 다시 넣으면 재사용합니다)').format(f['path']), parent=self.root):
             return
         self.docs.remove_folder(fid)
         if self.nb.startswith("@doc:") and self.doc_key_parts(self.nb)[0] == fid:
@@ -2933,14 +2934,14 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             if not self.tag_edit:
                 tags = sorted(self.cur.get("tags", ()))
                 shown = "   ".join("# " + t for t in tags[:6]) + (f"   … +{len(tags) - 6}" if len(tags) > 6 else "")
-                self.tagbtn.config(text=shown or tr("# 태그 추가"), fg=C["accent"] if tags else C["muted"])
+                self.tag_labels.config(text=shown)
             return
         if self.cur:
             self.status.config(text=tr('{0}/{1}   ·   {2:,}자').format(self.nb_label(self.cur['nb']), os.path.basename(self.cur['path']), len(self.cur['body'])) + (f"   ·   {extra}" if extra else "") + "   ·")
             if not self.tag_edit:
                 tags = sorted(self.cur.get("tags", ()))
                 shown = "   ".join("# " + t for t in tags[:6]) + (f"   … +{len(tags) - 6}" if len(tags) > 6 else "")
-                self.tagbtn.config(text=shown or tr("# 태그 추가"), fg=C["accent"] if tags else C["muted"])
+                self.tag_labels.config(text=shown)
 
     def commit_title(self):
         if (self.cur and not self.doc_open and self.title_entry.focus_get() is self.title_entry

@@ -1,9 +1,76 @@
 """태그 편집(제목 아래 태그 박스·메모·이름 바꾸기·삭제·합치기): App 에서 그대로 옮겨 온 메서드 묶음.
 App 이 TagEditMixin 을 물려받아 self.메서드() 처럼 그대로 부른다."""
 from notes_shared import *  # noqa: F401,F403
+import autotags
 
 
 class TagEditMixin:
+    def show_auto_tags(self):
+        """전체 문서 또는 현재 검색 결과를 분석하고, 미리 본 뒤 일괄 추가한다."""
+        top = self.tool_window(tr("자동 태그 추가"), "560x240")
+        scope = tk.StringVar(value="all")
+        tk.Label(top, text=tr("문서마다 자주 나온 단어를 최대 3개씩 태그로 추가합니다.\n본문에 나온 기존 태그 이름을 언어 구분 없이 우선합니다. 기존 태그는 유지하며, 가져온 파일은 색인된 본문을 분석합니다."),
+                 bg=C["bg"], fg=C["text"], wraplength=520, justify="left").pack(padx=20, pady=18)
+        for value, label in (("all", tr("전체 문서 (가져온 폴더 포함)")), ("results", tr("현재 검색 결과 전체"))):
+            tk.Radiobutton(top, text=label, variable=scope, value=value, bg=C["bg"], fg=C["text"],
+                           selectcolor=C["panel"], anchor="w").pack(fill="x", padx=20)
+
+        def start():
+            self.flush()
+            targets = (list(self.all_notes) + self.docs.list_docs()) if scope.get() == "all" else list(self.results)
+            targets = list({(isinstance(n, docidx.Doc), n["path"]): n for n in targets if not n.get("trash")}.values())
+            known = self.known_content_tags()
+            top.destroy()
+            self.run_task(tr("자동 태그 분석"), lambda p, c: autotags.plan(targets, p, c, known),
+                          lambda result: self.preview_auto_tags(result, len(targets)))
+        Btn(top, tr("분석 후 미리보기"), start, kind="primary", padx=18, pady=6).pack(pady=15)
+
+    def preview_auto_tags(self, result, total):
+        rows, errors = result
+        top = self.tool_window(tr("자동 태그 미리보기"), "900x560")
+        summary = tr("분석 {0}개 · 추가할 문서 {1}개 · 읽기 실패 {2}개").format(total, len(rows), len(errors))
+        tk.Label(top, text=summary, bg=C["bg"], fg=C["text"], padx=16, pady=12).pack(anchor="w")
+        tk.Label(top, text=tr("본문이 없거나 상위 단어가 이미 태그이면 추가하지 않습니다. 적용 전에 내용이 바뀐 문서는 건너뜁니다."),
+                 bg=C["bg"], fg=C["muted"], wraplength=850).pack(padx=16)
+        frame = tk.Frame(top, bg=C["bg"])
+        frame.pack(fill="both", expand=True, padx=16, pady=12)
+        table = ttk.Treeview(frame, columns=("path", "tags"), show="headings")
+        table.heading("path", text=tr("문서")); table.heading("tags", text=tr("추가할 태그"))
+        table.column("path", width=540); table.column("tags", width=270)
+        scroll = ttk.Scrollbar(frame, command=table.yview)
+        table.configure(yscrollcommand=scroll.set)
+        scroll.pack(side="right", fill="y"); table.pack(fill="both", expand=True)
+        page = [0]
+        nav = tk.Frame(top, bg=C["bg"]); nav.pack(fill="x", padx=16, pady=8)
+        counter = tk.Label(nav, bg=C["bg"], fg=C["text"])
+        def draw(delta=0):
+            page[0] = max(0, min(max(0, (len(rows) - 1) // 200), page[0] + delta))
+            table.delete(*table.get_children())
+            for n, _, tags in rows[page[0] * 200:(page[0] + 1) * 200]:
+                table.insert("", "end", values=(n["path"], " ".join("#" + t for t in tags)))
+            counter.config(text=f"{page[0] + 1} / {max(1, (len(rows) + 199) // 200)}")
+        Btn(nav, tr("이전"), lambda: draw(-1)).pack(side="left")
+        counter.pack(side="left", padx=12)
+        Btn(nav, tr("다음"), lambda: draw(1)).pack(side="left")
+        if errors:
+            Btn(nav, tr("읽기 실패 보기"), lambda: messagebox.showinfo(APP, "\n".join(p + ": " + e for p, e in errors), parent=top)).pack(side="left", padx=10)
+        def apply():
+            top.destroy()
+            self.flush()
+            cur_path = self.cur["path"] if self.cur else None
+            def finished(result):
+                done, skipped, failures = result
+                self.after_tag_change(cur_path)
+                messagebox.showinfo(APP, tr("추가 완료 {0}개 · 변경되어 건너뜀 {1}개 · 실패 {2}개").format(done, skipped, len(failures))
+                                    + ("\n\n" + "\n".join(p + ": " + e for p, e in failures) if failures else ""), parent=self.root)
+            def write():
+                self.run_task(tr("자동 태그 추가"), lambda p, c: autotags.apply(rows, self.store, self.docs, p, c), finished, cancellable=False)
+            # 앱의 다른 편집 동작은 진행 창이 막고, 노트는 버전과 복원 지점으로 남긴다.
+            self.checkpoint(tr("자동 태그 추가 전"), write) if any(not isinstance(n, docidx.Doc) for n, _, _ in rows) else write()
+        if rows:
+            Btn(nav, tr("이 태그들 추가"), apply, kind="primary", padx=18, pady=5).pack(side="right")
+        draw()
+
     def edit_tags(self, e=None):
         """제목 아래 태그를 누르면 작은 박스가 열린다(조플린의 '태그 추가 및 제거'): 태그를 치고 Enter 하면 칩으로 쌓이고 다음 태그를 받는다.
         [확인] 을 눌러야 한꺼번에 들어가고 [취소](Esc)는 아무것도 바꾸지 않는다. 이미 있는 태그도 칩으로 보이며 × 로 뺀다."""
@@ -17,12 +84,18 @@ class TagEditMixin:
                            self.suggest_content_tags, tr("본문에서 태그 추천"))
         box.pack(side="top", fill="x", before=self.body)
         self.tagbtn.pack_forget()
+        self.tag_labels.pack_forget()
         self.tag_edit = box
         box.ent.focus_set()
 
+    def known_content_tags(self):
+        known = {t for n in self.all_notes for t in n.get("tags", ())}
+        known.update(self.docs.tag_counts())
+        return known
+
     def suggest_content_tags(self):
         body = self.cur.get("body", "") if self.doc_open else self.text.get("1.0", "end-1c")
-        return tagac.content_suggestions(body, self.cur.get("tags", ()))
+        return tagac.content_suggestions(body, self.cur.get("tags", ()), known=self.known_content_tags())
 
     def finish_tags(self, save, tags=None):
         box = self.tag_edit
@@ -31,7 +104,8 @@ class TagEditMixin:
         self.tag_edit = None
         box.close()
         box.destroy()
-        self.tagbtn.pack(side="left")
+        self.tagbtn.pack(side="left", padx=(0, 8))
+        self.tag_labels.pack(side="left")
         if save and self.cur and tags is not None:
             self.apply_tags(" ".join("#" + t for t in tags))
         self.update_status()

@@ -297,7 +297,10 @@ class DocIndex:
         self.save_cfg(c)
         conn = self._db()
         try:
-            conn.execute("DELETE FROM docs WHERE folder=?", (self.fid(path),))
+            fid = self.fid(path)
+            conn.execute("INSERT OR REPLACE INTO docs SELECT * FROM docs_retained WHERE folder=?", (fid,))
+            conn.execute("DELETE FROM docs_retained WHERE folder=?", (fid,))
+            conn.execute("DELETE FROM removed_folders WHERE folder=?", (fid,))
             conn.commit()
         finally:
             conn.close()
@@ -305,11 +308,16 @@ class DocIndex:
 
     def remove_folder(self, fid):
         c = self.cfg()
+        if not any(self.fid(f["path"]) == fid for f in c["folders"]):
+            return
         c["folders"] = [f for f in c["folders"] if self.fid(f["path"]) != fid]
         self.save_cfg(c)
         conn = self._db()
         try:   # 원본 파일과 별도로 저장한 태그·메모는 유지한다
+            conn.execute("DELETE FROM docs_retained WHERE folder=?", (fid,))
+            conn.execute("INSERT INTO docs_retained SELECT * FROM docs WHERE folder=?", (fid,))
             conn.execute("DELETE FROM docs WHERE folder=?", (fid,))
+            conn.execute("INSERT OR REPLACE INTO removed_folders VALUES (?, ?)", (fid, time.time() + 3 * 86400))
             conn.commit()
         finally:
             conn.close()
@@ -323,6 +331,8 @@ class DocIndex:
         ver = conn.execute("SELECT v FROM meta WHERE k='version'").fetchone()
         if not ver or ver[0] != str(DOC_VERSION):
             conn.execute("DROP TABLE IF EXISTS docs")
+            conn.execute("DROP TABLE IF EXISTS docs_retained")
+            conn.execute("DROP TABLE IF EXISTS removed_folders")
             conn.execute("INSERT OR REPLACE INTO meta VALUES ('version', ?)", (str(DOC_VERSION),))
         conn.execute("CREATE TABLE IF NOT EXISTS docs (path TEXT PRIMARY KEY, folder TEXT, ext TEXT, size INTEGER, mtime_ns INTEGER, "
                      "mtime REAL, ctime REAL, title TEXT, hay BLOB, body BLOB, content INTEGER, nhay BLOB)")
@@ -330,6 +340,12 @@ class DocIndex:
         conn.execute("DROP TABLE IF EXISTS docs_old")
         if "nhay" not in [r[1] for r in conn.execute("PRAGMA table_info(docs)")]:
             conn.execute("ALTER TABLE docs ADD COLUMN nhay BLOB")
+        # 뺀 폴더의 색인은 검색 대상과 분리해 3일간 보관한다. 앱을 껐던 기간도 포함한다.
+        conn.execute("CREATE TABLE IF NOT EXISTS docs_retained AS SELECT * FROM docs WHERE 0")
+        conn.execute("CREATE INDEX IF NOT EXISTS retained_folder ON docs_retained(folder)")
+        conn.execute("CREATE TABLE IF NOT EXISTS removed_folders (folder TEXT PRIMARY KEY, expires REAL)")
+        conn.execute("DELETE FROM docs_retained WHERE folder IN (SELECT folder FROM removed_folders WHERE expires<=?)", (time.time(),))
+        conn.execute("DELETE FROM removed_folders WHERE expires<=?", (time.time(),))
         # 내가 붙인 태그·메모. 원본 파일은 건드리지 않고 여기에만 적으며, docs 표를 다시 만들어도(색인 판이 바뀌어도) 남는다
         conn.execute("CREATE TABLE IF NOT EXISTS annot (path TEXT PRIMARY KEY, tags TEXT, memo TEXT)")
         if conn.execute("SELECT v FROM meta WHERE k='title_only_search'").fetchone() != ("1",):
@@ -359,11 +375,12 @@ class DocIndex:
     def title_hay(title, ext):
         return (title + "." + ext).lower().encode("utf-8", "ignore")
 
-    def set_annot(self, path, tags=None, memo=None):
+    def set_annot(self, path, tags=None, memo=None, add_tags=()):
         """태그나 메모를 바꾼다(None 이면 그대로). 검색용 사본도 새로 만든다. 둘 다 비면 기록을 지운다"""
         roots = {self.fid(f["path"]): f["path"] for f in self.cfg()["folders"]}
         conn = self._db()
         try:
+            conn.execute("BEGIN IMMEDIATE")
             row = conn.execute("SELECT folder, title, body, ext FROM docs WHERE path=?", (path,)).fetchone()
             if not row or row[0] not in roots:
                 return False
@@ -371,6 +388,11 @@ class DocIndex:
             cur_tags = json.loads(old[0] or "[]") if old else []
             cur_memo = (old[1] or "") if old else ""
             tags = cur_tags if tags is None else list(dict.fromkeys(tags))
+            have = {t.casefold() for t in tags}
+            for tag in add_tags:
+                if tag.casefold() not in have:
+                    tags.append(tag)
+                    have.add(tag.casefold())
             memo = cur_memo if memo is None else memo.strip()
             if tags or memo:
                 conn.execute("INSERT OR REPLACE INTO annot VALUES (?,?,?)", (path, json.dumps(tags, ensure_ascii=False), memo))
