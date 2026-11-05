@@ -1,5 +1,13 @@
 """영어 번역: 저장소(store)·업데이트·군더더기 정리 이유 등 화면에 나오는 메시지. 한국어 문장 → 영어. i18n.py 가 EN 사전에 합친다."""
 EN_MSG = {
+    "…(길어서 여기까지만 보입니다. 위 링크를 누르면 전체가 열립니다)": "…(too long to show here; click the link above to open the full note)",
+    "가져온 폴더 문서 읽는 중… {0:,} / {1:,}   {2}": "Reading imported-folder documents… {0:,} / {1:,}   {2}",
+    "고정폭 글꼴": "Monospace font",
+    "글꼴 종류와 노트 목록·노트의 글자 크기·굵기를 정합니다. 적용을 누르면 바로 바뀝니다.": "Choose the font and the note-list/note text size and weight. Changes apply immediately.",
+    "마크다운 편집·코드": "Markdown editing · code",
+    "목록·렌더링·표·메뉴": "Lists · preview · tables · menus",
+    "태그 목록 범위를 전체와 현재 노트북 사이에서 바꿉니다": "Switch the tag list between all notes and the current notebook",
+    "화면 글꼴": "UI font",
     # store.py: 오류·안내
     "휴지통을 지원하지 않는 운영체제입니다": "This operating system does not support the trash",
     "휴지통으로 보내지 못했습니다": "Could not move it to the trash",
