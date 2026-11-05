@@ -98,7 +98,7 @@ PDF·TXT·JPG·WEBP 같은 문서·이미지는 WaterView/NeeView 같은 뷰어�
 
 ## 다음 확인
 
-1. WaterView MP3·MP4 자동 전환
+1. 연결한 미디어 플레이어의 MP3·MP4 재생목록 확인
 2. Android 실기기 동기화·배터리·대용량 폴더
 3. 웹 클리퍼와 Android 공유
 4. Play Store 배포용 빌드
