@@ -105,7 +105,8 @@ def start_stage_watcher(app):
 
     def loop():
         while True:
-            time.sleep(5)
+            # 동기화가 꺼져 있을 때는 상태 감시를 느리게 해 트레이 유휴 CPU 사용을 줄인다.
+            time.sleep(5 if app.sync.running() else 20)
             try:
                 if app.sync.running() and sp.exists(app.store.root):
                     pol = sp.load(app.store.root)
