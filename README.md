@@ -39,7 +39,7 @@ py -3 app/iamtalkernote.pyw
 - Android 공유 메뉴를 이용한 에버노트식 웹·파일 스크랩
 - PDF·TXT·Office·오디오·동영상 외부 폴더 가져오기
 - 확장자별 연결 프로그램 지정
-- WaterView/NeeView 연결 시 같은 폴더의 MP3·MP4 재생목록과 자동 진행
+- 확장자별 연결 프로그램 지정(문서·이미지는 뷰어, MP3·MP4는 미디어 플레이어 권장)
 - Android와의 Syncthing 동기화
 
 ## 노트와 파일
@@ -63,7 +63,7 @@ py -3 app/iamtalkernote.pyw
 
 기본 확장자는 `pdf`, `txt`, `md`, `mp3`, `mp4`입니다. 다른 확장자는 옵션에서 선택하거나 직접 입력합니다. 가져온 파일의 태그와 메모는 색인에만 저장됩니다.
 
-MP3 또는 MP4에 WaterView/NeeView를 연결하면 같은 폴더의 미디어를 함께 열고 자동 진행합니다. 반복·셔플은 WaterView 설정을 사용합니다.
+PDF·TXT·JPG·WEBP 같은 문서·이미지는 WaterView/NeeView 같은 뷰어를 연결하고, MP3·MP4는 Windows Media Player·VLC 같은 미디어 플레이어를 연결하는 구성이 안정적입니다. MP3·MP4를 열 때 같은 폴더의 미디어 파일을 함께 전달하므로, 여러 파일 열기나 재생목록을 지원하는 플레이어에서는 폴더 재생처럼 사용할 수 있습니다.
 
 ## 동기화
 
