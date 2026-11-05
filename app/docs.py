@@ -25,7 +25,7 @@ import store as st
 TEXT_EXT = ("txt", "md", "markdown", "csv", "tsv", "log", "json", "xml", "html", "htm", "ini", "yaml", "yml", "rtf")
 OFFICE_EXT = ("docx", "pptx", "xlsx")
 AUDIO_EXT = ("mp3", "flac", "m4a", "ogg", "wav", "wma", "opus")
-DEFAULT_EXTS = ["pdf", "txt", "md", "mp3"]
+DEFAULT_EXTS = ["pdf", "txt", "md", "mp3", "mp4"]
 KNOWN_EXTS = ["pdf", *TEXT_EXT, *OFFICE_EXT, *AUDIO_EXT]
 MAX_TEXT_BYTES = 30_000_000     # 이보다 큰 글 파일은 이름만 색인
 MAX_PDF_BYTES = 300_000_000

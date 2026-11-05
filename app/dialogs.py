@@ -982,7 +982,7 @@ class DialogsMixin:
             hr(p)
 
             lab(p, tr("읽을 파일 종류 (고른 확장자만 읽습니다)"), font=(self.ui, 10, "bold")).pack(anchor="w")
-            common = ["pdf", "txt", "md", "mp3", "docx", "pptx", "xlsx", "csv", "html", "m4a", "flac", "wav", "ogg", "log", "json"]
+            common = ["pdf", "txt", "md", "mp3", "mp4", "docx", "pptx", "xlsx", "csv", "html", "m4a", "flac", "wav", "ogg", "log", "json"]
             chosen = {e.lower().lstrip(".") for e in cfg["exts"]}
             vars_ = {e: tk.BooleanVar(value=e in chosen) for e in common}
             extra = tk.StringVar(value=" ".join(sorted(chosen - set(common))))

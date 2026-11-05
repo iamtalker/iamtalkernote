@@ -2447,7 +2447,30 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         exe = self.open_with_program(n["ext"])
         try:
             if exe:   # 사용자가 이 확장자에 지정한 프로그램(예: zip → 만화 뷰어). 셸을 거치지 않고 경로를 인자로만 넘긴다
-                subprocess.Popen([exe, os.path.normpath(n["path"])])
+                paths = [os.path.normpath(n["path"])]
+                # WaterView/NeeView 같은 미디어 뷰어는 여러 경로를 한 번에
+                # 넘기면 재생목록으로 연다. 가져온 파일을 한 곡씩 여는 대신
+                # 같은 폴더의 오디오·동영상만 모아 현재 파일부터 재생한다.
+                media_exts = set(docidx.AUDIO_EXT) | {"mp4", "webm", "ogv", "mov", "avi", "mkv"}
+                if n.get("ext", "").lower() in media_exts:
+                    folder = os.path.dirname(os.path.normpath(n["path"]))
+                    try:
+                        siblings = []
+                        for item in os.scandir(folder):
+                            if item.is_file() and os.path.splitext(item.name)[1].lower().lstrip(".") in media_exts:
+                                siblings.append(os.path.normpath(item.path))
+                        current = paths[0].casefold()
+                        paths += sorted((p for p in siblings if p.casefold() != current), key=str.casefold)
+                    except OSError:
+                        pass
+                # WaterView/NeeView는 --slideshow on으로 파일 종료 후 다음
+                # 항목으로 자동 진행한다. 다른 연결 프로그램에는 옵션을
+                # 넘기지 않는다.
+                viewer = os.path.basename(exe).lower()
+                launch = [exe]
+                if viewer in {"waterview.exe", "neeview.exe"} and len(paths) > 1:
+                    launch += ["--slideshow", "on"]
+                subprocess.Popen([*launch, *paths])
             else:
                 os.startfile(n["path"])
         except OSError as ex:
