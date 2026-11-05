@@ -1,5 +1,7 @@
 # iamtalkernote
 
+![iamtalkernote 기능 한눈에 보기](docs/images/feature-overview.png)
+
 Windows와 Android에서 함께 쓰는 로컬 마크다운 노트 앱입니다. 노트는 일반 `.md` 파일로 저장되며, 컴퓨터와 폰은 Syncthing으로 직접 동기화합니다.
 
 ## 빠른 시작

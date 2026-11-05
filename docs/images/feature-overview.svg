@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="760" viewBox="0 0 1200 760" role="img" aria-labelledby="title desc">
+  <title id="title">iamtalkernote 기능 한눈에 보기</title>
+  <desc id="desc">스크랩과 폴더 가져오기가 노트 폴더에 저장되고, 스마트 검색과 동기화로 이어지는 기능 흐름</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f8fafc"/><stop offset="1" stop-color="#eef2ff"/></linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="5" stdDeviation="7" flood-color="#0f172a" flood-opacity=".10"/></filter>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M0,0 L12,6 L0,12 Z" fill="#94a3b8"/></marker>
+    <style>
+      .title{font:700 34px 'Malgun Gothic','Noto Sans KR',sans-serif;fill:#0f172a}
+      .sub{font:400 17px 'Malgun Gothic','Noto Sans KR',sans-serif;fill:#64748b}
+      .head{font:700 20px 'Malgun Gothic','Noto Sans KR',sans-serif;fill:#0f172a}
+      .body{font:400 16px 'Malgun Gothic','Noto Sans KR',sans-serif;fill:#475569}
+      .small{font:500 14px 'Malgun Gothic','Noto Sans KR',sans-serif;fill:#64748b}
+      .line{fill:none;stroke:#94a3b8;stroke-width:3;marker-end:url(#arrow)}
+    </style>
+  </defs>
+  <rect width="1200" height="760" rx="28" fill="url(#bg)"/>
+  <text x="72" y="70" class="title">iamtalkernote</text>
+  <text x="72" y="105" class="sub">모으고 · 정리하고 · 찾고 · 어디서나 이어서 쓰기</text>
+
+  <!-- input cards -->
+  <g filter="url(#shadow)">
+    <rect x="72" y="170" width="270" height="150" rx="18" fill="#fff" stroke="#c4b5fd" stroke-width="2"/>
+    <rect x="72" y="170" width="8" height="150" rx="4" fill="#7c3aed"/>
+    <text x="102" y="215" class="head">웹 스크랩</text>
+    <text x="102" y="254" class="body">브라우저에서 페이지 저장</text>
+    <text x="102" y="280" class="body">본문과 그림을 노트로 보관</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="72" y="390" width="270" height="150" rx="18" fill="#fff" stroke="#99f6e4" stroke-width="2"/>
+    <rect x="72" y="390" width="8" height="150" rx="4" fill="#0f9f8a"/>
+    <text x="102" y="435" class="head">폴더 가져오기</text>
+    <text x="102" y="474" class="body">PDF · TXT · MP3 · MP4</text>
+    <text x="102" y="500" class="body">태그·메모를 추가해 색인</text>
+  </g>
+
+  <!-- core -->
+  <g filter="url(#shadow)">
+    <rect x="465" y="252" width="270" height="210" rx="22" fill="#172033"/>
+    <text x="600" y="310" text-anchor="middle" font-size="30" fill="#fff">✦</text>
+    <text x="600" y="352" text-anchor="middle" class="head" style="fill:#fff">노트 폴더</text>
+    <text x="600" y="388" text-anchor="middle" class="body" style="fill:#dbe4f2">Markdown · 태그 · 버전</text>
+    <text x="600" y="416" text-anchor="middle" class="small" style="fill:#a9b8cf">모든 기능이 모이는 중심</text>
+  </g>
+
+  <!-- output cards -->
+  <g filter="url(#shadow)">
+    <rect x="858" y="170" width="270" height="150" rx="18" fill="#fff" stroke="#93c5fd" stroke-width="2"/>
+    <rect x="858" y="170" width="8" height="150" rx="4" fill="#2563eb"/>
+    <text x="888" y="215" class="head">스마트 검색</text>
+    <text x="888" y="254" class="body">제목 · 본문 · 태그 · 기간</text>
+    <text x="888" y="280" class="body">AND · OR · NOT · 저장 검색</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="858" y="390" width="270" height="150" rx="18" fill="#fff" stroke="#fcd34d" stroke-width="2"/>
+    <rect x="858" y="390" width="8" height="150" rx="4" fill="#d97706"/>
+    <text x="888" y="435" class="head">동기화 · 클라우드 파일</text>
+    <text x="888" y="474" class="body">컴퓨터 ↔ 폰</text>
+    <text x="888" y="500" class="body">목록과 본문 요약도 함께 확인</text>
+  </g>
+
+  <!-- straight connectors -->
+  <path d="M342 245 H400 V315 H465" class="line"/>
+  <path d="M342 465 H400 V395 H465" class="line"/>
+  <path d="M735 315 H800 V245 H858" class="line"/>
+  <path d="M735 395 H800 V465 H858" class="line"/>
+
+</svg>

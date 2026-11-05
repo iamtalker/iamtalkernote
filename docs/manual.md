@@ -1,5 +1,7 @@
 # iamtalkernote 사용 설명서
 
+![iamtalkernote 기능 한눈에 보기](images/feature-overview.png)
+
 이 문서는 설치, 기본 사용, 외부 파일 가져오기, 컴퓨터와 폰 연결을 설명합니다.
 
 ## 1. 설치
