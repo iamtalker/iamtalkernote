@@ -139,6 +139,26 @@ def html_to_md(html, base=""):
     return re.sub(r"\n{3,}", "\n\n", md).strip() + "\n"
 
 
+def _same_title(heading, title):
+    """공백·기호·대소문자를 무시하고 본문 헤딩이 노트 제목과 같은지 본다.
+    페이지 제목은 '글 제목 - 사이트 이름' 처럼 사이트 이름이 붙는 일이 많아서, 헤딩이 제목 안에 들어 있으면 같은 것으로 본다(짧은 헤딩은 우연히 겹칠 수 있어 4글자 이상일 때만)."""
+    key = lambda s: re.sub(r"[\W_]+", "", s or "").lower()
+    h, t = key(heading), key(title)
+    if not h or not t:
+        return False
+    return h == t or (len(h) >= 4 and h in t)
+
+
+def drop_leading_title(body, title):
+    """본문 맨 위가 노트 제목과 같은 제목 줄(# 제목)이면 뺀다. 제목은 이미 노트 이름으로 저장되므로 중복을 없앤다."""
+    stripped = body.lstrip("\n")
+    first, _, rest = stripped.partition("\n")
+    m = re.match(r"^#{1,6}\s+(.*?)\s*#*\s*$", first)
+    if not m or not _same_title(m.group(1), title):
+        return body
+    return rest.lstrip("\n")
+
+
 # ---------------------------------------------------------------- 서버
 DEFAULT_PORT = 41184   # 조플린 웹 클리퍼의 기본 포트: 웹스토어의 조플린 클리퍼 플러스가 포트를 안 바꿔도 연결된다(조플린과 같이 켜면 옆 포트로 밀린다)
 PORTS = range(DEFAULT_PORT, DEFAULT_PORT + 11)   # 41184~41194
@@ -159,6 +179,8 @@ def start(store, get_token, on_saved, ports=PORTS):
         else:
             body = b.get("body") or ""
         body = extract_images(body, nb)
+        title = (b.get("title") or "").strip() or "제목 없음"
+        body = drop_leading_title(body, title)   # 제목은 노트 이름으로 이미 저장되므로 본문 맨 위의 같은 제목 줄은 뺀다
         tags = [t.strip() for t in (b.get("tags") or "").split(",") if t.strip()]
         text = ""
         if b.get("source_url"):   # 맨 위 머리말(front matter)에 둔다: 렌더링 화면에서는 숨겨지고 문서 정보의 URL 로 나온다
@@ -166,7 +188,7 @@ def start(store, get_token, on_saved, ports=PORTS):
         text += body
         if tags:
             text += "\n\n태그: " + " ".join("#" + re.sub(r"\s+", "_", t) for t in tags) + "\n"
-        note = store.create_note(nb, (b.get("title") or "").strip() or "제목 없음", text)
+        note = store.create_note(nb, title, text)
         on_saved()
         return {"id": (nb + "/" if nb else "") + note["title"], "title": note["title"], "parent_id": nb or ROOT_ID}
 
