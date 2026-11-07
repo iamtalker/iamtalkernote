@@ -10,6 +10,7 @@ from notes_shared import *  # noqa: E402,F401,F403   (가져오기·상수·색�
 import notes_shared as _shared  # noqa: E402
 import autotitle  # noqa: E402   (제목 없이 쓴 새 노트: 본문 첫 줄을 제목으로)
 import pdflink  # noqa: E402   (본문이 pdf 링크 하나뿐인 노트는 pdf 뷰어로: pdflink.py)
+import time  # noqa: E402   (그림 변환을 기다리는 시간 재기: render)
 from dialogs import DialogsMixin  # noqa: E402   (큰 대화창들: dialogs.py)
 from langbtn import LangButton  # noqa: E402   (오른쪽 위 언어 단추: langbtn.py)
 from searchbox import SearchBoxMixin  # noqa: E402   (검색창 자동완성·입력기 글꼴: searchbox.py)
@@ -2826,12 +2827,30 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             self.hpos = len(self.hist) - 1
         self.snap_done = False
         self.show_empty(False)
+        # Reapply the selected layout before revealing the note area. If the
+        # previous view left a stale pane arrangement, this keeps the source
+        # editor from flashing while a rendered note (especially one with
+        # images) is being opened.
+        if self.is_outline_note() or self._outl_on:
+            self._outl_path = None
+        self.apply_layout(self.mode)
+        if self.mode == "view":
+            # Keep the source widget unmapped while replacing its contents;
+            # Tk may process idle redraws during image sizing in render().
+            self.edit_frame.grid_forget()
         self.title_var.set(n["title"])
         # 한 줄이 아주 긴 글(base64 그림 등)은 줄바꿈 계산이 수십 초 걸려서 줄바꿈을 끈다
         longest = max((len(x) for x in n["body"].split("\n")), default=0)
         self.text.config(wrap="none" if longest > 20000 else "word")
         self.text.config(state="normal")
         self.title_entry.config(state="normal")
+        preview_first = self.mode == "view" and not self.is_outline_note()
+        if preview_first:
+            # Build the new preview before putting its source into the editor.
+            # Image sizing can process Tk idle redraws during render(), so this
+            # prevents the new Markdown from appearing even if the editor pane
+            # is briefly exposed by the window system.
+            self.render(source=n["body"])
         self.set_text(n["body"])
         self.text.yview_moveto(0)
         self.dirty = False
@@ -2840,10 +2859,8 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             self.text.config(state="disabled")
             self.title_entry.config(state="readonly")
             self.status.config(text=tr("휴지통의 노트 — 읽기 전용입니다. 목록에서 우클릭 → 복원 · 완전히 삭제"))
-        if self.is_outline_note() or self._outl_on:
-            self._outl_path = None
-            self.apply_layout(self.mode)
-        self.render()
+        if not preview_first:
+            self.render()
         self.mark_selected()
         self.try_pdf_note(n)
         count, size = st.embedded_images(n["body"])
@@ -3165,7 +3182,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
             return
         self.set_mode({"edit": "split", "split": "view", "view": "edit"}[self.mode])
 
-    def render(self):
+    def render(self, source=None):
         self.render_job = None
         if self.cur and self.is_outline_note():
             return self.render_outline()
@@ -3174,12 +3191,46 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         title = self.title_var.get()
         try:
             # 클리퍼가 맨 위에 적는 '원본: <주소>' 줄은 렌더링 화면에서만 숨긴다(문서 정보의 URL 은 이 줄에서 읽는다)
-            src = SOURCE_LINE.sub("", self.text.get("1.0", "end-1c"), count=1)
+            raw = self.text.get("1.0", "end-1c") if source is None else source
+            src = SOURCE_LINE.sub("", raw, count=1)
             doc = wikiconv.parse(self.expand_embeds(src), bulk.SYNTAX[FMT], title)
             segs = preview.layout(doc, **self.table_kw())
         except Exception as ex:  # noqa: BLE001  (읽기 도구가 못 읽은 글도 편집은 계속할 수 있게)
             return self.status.config(text=tr("렌더링 오류: ") + str(ex))
+        # 그림 변환이 아직 끝나지 않았으면 그리지 않고 기다린다. 글자 칩으로 한 번 그린 뒤 그림으로 또 바꾸면
+        # 화면이 두 번 뒤바뀌어 번쩍이기 때문이다. 너무 오래 기다리면(1.5초) 그냥 그린다.
+        pending = any(e and e[0] == "img" and self.img_pending(e) for _, _, e in segs)
+        now = time.monotonic()
+        if pending:
+            since = getattr(self, "_img_hold_since", None)
+            if since is None:
+                self._img_hold_since = since = now
+            if now - since < 1.5:
+                return
+        self._img_hold_since = None
         self.draw_view(segs)
+
+    def img_pending(self, extra):
+        """이 그림이 아직 변환 중인지(변환을 시작하지 않았으면 지금 시작한다)."""
+        src = extra[1].strip()
+        if src[:5].lower() == "data:" or re.match(r"(?i)^https?://", src):
+            return False
+        path = self.find_local_image(src)
+        if not path or ed.sniff_image(path) == "gif":
+            return False
+        width = extra[3] if len(extra) > 3 else 0
+        avail = self.img_avail()
+        target = min(width, avail) if width else avail
+        try:
+            st = os.stat(path)
+        except OSError:
+            return False
+        key = f"local:{os.path.normcase(os.path.abspath(path))}:{st.st_mtime_ns}:{st.st_size}:{target}"
+        state = self.imgs.get(key)
+        if state is None:
+            self.local_image_photo(path, target)   # 변환을 시작한다(끝나면 poll_images 가 다시 그린다)
+            return True
+        return state[0] == "pending"
 
     # ---- 아웃라이너 보기(렌더링 화면): 목록은 점(●) 계층으로, 그 밖의 글은 '메모' 카드로 따로 보이고, 점을 누르면 줌인
     # ---- 렌더링 화면에서 글을 눌러 그 부분의 원문만 고친다(항목 한 줄 / 블록 하나)

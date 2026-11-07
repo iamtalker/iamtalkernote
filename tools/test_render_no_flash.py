@@ -27,6 +27,11 @@ try:
         return original(*args, **kw)
     app.show_image = observe_image
     app.open_note(next(n for n in app.all_notes if n['title'] == 'images'))
+    # 그림 변환이 끝날 때까지 그리지 않고 기다리므로(render 보류), 그림이 그려질 때까지 이벤트를 돌린다
+    import time as _t
+    deadline = _t.time() + 5
+    while _t.time() < deadline and not any('END_MARKER' in text for text, _ in observations):
+        app.root.update(); _t.sleep(0.02)
     app.root.update()
     assert observations and all('END_MARKER' in text and not editing for text, editing in observations), observations
     app.new_note(); app.root.update()
