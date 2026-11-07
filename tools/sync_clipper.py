@@ -33,8 +33,8 @@ SERVER_ENDPOINTS = {"ping", "folders", "notes"}     # app/clipserver.py 가 흉�
 # 안드로이드 앱의 웹 클리퍼(assets/clip)가 쓰는 라이브러리 사본: 원본 lib/ 와 같아야 한다. webclip.js 는 폰용으로 따로 만든 것이라 가져오지 않는다
 PHONE = os.path.normpath(os.path.join(HERE, "..", "..", "iamtalkernote-android", "app", "src", "main", "assets", "clip"))
 PHONE_LIBS = ["Readability.js", "turndown.js", "turndown-plugin-gfm.js"]
-# 폰 웹 클리퍼가 쓰는 사이트별 규칙: 원본 content.js 의 표를 JSON(site-rules.json)으로 뽑아 폰 assets/clip 에 둔다(본문 위치·지울 것·제목 라벨·iframe)
-PHONE_RULE_TABLES = {"content": "SITE_CONTENT_SELECTORS", "cleanup": "SITE_CLEANUP_SELECTORS", "label": "SITE_LABEL_FROM_TITLE_SELECTORS", "iframe": "SITE_IFRAME_SELECTORS"}
+# 폰 웹 클리퍼가 쓰는 사이트별 규칙: 원본 content.js 의 표를 JSON(site-rules.json)으로 뽑아 폰 assets/clip 에 둔다(본문 위치·지울 것·제목 라벨·iframe·모바일 주소 연결)
+PHONE_RULE_TABLES = {"content": "SITE_CONTENT_SELECTORS", "cleanup": "SITE_CLEANUP_SELECTORS", "label": "SITE_LABEL_FROM_TITLE_SELECTORS", "iframe": "SITE_IFRAME_SELECTORS", "alias": "MOBILE_HOST_ALIAS"}
 
 
 def read(path):
