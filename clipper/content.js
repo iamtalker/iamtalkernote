@@ -13,6 +13,37 @@
 // on each injection is harmless.
 (function () {
 
+// Mobile sites serve the same posts from a separate host with different markup;
+// MOBILE_HOST_ALIAS (below) maps each such host to its desktop host, so the
+// desktop rules apply to the mobile page too. A table entry keyed by the mobile
+// host itself wins over the alias, for mobile pages that need their own rule.
+const MOBILE_HOST_ALIAS = {
+  "m.ruliweb.com": "bbs.ruliweb.com",
+  "m.clien.net": "www.clien.net",
+  "m.ppomppu.co.kr": "www.ppomppu.co.kr",
+  "m.humoruniv.com": "web.humoruniv.com",
+  "m.slrclub.com": "www.slrclub.com",
+  "m.inven.co.kr": "www.inven.co.kr",
+  "m.fmkorea.com": "www.fmkorea.com",
+  "m.mt.co.kr": "www.mt.co.kr",
+  "m.ohmynews.com": "www.ohmynews.com",
+};
+
+// The key a page's site is looked up by: its desktop twin, or the host itself.
+function jcpSiteKey() {
+  return MOBILE_HOST_ALIAS[location.hostname] || location.hostname;
+}
+
+// A per-site table entry for this page: exact host first, then the desktop twin.
+function jcpSiteRule(table) {
+  return table[location.hostname] ?? table[jcpSiteKey()];
+}
+
+// Whether this page's site is in a Set of hosts (exact host or desktop twin).
+function jcpInSiteSet(set) {
+  return set.has(location.hostname) || set.has(jcpSiteKey());
+}
+
 // Some sites bury the real post inside a page where a *different* block (a
 // sidebar, or a huge "other posts" list) has more raw text than the actual
 // content, so Readability's text-density scoring picks the wrong container
@@ -24,6 +55,13 @@ const SITE_CONTENT_SELECTORS = {
   "gall.dcinside.com": ".view_content_wrap",
   "m.dcinside.com": ".thum-txt, .view_content_wrap",
   "www.clien.net": ".post_title, .post_author, .post_view",
+  // Mobile Ppomppu: the post body is #KH_Content (the desktop .board-contents is gone).
+  "m.ppomppu.co.kr": "#KH_Content",
+  // Mobile Humor-univ (m.humoruniv.com): the desktop #cnts id is gone; the post
+  // body (text + photos) is .wrap_body inside the read view.
+  "m.humoruniv.com": ".wrap_body",
+  // Mobile Naver Blog: no iframe on the mobile page, and the post body is .post_ct.
+  "m.blog.naver.com": ".post_ct",
   // Image-macro posts here have almost no text, so Readability's density
   // scoring often finds no article at all and fails outright.
   "www.ppomppu.co.kr": ".board-contents",
@@ -136,7 +174,7 @@ const SITE_IFRAME_SELECTORS = {
 };
 
 function jcpGetEffectiveDoc() {
-  const sel = SITE_IFRAME_SELECTORS[location.hostname];
+  const sel = jcpSiteRule(SITE_IFRAME_SELECTORS);
   if (!sel) return { doc: document, baseUrl: location.href };
   const iframe = document.querySelector(sel);
   if (iframe && iframe.contentDocument && iframe.contentDocument.body) {
@@ -298,6 +336,10 @@ const SITE_CLEANUP_SELECTORS = {
   // which only replaces the <video> tag, not sibling chrome around it).
   "bbs.ruliweb.com": [".reply_count", ".rv-video-control-panel"],
   "www.mt.co.kr": [".article_ads", ".ad-tag"],
+  // Mobile Clien: the comment-count badge in the title has no title tooltip
+  // (so it isn't turned into a label), the memo/contact dropdown sits inside
+  // the post body, and an empty javascript: link sits next to the post.
+  "m.clien.net": ["a.post_reply", ".post_contact", "a[href='javascript:;']:empty"],
   "www.chosun.com": [".arcad-wrapper"],
   // Video player chrome (empty shell + control labels once Naver's script runs)
   // and the .mask overlay spans that sit next to every photo.
@@ -946,7 +988,7 @@ async function jcpInlineImages(root, baseUrl) {
       // up to use tab capture in phase 2, keep them exactly as they were.
       // If a high-quality original (data-originalurl etc.) can't be had,
       // the plain src the page is actually showing still beats a remote link.
-      if (!dataUrl && !SCREENSHOT_FALLBACK_HOSTS.has(location.hostname)) {
+      if (!dataUrl && !jcpInSiteSet(SCREENSHOT_FALLBACK_HOSTS)) {
         const urls = [abs];
         try {
           const plain = img.getAttribute("src");
@@ -973,7 +1015,7 @@ async function jcpInlineImages(root, baseUrl) {
   let tabCaptures = 0;
   for (const r of results) {
     let dataUrls = r.dataUrl ? [r.dataUrl] : null;
-    if (!dataUrls && r.abs && tabCaptures < MAX_TAB_CAPTURES && SCREENSHOT_FALLBACK_HOSTS.has(location.hostname)) {
+    if (!dataUrls && r.abs && tabCaptures < MAX_TAB_CAPTURES && jcpInSiteSet(SCREENSHOT_FALLBACK_HOSTS)) {
       try {
         const liveEl = jcpFindLiveImg(r.abs, baseUrl);
         dataUrls = await jcpCaptureImageViaTab(liveEl, r.abs);
@@ -1154,7 +1196,12 @@ async function jcpUserSiteRule() {
     if (!Array.isArray(siteRules)) return null;
     const norm = (h) => String(h || "").trim().toLowerCase().replace(/^www\./, "");
     const here = norm(location.hostname);
-    return siteRules.find((r) => r && r.content && norm(r.host) === here) || null;
+    const twin = norm(jcpSiteKey());   // a mobile host uses its desktop twin's rule when it has none of its own
+    return (
+      siteRules.find((r) => r && r.content && norm(r.host) === here) ||
+      siteRules.find((r) => r && r.content && norm(r.host) === twin) ||
+      null
+    );
   } catch (e) {
     return null;
   }
@@ -1204,6 +1251,36 @@ function jcpClipYouTube(videoId) {
   };
 }
 
+// Drops the first non-blank line of a Markdown body when it is a heading that
+// repeats the note title. Spaces, punctuation and case are ignored. Page titles
+// often carry a site suffix ("글 제목 - 자유게시판 | 사이트"), so a heading that
+// sits inside the title also counts, when it is at least 4 characters long.
+function jcpDropLeadingTitle(markdown, title) {
+  // Letters and digits only (Hangul included: JS \W would strip it).
+  const key = (s) => String(s || "").replace(/[^\p{L}\p{N}]+/gu, "").toLowerCase();
+  // Page titles end with the site name ("글 - 유머 게시판 | 루리웹"): compare without it too.
+  const full = key(title);
+  const core = key(String(title || "").split(/\s[-|｜–]\s/)[0]);
+  if (full.length < 2) return markdown;
+  const lines = String(markdown || "").split("\n");
+  const drop = new Set();
+  let checked = 0;
+  for (let i = 0; i < lines.length && checked < 3; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    checked++;
+    const isHeading = /^#{1,6}\s/.test(line);
+    const text = isHeading ? line.replace(/^#{1,6}\s+/, "").replace(/\s+#+\s*$/, "") : line;
+    const h = key(text);
+    if (!h) continue;
+    const same = h === full || h === core ||
+      (isHeading && h.length >= 4 && (core.includes(h) || (core.length >= 4 && h.includes(core))));
+    if (same) drop.add(i);
+  }
+  if (!drop.size) return markdown;
+  return lines.filter((_, i) => !drop.has(i)).join("\n").replace(/^\s*\n/, "");
+}
+
 async function jcpClipArticle() {
   const ytId = jcpYouTubeVideoId();
   if (ytId) return jcpClipYouTube(ytId);
@@ -1220,7 +1297,7 @@ async function jcpClipArticle() {
     }
   }
   if (!overrideEls.length) {
-    const overrideSelector = SITE_CONTENT_SELECTORS[location.hostname];
+    const overrideSelector = jcpSiteRule(SITE_CONTENT_SELECTORS);
     overrideEls = overrideSelector ? Array.from(effectiveDoc.querySelectorAll(overrideSelector)) : [];
   }
 
@@ -1236,7 +1313,7 @@ async function jcpClipArticle() {
     });
     jcpAbsolutize(container, baseUrl);
     jcpStripNonContentTags(container);
-    const cleanupSelectors = SITE_CLEANUP_SELECTORS[location.hostname];
+    const cleanupSelectors = jcpSiteRule(SITE_CLEANUP_SELECTORS);
     if (cleanupSelectors && cleanupSelectors.length) {
       container.querySelectorAll(cleanupSelectors.join(",")).forEach((el) => el.remove());
     }
@@ -1247,7 +1324,7 @@ async function jcpClipArticle() {
         // invalid selector in the user rule: keep the content as is
       }
     }
-    jcpApplyTitleLabels(container, SITE_LABEL_FROM_TITLE_SELECTORS[location.hostname]);
+    jcpApplyTitleLabels(container, jcpSiteRule(SITE_LABEL_FROM_TITLE_SELECTORS));
     article = { title: document.title, content: container.innerHTML, excerpt: "", byline: "" };
   } else {
     // Measured on its own clone, kept untouched — Readability.parse() mutates
@@ -1310,7 +1387,12 @@ async function jcpClipArticle() {
   jcpCleanVideoTags(wrapper, baseUrl);
   await jcpInlineImages(wrapper, baseUrl);
   const td = jcpMakeTurndown();
-  const markdown = jcpApplyVideoPlaceholders(td.turndown(wrapper.innerHTML), videoIds);
+  // The title is saved as the note's name, so a first line that repeats it
+  // (the page's own headline, which Readability keeps) is dropped from the body.
+  const markdown = jcpDropLeadingTitle(
+    jcpApplyVideoPlaceholders(td.turndown(wrapper.innerHTML), videoIds),
+    article.title || document.title
+  );
   return {
     mode: "article",
     title: article.title || document.title,
@@ -1433,7 +1515,7 @@ function jcpWebtoonCandidateImages() {
   };
   // Prefer the site's known post-content container; otherwise the tallest
   // image's own <article>/<main>/#content region, else the whole page.
-  const sel = SITE_CONTENT_SELECTORS[location.hostname];
+  const sel = jcpSiteRule(SITE_CONTENT_SELECTORS);
   let roots = sel ? Array.from(document.querySelectorAll(sel)) : [];
   if (!roots.length) {
     let tallest = null;
