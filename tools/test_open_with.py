@@ -44,6 +44,25 @@ check("확장자는 .zip/ZIP 어느 쪽으로 물어도 같다", a.open_with_pro
 a.open_doc_file(doc)
 check("연결하면 그 프로그램에 파일 경로를 인자로 넘겨 연다(셸 없이 목록으로)", launched == [[fake_exe, os.path.normpath(doc["path"])]])
 check("다른 확장자는 영향이 없다", a.open_with_program("pdf") is None)
+
+# 미디어는 현재 파일을 먼저 보내고, 같은 폴더의 미디어만 재생목록에 넣는다.
+waterview = os.path.join(tmp, "WaterView.exe")
+open(waterview, "wb").write(b"x")
+media_dir = os.path.join(tmp, "media")
+os.makedirs(media_dir)
+current = os.path.join(media_dir, "02 현재.mp3")
+older = os.path.join(media_dir, "01 이전.mp3")
+video = os.path.join(media_dir, "03 다음.mp4")
+text = os.path.join(media_dir, "메모.txt")
+for p in (current, older, video, text):
+    open(p, "wb").write(b"x")
+launched.clear()
+a.set_open_with("mp3", waterview)
+a.open_doc_file({"ext": "mp3", "path": current, "title": "02 현재"})
+check("미디어 연결은 현재 파일부터 같은 폴더의 미디어를 재생목록으로 넘긴다",
+      launched == [[waterview, "--slideshow", "on", os.path.normpath(current), os.path.normpath(older), os.path.normpath(video)]])
+check("미디어 재생목록에서 텍스트 파일은 제외한다",
+      all(os.path.normpath(text) not in args for args in launched))
 os.remove(fake_exe)
 started.clear()
 a.open_doc_file(doc)
