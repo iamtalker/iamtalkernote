@@ -354,6 +354,10 @@ class DocIndex:
             conn.executemany("UPDATE docs SET nhay=? WHERE path=?", rows)
             conn.execute("INSERT OR REPLACE INTO meta VALUES ('title_only_search', '1')")
         conn.commit()
+        # 지운 색인이 남긴 빈 공간을 돌려준다. 빈 공간이 쌓여도 파일이 줄지 않던 문제를 막는다(예전 파일은 한 번 전체 정리가 필요)
+        if conn.execute("PRAGMA auto_vacuum").fetchone()[0] != 2:
+            conn.execute("PRAGMA auto_vacuum=INCREMENTAL")
+            conn.execute("VACUUM")
         return conn
 
     # ---- 태그·메모
@@ -541,6 +545,7 @@ class DocIndex:
                     conn.executemany("DELETE FROM docs WHERE path=?", gone)
                     count["removed"] += len(gone)
                 conn.commit()
+            conn.execute("PRAGMA incremental_vacuum")   # 지워진 색인의 빈 공간을 파일에서 돌려준다
         finally:
             conn.close()
         return count["done"], count["removed"], count["total"]

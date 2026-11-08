@@ -54,6 +54,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         self.doc_open = False          # 가져온 문서(읽기 전용)를 열어 둔 중인가
         self.doc_scanning = False      # 가져온 폴더를 뒤에서 다시 읽는 중인가(겹쳐 돌지 않게)
         self.doc_scan_progress = None
+        self.doc_scan_last = None      # 마지막 가져온 폴더 색인 결과(옵션 화면에 완료 상태를 남김)
         self.pv = winpreview.Preview() # 윈도 미리보기 처리기(pdf → Edge, mp3 → Media Player …)
         self.pdf_note = None           # 본문이 pdf 링크 하나뿐인 노트를 열어 둔 중이면 그 pdf 경로
         self.pv_active = False         # 지금 노트 화면에 윈도 미리보기를 띄워 두었는가
@@ -1865,6 +1866,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         """가져온 폴더를 훑어 새로 생기거나 바뀐 파일만 읽는다(진행 창, 취소 가능). 파일이 많으면 처음 한 번은 오래 걸린다"""
         if not self.docs.folders():
             return
+        self.doc_scan_last = None
 
         def work(prog, cancel):
             def update(d, total, phase=None):
@@ -1877,6 +1879,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
 
         def done(res):
             read, gone, total = res
+            self.doc_scan_last = {"read": read, "removed": gone, "total": total}
             self.after_docs_changed()
             self.status.config(text=tr('가져온 폴더: 파일 {0:,}개 (새로 읽은 것 {1:,}, 사라진 것 {2:,})').format(total, read, gone))
         self.doc_scan_progress = {"done": 0, "total": 0, "phase": None}
@@ -1893,6 +1896,7 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         if self.doc_scanning or not self.docs.folders():
             return
         self.doc_scanning = True
+        self.doc_scan_last = None
         q = queue.Queue()
         prog = {"v": None}   # (읽은 수, 읽을 수, 지금 읽는 파일) — 뒤에서 읽는 동안 아래 상태 줄에 보인다
         self.doc_scan_progress = {"done": 0, "total": 0, "phase": None}
@@ -1917,6 +1921,9 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
                 return self.root.after(1000, poll)
             self.doc_scanning = False
             self.doc_scan_progress = None
+            if kind == "ok":
+                read, gone, total = val
+                self.doc_scan_last = {"read": read, "removed": gone, "total": total}
             if prog["v"]:   # 진행 글을 지우고 원래 상태 줄로 되돌린다(열린 노트가 없으면 update_status 가 아무것도 안 하니 먼저 비운다)
                 self.status.config(text="")
                 try:
@@ -4273,6 +4280,8 @@ class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin)
         r.bind_all("<Control-slash>", lambda e: self.toggle_syntax())
         r.bind_all("<Control-f>", lambda e: self.on_ctrl_f())
         r.bind_all("<Control-F>", lambda e: self.focus_search())
+        # 윈도 미리보기가 키보드를 쥐고 있어도, 앱 안을 클릭하면 입력이 앱으로 돌아오게 한다
+        r.bind_all("<Button-1>", lambda e: winpreview.reclaim_keyboard(r.winfo_id()), add="+")
         self.ow.txt.bind("<Control-d>", lambda e: (self.toggle_favorite(), "break")[1])
         self.ow.txt.bind("<Control-f>", lambda e: "break")
         for w in (self.text, self.view):   # 글자 칸의 기본 Ctrl+F(커서를 한 글자 오른쪽으로)는 막는다

@@ -955,29 +955,6 @@ class DialogsMixin:
             Btn(row, tr("폴더 추가…"), add, padx=12, pady=3).pack(side="left")
             Btn(row, tr("목록에서 빼기"), remove, padx=12, pady=3).pack(side="left", padx=6)
             Btn(row, tr("지금 다시 읽기"), lambda: self.scan_docs(), padx=12, pady=3).pack(side="left")
-            scan_label = lab(p, "", fg=C["muted"], font=(self.ui, 9))
-            scan_bar = ttk.Progressbar(p, mode="determinate", length=440)
-            alive = {"on": True}
-            p.bind("<Destroy>", lambda e: alive.update(on=False) if e.widget is p else None)
-
-            def update_scan_progress():
-                if not alive["on"]:
-                    return
-                state = self.doc_scan_progress
-                if state:
-                    total = state["total"]
-                    done = min(state["done"], total)
-                    phase = (state["phase"] or "").replace("읽는 중 — ", "").strip()
-                    scan_label.config(text=tr("색인 진행 중: {0:,} / {1:,}  {2}").format(done, total, phase))
-                    scan_bar.configure(maximum=max(total, 1), value=done)
-                    if not scan_label.winfo_manager():
-                        scan_label.pack(anchor="w", pady=(6, 0))
-                        scan_bar.pack(anchor="w", fill="x", pady=(3, 0))
-                else:
-                    scan_label.pack_forget()
-                    scan_bar.pack_forget()
-                p.after(250, update_scan_progress)
-            update_scan_progress()
             lab(p, tr("빼도 원본 파일은 그대로입니다. 앱을 켜고 잠시 뒤 바뀐 파일은 저절로 다시 읽습니다."), fg=C["muted"], font=(self.ui, 9)).pack(anchor="w", pady=(6, 0))
             hr(p)
 
@@ -1300,9 +1277,41 @@ class DialogsMixin:
                 lab(p, label, font=(self.ui, 10, "bold")).pack(anchor="w", pady=(10, 0))
                 rows[key] = lab(p, "…", fg=C["text"], wraplength=620)
                 rows[key].pack(anchor="w", pady=(2, 0))
+                if key == "notes":   # md 노트 목록을 다시 읽는 버튼은 노트 개수 바로 아래에 둔다(가져온 폴더와는 별개)
+                    Btn(p, tr("md 노트 다시 훑기"), lambda: self.reload_notes(), padx=12, pady=4).pack(anchor="w", pady=(6, 0))
+                if key == "docs":    # 가져온 폴더 다시 읽기는 가져오기 탭과 같은 동작(바뀐 파일만 다시 읽는다)
+                    Btn(p, tr("가져온 폴더 다시 읽기"), lambda: self.scan_docs(), padx=12, pady=4).pack(anchor="w", pady=(6, 0))
             lab(p, tr("가져온 폴더를 목록에서 빼면 이 앱의 색인은 지웁니다. 원본 파일과 문서에 붙인 태그·메모는 그대로 둡니다."),
                 fg=C["muted"], font=(self.ui, 9), wraplength=620).pack(anchor="w", pady=(14, 0))
-            Btn(p, tr("노트 다시 훑기"), lambda: self.reload_notes(), padx=12, pady=4).pack(anchor="w", pady=(10, 0))
+            scan_progress = tk.Frame(p, bg=C["bg"])
+            scan_label = lab(scan_progress, "", fg=C["muted"], font=(self.ui, 9))
+            scan_label.pack(anchor="w", pady=(6, 0))
+            scan_progress.pack(fill="x", pady=(8, 0))
+            scan_alive = {"on": True}
+            p.bind("<Destroy>", lambda e: scan_alive.update(on=False) if e.widget is p else None, add="+")
+
+            def update_scan_progress():
+                if not scan_alive["on"]:
+                    return
+                state = self.doc_scan_progress
+                if state:
+                    total = state["total"]
+                    done = min(state["done"], total)
+                    phase = (state["phase"] or "").replace("읽는 중 — ", "").strip()
+                    label = (tr("색인 준비 중…") if not total else
+                             tr("색인 진행 중: {0:,} / {1:,}  {2}").format(done, total, phase))
+                elif self.doc_scan_last is not None:
+                    last = self.doc_scan_last
+                    total = last["total"]
+                    label = tr("색인 완료: {0:,}개 확인 · 새로 읽음 {1:,}개 · 목록에서 제거 {2:,}개").format(
+                        total, last["read"], last["removed"])
+                    if self.docs.cfg()["content"]:   # 문서 안 글 색인을 켜 둔 상태에서 끝났으면 내부 색인도 끝난 것
+                        label += tr(" · 문서 내부 색인도 완료")
+                else:
+                    label = tr("색인 대기 중 — ‘지금 다시 읽기’를 누르면 상태가 갱신됩니다.")
+                scan_label.config(text=label)
+                p.after(250, update_scan_progress)
+            update_scan_progress()
             alive = {"on": True}
             p.bind("<Destroy>", lambda e: alive.update(on=False) if e.widget is p else None)
 

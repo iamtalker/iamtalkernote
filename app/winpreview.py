@@ -27,6 +27,23 @@ if sys.platform == "win32":
     user32.SetWindowPos.restype = wintypes.BOOL
     user32.EnumChildWindows.argtypes = [wintypes.HWND, ctypes.c_void_p, wintypes.LPARAM]
     user32.EnumChildWindows.restype = wintypes.BOOL
+    user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+    user32.GetAncestor.restype = wintypes.HWND
+    user32.SetFocus.argtypes = [wintypes.HWND]
+    user32.SetFocus.restype = wintypes.HWND
+
+
+def reclaim_keyboard(hwnd):
+    """윈도 미리보기(Edge 등)가 키보드 포커스를 쥐고 있으면 앱 창으로 되돌린다.
+    미리보기 창은 앱 창의 자식이라, 마우스로 검색칸·편집기를 눌러도 포커스가 돌아오지 않을 수 있다."""
+    if sys.platform != "win32" or not hwnd:
+        return
+    try:
+        GA_ROOT = 2
+        top = user32.GetAncestor(hwnd, GA_ROOT) or hwnd
+        user32.SetFocus(top)
+    except Exception:  # noqa: BLE001  (포커스 복귀는 실패해도 앱 동작에 영향 없게)
+        pass
 
 
 def _fill_host_children(host, width, height):
