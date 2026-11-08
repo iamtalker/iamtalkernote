@@ -177,7 +177,9 @@ for _ in range(10):
 body_now = app.text.get("1.0", "end-1c")
 check("고치면 노트 원문에 마크다운 목록으로(머리말 보존)", body_now == "---\ntags: [x]\n---\n- a\n    - 새\n- b\n    - b1\n")
 app.flush()
-check("파일에도 저장됨", open(on["path"], encoding="utf-8").read() == body_now)
+# 저장할 때 앱이 created·updated 머리말을 더하므로, 본문과 기존 머리말(tags)이 남았는지만 본다
+_saved = open(on["path"], encoding="utf-8").read()
+check("파일에도 저장됨", _saved.endswith("- a\n    - 새\n- b\n    - b1\n") and "tags: [x]" in _saved)
 app.text.edit_undo()
 for _ in range(10):
     app.root.update()

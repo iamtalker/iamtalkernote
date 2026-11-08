@@ -35,6 +35,16 @@ def read(name):
         return f.read()
 
 
+def body_of(name):
+    """저장할 때 앱이 붙이는 머리말(created·updated)을 떼고 본문만 돌려준다"""
+    text = read(name)
+    if text.startswith("---\n"):
+        end = text.find("\n---\n", 4)
+        if end != -1:
+            text = text[end + 5:].lstrip("\n")
+    return text
+
+
 CF = "회의.sync-conflict-20261101-143005-ABCDEFG.md"
 write("회의.md", "첫째\n둘째\n")
 write(CF, "첫째\n둘째 고침\n셋째\n")
@@ -108,7 +118,7 @@ def click(w, label):
 done = click(top, notes.tr("사본으로 바꾸기"))
 pump(20)
 check("단추를 찾아 눌렀다", done)
-check("원본이 사본 내용으로 바뀐다", read("회의.md") == "첫째\n둘째 고침\n셋째\n")
+check("원본이 사본 내용으로 바뀐다", body_of("회의.md") == "첫째\n둘째 고침\n셋째\n")
 check("사본 파일은 휴지통으로 간다", not os.path.exists(os.path.join(vault, CF)))
 
 # 원본 두고 사본 지우기
@@ -121,7 +131,7 @@ pump(10)
 top = [w for w in a.root.winfo_children() if w.winfo_class() == "Toplevel"][-1]
 click(top, notes.tr("원본 두고 사본 지우기"))
 pump(20)
-check("원본 두기: 원본 그대로", read("회의.md") == "첫째\n둘째 고침\n셋째\n")
+check("원본 두기: 원본 그대로", body_of("회의.md") == "첫째\n둘째 고침\n셋째\n")
 check("원본 두기: 사본 사라짐", not os.path.exists(os.path.join(vault, CF)))
 
 a.root.destroy()

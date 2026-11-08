@@ -57,8 +57,8 @@ try:
     # 사용자가 직접 쓴 줄이 든 .stignore 는 건드리지 않는다(옛 폴더가 지워질 때)
     check("종류·경로: sendreceive, 노트 폴더 전체", f2[mar]["type"] == "sendreceive" and os.path.normpath(f2[mar]["path"]) == os.path.normpath(vault))
     ign = ignores(mar)
-    check("제외 목록: 이력·휴지통·복원 지점 제외, 미디어·가져온 요약은 포함 → %s" % [x for x in ign if x.startswith("/")],
-          "/.history" in ign and "/.trash" in ign and "/.snapshots" in ign and "/.resources" not in ign and "/.imported" not in ign)
+    check("제외 목록: 이력·휴지통·복원 지점·가져온 요약 제외, 미디어는 포함 → %s" % [x for x in ign if x.startswith("/")],
+          "/.history" in ign and "/.trash" in ign and "/.snapshots" in ign and "/.imported" in ign and "/.resources" not in ign)
     check("받는 순서 smallestFirst 유지", f2[mar].get("order") == "smallestFirst")
 
     # 3) 설정 바꾸기: 미디어 빼고 이력 켜고, 방향 PC→모바일
