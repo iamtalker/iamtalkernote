@@ -1,6 +1,7 @@
 """폴더검색(folder-search)의 검색 엔진 이식.
 AND / OR / NOT + 괄호, & | ! 기호, "정확한 구절", 관련도(밀도)순·최신순, 수정일 기간, 일치 단어 강조."""
 import calendar
+import os
 import re
 import time
 
@@ -230,6 +231,41 @@ class TitleIndex:
         return hits
 
 
+def _media_dir(note_path):
+    """노트 위쪽으로 올라가며 처음 나오는 .resources 폴더(볼트 안의 그림 폴더)"""
+    d = os.path.dirname(note_path)
+    for _ in range(8):
+        cand = os.path.join(d, ".resources")
+        if os.path.isdir(cand):
+            return cand
+        parent = os.path.dirname(d)
+        if parent == d:
+            break
+        d = parent
+    return None
+
+
+def total_size(n):
+    """노트의 용량: 노트 파일 크기 + 노트가 가리키는 그림 파일들의 크기(같은 그림은 한 번만). 한 번 계산하면 기억한다"""
+    if "_total" in n:
+        return n["_total"]
+    total = n.get("size", 0) or 0
+    try:
+        with open(n["path"], "rb") as fh:
+            text = fh.read().decode("utf-8", "ignore")
+    except OSError:
+        text = ""
+    names = set(re.findall(r"\.resources/([^)\s\"'<>]+)", text))
+    if names:
+        media = _media_dir(n["path"])
+        for name in names:
+            p = os.path.join(media, name) if media else None
+            if p and os.path.isfile(p):
+                total += os.path.getsize(p)
+    n["_total"] = total
+    return total
+
+
 def run(notes, query="", sort="relevance", asc=False, date_from="", date_to="", index=None):
     """notes: [{title, mtime, ...}] → (정렬된 일치 목록, 강조할 단어들).
     index(색인 DB, store.Store)가 있으면 본문 검색을 DB 안에서 하고, 없으면 메모리의 본문으로 한다."""
@@ -271,6 +307,8 @@ def run(notes, query="", sort="relevance", asc=False, date_from="", date_to="", 
         out.sort(key=lambda n: n.get("ctime", n["mtime"]), reverse=not asc)
     elif sort == "title":
         out.sort(key=lambda n: n["title"].lower(), reverse=asc)   # 기본은 가나다순
+    elif sort == "size":
+        out.sort(key=total_size, reverse=not asc)   # 용량 = 노트 파일 + 노트가 쓰는 그림 파일(.resources). 기본은 큰 것부터
     else:
         out.sort(key=lambda n: n["mtime"], reverse=not asc)
     if words:

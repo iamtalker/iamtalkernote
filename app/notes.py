@@ -100,7 +100,7 @@ class App(EmbeddedMixin, DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin
         self.all_notes, self.notes, self.results, self.words = [], [], [], []
         self.cards = []                # 목록에 그려진 카드 → note
         self.rendered, self.card_starts, self.next_line = 0, [], 1   # 목록에 그려 놓은 노트 수 / 카드 시작 줄 / 다음 카드 줄
-        self.sort, self.asc = win.get("sort") if win.get("sort") in ("relevance", "time", "ctime", "title") else "relevance", bool(win.get("asc", False))
+        self.sort, self.asc = win.get("sort") if win.get("sort") in ("relevance", "time", "ctime", "title", "size") else "relevance", bool(win.get("asc", False))
         self.cur = None               # 열어 둔 노트(dict)
         self.hist, self.hpos = [], -1  # 이동 > 뒤로/앞으로
         self.declined = set()          # 그림 분리 제안을 거절한 노트
@@ -382,7 +382,7 @@ class App(EmbeddedMixin, DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin
         self.tip(self.cb_content, tr("켜면 가져온 pdf·txt 등의 본문까지 찾고, 끄면 파일 제목만 찾습니다"))
         bar = tk.Frame(f, bg=C["bg"])
         bar.pack(fill="x", padx=10, pady=(0, 2))
-        self.sort_names = {"relevance": tr("관련도순"), "time": tr("수정순"), "ctime": tr("생성순"), "title": tr("제목순")}
+        self.sort_names = {"relevance": tr("관련도순"), "time": tr("수정순"), "ctime": tr("생성순"), "title": tr("제목순"), "size": tr("용량순")}
         self.sort_btns = {k: Btn(bar, v, lambda k=k: self.sort_by(k), padx=6, pady=3) for k, v in self.sort_names.items()}
         self.b_date = Btn(bar, tr("기간"), self.toggle_date, padx=6, pady=3)
         for b in (*self.sort_btns.values(), self.b_date):
