@@ -337,3 +337,21 @@ class SearchBoxMixin:
         self.go(step)
         if self.cur:
             self.reveal_current()
+
+    def goto_note(self, path):
+        """노트 하나를 노트 목록에서 보이게 하고 연다: 목록을 모든 파일로 넓히고 검색·태그·고급 조건을 푼 뒤 그 노트를 선택한다"""
+        n = next((x for x in self.all_notes if x["path"] == path), None)
+        if n is None:
+            return
+        self.flush()
+        self.nb = ALL
+        self.tag = None
+        self.tag_none = False
+        self.adv_conditions = []
+        self.q.set("")
+        if self.search_job:
+            self.root.after_cancel(self.search_job)
+            self.search_job = None
+        self.reload_notebooks()
+        self.refresh()
+        self.open_and_reveal(n)

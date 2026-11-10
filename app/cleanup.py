@@ -535,3 +535,46 @@ def unused_media(store, notes, progress=None, cancelled=lambda: False):
                 pass
     out.sort(key=lambda x: -x[1])
     return out
+
+
+def duplicate_media(store, progress=None, cancelled=lambda: False):
+    """리소스 폴더(.resources)에서 내용이 같은 그림 파일 묶음을 찾는다 → [[경로, …], …] (이름이 달라도 내용이 같으면 묶는다).
+    크기가 같은 파일만 해시를 계산한다. 묶음 안은 이름순, 묶음은 전체 크기가 큰 것부터."""
+    import hashlib
+    import os
+    media = store.media_dir
+    files = []
+    for dp, _, fn in os.walk(media):
+        for f in fn:
+            p = os.path.join(dp, f)
+            try:
+                files.append((p, os.path.getsize(p)))
+            except OSError:
+                pass
+    by_size = {}
+    for p, s in files:
+        if s > 0:
+            by_size.setdefault(s, []).append(p)
+    cands = [ps for ps in by_size.values() if len(ps) > 1]
+    total = sum(len(ps) for ps in cands) or 1
+    done = 0
+    groups = []
+    for ps in cands:
+        by_hash = {}
+        for p in ps:
+            if cancelled():
+                return []
+            done += 1
+            if progress and done % 200 == 0:
+                progress(done, total)
+            h = hashlib.sha1()
+            try:
+                with open(p, "rb") as fh:
+                    for chunk in iter(lambda: fh.read(1 << 20), b""):
+                        h.update(chunk)
+            except OSError:
+                continue
+            by_hash.setdefault(h.hexdigest(), []).append(p)
+        groups += [sorted(v) for v in by_hash.values() if len(v) > 1]
+    groups.sort(key=lambda g: -(os.path.getsize(g[0]) * (len(g) - 1)))
+    return groups

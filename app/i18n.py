@@ -75,7 +75,7 @@ EN = {
     "태그 없음": "No tags", "전체 범위": "All tags", "현재 범위": "Current scope",
     "태그 목록 범위를 전체와 현재 범위 사이에서 바꿉니다": "Switch between all tags and the current scope",
     "예) 2021.01.01": "e.g. 2021.01.01",
-    "관련도순": "Relevance", "수정순": "Modified", "생성순": "Created", "제목순": "Title", "용량순": "Size",
+    "관련도순": "Relevance", "수정순": "Modified", "생성순": "Created", "제목순": "Title",
     "누르면 고른 태그가 풀립니다": "Click to clear the selected tag",
     "지금의 검색을 왼쪽 '저장된 검색'에 이름을 붙여 저장합니다(스마트 폴더)": "Save the current search under a name in 'Saved searches' on the left (smart folder)",
     "켜면 가져온 pdf·txt 등의 본문까지 찾고, 끄면 파일 제목만 찾습니다": "On: also search the text inside imported pdf/txt files. Off: search document titles only",

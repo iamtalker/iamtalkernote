@@ -75,3 +75,62 @@ class EmbeddedMixin:
             text += "\n\n" + tr("실패 {0}개:").format(len(failed)) + "\n" + "\n".join(f"{p}: {e}" for p, e in failed[:10])
         messagebox.showinfo(APP, text, parent=self.root)
         self.reload_notes(keep_scroll=True)
+
+    # ------------------------------------------------------------ 도구: 중복 이미지 찾기 (쓰는 노트를 옆에 보여 준다)
+    def show_duplicate_media(self):
+        """도구 > 중복 이미지 찾기: 내용이 같은 그림 파일을 묶고, 각 그림을 가리키는 노트를 함께 보여 준다"""
+        def work(notes, prog, cancel):
+            groups = cleanup.duplicate_media(self.store, prog, cancel)
+            if not groups:
+                return [], {}
+            wanted = {os.path.basename(p): None for g in groups for p in g}
+            refs = {k: [] for k in wanted}
+            for n in notes:
+                if cancel():
+                    return [], {}
+                try:
+                    with open(n["path"], "rb") as fh:
+                        text = st.decode(fh.read())
+                except OSError:
+                    continue
+                names = set(re.findall(r"\.resources/([^)\s\"'<>]+)", text))
+                for name in names & set(refs):
+                    refs[name].append(n)
+            return groups, refs
+        self.scan_notes(tr("중복 이미지 찾기"), work, self.duplicate_media_dialog)
+
+    def duplicate_media_dialog(self, result):
+        groups, refs = result
+        if not groups:
+            return messagebox.showinfo(APP, tr("내용이 같은 그림 파일이 없습니다."), parent=self.root)
+        def mb(n):
+            return f"{n / 1048576:,.1f}MB" if n >= 1048576 else f"{n / 1024:,.0f}KB"
+        extra = sum(len(g) - 1 for g in groups)
+        wasted = sum(os.path.getsize(g[0]) * (len(g) - 1) for g in groups)
+        top = self.tool_window(tr("중복 이미지 — {0:,}묶음").format(len(groups)), "900x560", native=True)
+        tk.Label(top, text=tr("내용이 같은 그림 {0:,}묶음 (남는 파일 {1:,}개, 약 {2}). 각 그림 아래에 그 그림을 쓰는 노트를 보여 줍니다. 노트 이름을 클릭하면 그 노트로 갑니다.").format(len(groups), extra, mb(wasted)),
+                 bg=C["bg"], fg=C["muted"], font=(self.ui, 9), anchor="w", justify="left", padx=16, pady=10).pack(fill="x")
+        wrap = tk.Frame(top, bg=C["bg"])
+        wrap.pack(fill="both", expand=True, padx=16, pady=(0, 12))
+        lb = tk.Listbox(wrap, bg=C["panel"], fg=C["text"], relief="flat", bd=0, highlightthickness=0, activestyle="none", font=(self.ui, 10), exportselection=False)
+        sb = ttk.Scrollbar(wrap, orient="vertical", command=lb.yview)
+        lb.config(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        lb.pack(side="left", fill="both", expand=True)
+        note_at = {}
+        for g in groups:
+            lb.insert("end", tr("── {0}개 · 각 {1}").format(len(g), mb(os.path.getsize(g[0]))))
+            for p in g:
+                name = os.path.basename(p)
+                lb.insert("end", "  " + os.path.relpath(p, self.store.media_dir))
+                users = refs.get(name, [])
+                if not users:
+                    lb.insert("end", "      " + tr("(쓰는 노트 없음)"))
+                for n in users:
+                    lb.insert("end", "      ↳ " + n["title"])
+                    note_at[lb.size() - 1] = n["path"]
+        def open_sel(e=None):
+            sel = lb.curselection()
+            if sel and sel[0] in note_at:
+                self.goto_note(note_at[sel[0]])   # 노트 목록에서 그 노트를 선택해 보여 준다
+        lb.bind("<ButtonRelease-1>", open_sel)   # 노트 줄을 클릭하면 그 노트로 간다
