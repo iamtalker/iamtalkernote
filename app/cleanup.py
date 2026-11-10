@@ -578,3 +578,110 @@ def duplicate_media(store, progress=None, cancelled=lambda: False):
         groups += [sorted(v) for v in by_hash.values() if len(v) > 1]
     groups.sort(key=lambda g: -(os.path.getsize(g[0]) * (len(g) - 1)))
     return groups
+
+
+def _image_refs(text):
+    """노트 본문의 .resources 그림 파일 이름들(중복 없이)"""
+    import re
+    return set(re.findall(r"\.resources/([^)\s\"'<>]+)", text))
+
+
+def _words_without_images(text):
+    """머리말·그림·그림 경로·링크 주소·마크다운 기호를 뺀 뒤 남는 낱말 수"""
+    import re
+    t = re.sub(r"^---\n.*?\n---\n", "", text, flags=re.S)
+    t = re.sub(r"!\[[^\]]*\]\([^)]*\)", " ", t)
+    t = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", t)
+    t = re.sub(r"<[^>]+>", " ", t)
+    t = re.sub(r"\.resources/\S+", " ", t)
+    return len(re.findall(r"[0-9A-Za-z가-힣]+", t))
+
+
+IMAGE_ONLY_MAX_WORDS = 5
+
+
+def image_only_groups(store, notes, progress=None, cancelled=lambda: False):
+    """본문에 글이 거의 없고 그림만 있는 노트를 찾아, 그림 내용이 같은 노트끼리 묶는다 → [[노트, …], …]
+    묶음 안은 먼저 만든 노트부터(맨 앞 노트가 남는 노트). 그림 내용이 다르면 묶지 않는다."""
+    import hashlib
+    import os
+    hash_of = {}
+
+    def digest(name):
+        if name not in hash_of:
+            p = os.path.join(store.media_dir, name)
+            try:
+                h = hashlib.sha1()
+                with open(p, "rb") as fh:
+                    for chunk in iter(lambda: fh.read(1 << 20), b""):
+                        h.update(chunk)
+                hash_of[name] = h.hexdigest()
+            except OSError:
+                hash_of[name] = None
+        return hash_of[name]
+
+    by_sig = {}
+    total = len(notes) or 1
+    for i, n in enumerate(notes):
+        if cancelled():
+            return []
+        if progress and i % 200 == 0:
+            progress(i, total)
+        try:
+            with open(n["path"], "rb") as fh:
+                text = st_decode(fh.read())
+        except OSError:
+            continue
+        names = _image_refs(text)
+        if not names or _words_without_images(text) > IMAGE_ONLY_MAX_WORDS:
+            continue
+        digests = [digest(x) for x in names]
+        if any(d is None for d in digests):
+            continue
+        sig = tuple(sorted(set(digests)))
+        by_sig.setdefault(sig, []).append(n)
+    groups = []
+    for sig, ns in by_sig.items():
+        if len(ns) > 1:
+            ns.sort(key=lambda n: n.get("ctime", n["mtime"]))
+            groups.append(ns)
+    groups.sort(key=lambda g: -len(g))
+    return groups
+
+
+def st_decode(data):
+    from store import decode
+    return decode(data)
+
+
+def _source_url(text):
+    import re
+    m = re.search(r"^source:\s*(\S+)", text[:2000], re.M)
+    return m.group(1) if m else None
+
+
+def empty_scraps(notes, progress=None, cancelled=lambda: False):
+    """출처 주소(source:)가 있는 스크랩 중 본문이 거의 없는 노트와, 같은 주소로 내용이 채워진 노트 짝을 찾는다.
+    → (빈 노트 [(노트, 주소)…], 다시 채워진 짝 [빈 노트…])"""
+    empties = []
+    filled_urls = set()
+    total = len(notes) or 1
+    for i, n in enumerate(notes):
+        if cancelled():
+            return [], []
+        if progress and i % 500 == 0:
+            progress(i, total)
+        try:
+            with open(n["path"], "rb") as fh:
+                text = st_decode(fh.read())
+        except OSError:
+            continue
+        url = _source_url(text)
+        if not url:
+            continue
+        if _words_without_images(text) <= 2 and not _image_refs(text):
+            empties.append((n, url))
+        else:
+            filled_urls.add(url)
+    repaired = [n for n, url in empties if url in filled_urls]
+    return empties, repaired

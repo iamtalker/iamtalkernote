@@ -96,6 +96,9 @@ class EmbeddedMixin:
                 names = set(re.findall(r"\.resources/([^)\s\"'<>]+)", text))
                 for name in names & set(refs):
                     refs[name].append(n)
+            # 아무 노트도 쓰지 않는 파일(휴지통 노트만 쓰던 파일 포함)은 중복 대상이 아니다 → 안 쓰는 미디어 정리 대상
+            groups = [[p for p in g if refs.get(os.path.basename(p))] for g in groups]
+            groups = [g for g in groups if len(g) > 1]
             return groups, refs
         self.scan_notes(tr("중복 이미지 찾기"), work, self.duplicate_media_dialog)
 
@@ -107,30 +110,164 @@ class EmbeddedMixin:
             return f"{n / 1048576:,.1f}MB" if n >= 1048576 else f"{n / 1024:,.0f}KB"
         extra = sum(len(g) - 1 for g in groups)
         wasted = sum(os.path.getsize(g[0]) * (len(g) - 1) for g in groups)
-        top = self.tool_window(tr("중복 이미지 — {0:,}묶음").format(len(groups)), "900x560", native=True)
-        tk.Label(top, text=tr("내용이 같은 그림 {0:,}묶음 (남는 파일 {1:,}개, 약 {2}). 각 그림 아래에 그 그림을 쓰는 노트를 보여 줍니다. 노트 이름을 클릭하면 그 노트로 갑니다.").format(len(groups), extra, mb(wasted)),
-                 bg=C["bg"], fg=C["muted"], font=(self.ui, 9), anchor="w", justify="left", padx=16, pady=10).pack(fill="x")
+        top = self.tool_window(tr("중복 이미지 — {0:,}묶음").format(len(groups)), "900x580", native=True)
+        head = tk.Frame(top, bg=C["bg"])
+        head.pack(fill="x", padx=16, pady=(12, 4))
+        tk.Label(head, text=tr("내용이 같은 그림 {0:,}묶음 · 줄이면 남는 파일 {1:,}개 (약 {2})").format(len(groups), extra, mb(wasted)),
+                 bg=C["bg"], fg=C["text"], font=(self.ui, 10), anchor="w").pack(side="left")
+        Btn(head, tr("그림만 있는 노트 정리…"), self.image_only_cleanup, pady=4).pack(side="right")
+        tk.Label(top, text=tr("▸를 누르면 그 그림을 쓰는 노트가 펼쳐집니다. 노트 이름을 누르면 그 노트로 갑니다."),
+                 bg=C["bg"], fg=C["muted"], font=(self.ui, 9), anchor="w", padx=16).pack(fill="x", pady=(0, 6))
         wrap = tk.Frame(top, bg=C["bg"])
         wrap.pack(fill="both", expand=True, padx=16, pady=(0, 12))
+        tree = ttk.Treeview(wrap, show="tree", selectmode="none")
+        tree.column("#0", width=840, stretch=True)
+        sb = ttk.Scrollbar(wrap, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        tree.pack(side="left", fill="both", expand=True)
+        note_at = {}
+        for gi, g in enumerate(groups):
+            head_iid = f"g{gi}"
+            tree.insert("", "end", iid=head_iid, text=tr("[같은 그림 {0}개] {1} (각 {2})").format(len(g), os.path.basename(g[0]), mb(os.path.getsize(g[0]))))
+            for pi, p in enumerate(g):
+                name = os.path.basename(p)
+                users = refs.get(name, [])
+                file_iid = f"f{gi}_{pi}"
+                tree.insert(head_iid, "end", iid=file_iid, text=f"{os.path.relpath(p, self.store.media_dir)}   ({tr('쓰는 노트 {0}개').format(len(users))})")
+                if not users:
+                    tree.insert(file_iid, "end", text="    " + tr("(쓰는 노트 없음)"))
+                for ui, n in enumerate(users):
+                    iid = f"u{gi}_{pi}_{ui}"
+                    tree.insert(file_iid, "end", iid=iid, text=f"    ↳ {n['title']}")
+                    note_at[iid] = n["path"]
+        def on_click(e):
+            if tree.identify_element(e.x, e.y) == "Treeitem.indicator":
+                return
+            row = tree.identify_row(e.y)
+            if row in note_at:
+                self.goto_note(note_at[row])
+                top.lift()
+        tree.bind("<ButtonRelease-1>", on_click)
+
+        Btn(top, tr("그림만 있는 노트 정리…"), self.image_only_cleanup, pady=5).pack(side="bottom", anchor="e", padx=16, pady=(0, 12))
+
+    # ------------------------------------------------------------ 중복 이미지 창: 그림만 있는 노트 정리
+    def image_only_cleanup(self):
+        def work(notes, prog, cancel):
+            return cleanup.image_only_groups(self.store, notes, prog, cancel)
+        self.scan_notes(tr("그림만 있는 노트 찾기"), work, self.image_only_dialog)
+
+    def image_only_dialog(self, groups):
+        if not groups:
+            return messagebox.showinfo(APP, tr("그림만 있고 그림이 같은 노트가 없습니다."), parent=self.root)
+        top = self.tool_window(tr("그림만 있는 노트 정리 — {0:,}묶음").format(len(groups)), "880x620", native=True)
+        tk.Label(top, text=tr("같은 그림을 쓰는 노트 묶음입니다. ☐를 눌러 처리할 묶음을 ☑로 고르세요. ▸/▾를 누르면 펼치고 접습니다. 묶음마다 가장 먼저 만든 노트([남김])는 남고, [휴지통] 노트는 휴지통으로 갑니다. 노트 이름을 누르면 그 노트로 갑니다."),
+                 bg=C["bg"], fg=C["muted"], font=(self.ui, 9), anchor="w", justify="left", padx=16, pady=10, wraplength=840).pack(fill="x")
+        chosen = set()          # 처음에는 모두 해제
+        expanded = set(range(len(groups)))   # 처음에는 모두 펼침
+        status = tk.Label(top, text="", bg=C["bg"], fg=C["text"], font=(self.ui, 10), anchor="w", padx=16)
+        status.pack(fill="x")
+        bar = tk.Frame(top, bg=C["bg"])
+        bar.pack(side="bottom", fill="x", padx=16, pady=12)
+        wrap = tk.Frame(top, bg=C["bg"])
+        wrap.pack(fill="both", expand=True, padx=16)
+        tree = ttk.Treeview(wrap, columns=("check", "title"), show="headings", selectmode="none")
+        tree.heading("check", text=tr("선택"), anchor="center")
+        tree.heading("title", text=tr("묶음 / 노트"), anchor="w")
+        tree.column("check", width=70, anchor="center", stretch=False)
+        tree.column("title", width=660, stretch=True)
+        sb = ttk.Scrollbar(wrap, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        tree.pack(side="left", fill="both", expand=True)
+        note_at = {}
+
+        def render():
+            tree.delete(*tree.get_children())
+            note_at.clear()
+            for gi, g in enumerate(groups):
+                mark = "▾" if gi in expanded else "▸"
+                tree.insert("", "end", iid=f"g{gi}", values=("☑" if gi in chosen else "☐",
+                            f"{mark} [{tr('남김')}] {g[0]['title']}   ({tr('묶음 {0:,}개 중 1개').format(len(g))})"))
+                note_at[f"g{gi}"] = None
+                if gi in expanded:
+                    for ni, n in enumerate(g[1:], 1):
+                        iid = f"n{gi}_{ni}"
+                        tree.insert("", "end", iid=iid, values=("", f"        [{tr('휴지통')}] {n['title']}"))
+                        note_at[iid] = n["path"]
+            drop_n = sum(len(groups[i]) - 1 for i in chosen)
+            status.config(text=tr("선택한 묶음 {0:,}개 · 휴지통으로 갈 노트 {1:,}개").format(len(chosen), drop_n))
+
+        def on_click(e):
+            row = tree.identify_row(e.y)
+            if not row:
+                return
+            col = tree.identify_column(e.x)
+            if row.startswith("g"):
+                gi = int(row[1:])
+                if col == "#1":          # 체크 칸: 묶음 선택
+                    chosen.symmetric_difference_update({gi})
+                    render()
+                elif col == "#2":        # 제목 칸: 펼치기·접기
+                    expanded.symmetric_difference_update({gi})
+                    render()
+                return
+            if row in note_at and note_at[row]:   # 노트 줄: 그 노트로 가고 이 창은 앞에 둔다
+                self.goto_note(note_at[row])
+                top.lift()
+        tree.bind("<ButtonRelease-1>", on_click)
+        render()
+
+        def go():
+            drop = [n["path"] for gi in sorted(chosen) for n in groups[gi][1:]]
+            if not drop:
+                return messagebox.showinfo(APP, tr("선택한 묶음이 없습니다."), parent=top)
+            if not messagebox.askyesno(APP, tr("선택한 묶음에서 휴지통으로 {0:,}개 노트를 보냅니다. 진행할까요?").format(len(drop)), parent=top):
+                return
+            top.destroy()
+            self.trash_notes(drop)
+        Btn(bar, tr("선택한 묶음 휴지통으로"), go, pady=5).pack(side="right")
+        Btn(bar, tr("취소"), top.destroy, pady=5).pack(side="right", padx=(0, 8))
+
+    # ------------------------------------------------------------ 도구: 본문이 빈 옛 스크랩 다시 스크랩하기
+    def show_empty_scraps(self):
+        """도구 > 빈 옛 스크랩 찾기: 출처 주소는 있는데 본문이 없는 노트를 보여 주고, 주소를 브라우저에서 다시 스크랩할 수 있게 한다"""
+        self.scan_notes(tr("빈 스크랩 다시 받기"), lambda notes, prog, cancel: cleanup.empty_scraps(notes, prog, cancel), self.empty_scraps_dialog)
+
+    def empty_scraps_dialog(self, result):
+        empties, repaired = result
+        if not empties:
+            return messagebox.showinfo(APP, tr("본문이 빈 옛 스크랩이 없습니다."), parent=self.root)
+        top = self.tool_window(tr("빈 스크랩 다시 받기 — {0:,}개").format(len(empties)), "860x560", native=True)
+        tk.Label(top, text=tr("출처 주소는 있는데 본문이 없는 노트 {0:,}개입니다. '다음 10개 열기'로 브라우저에서 열어 조플린 클리퍼로 다시 스크랩하세요. 같은 주소로 내용이 채워진 노트가 생기면 '다시 채워진 빈 노트 정리'로 옛 빈 노트를 휴지통에 보냅니다.").format(len(empties)),
+                 bg=C["bg"], fg=C["muted"], font=(self.ui, 9), anchor="w", justify="left", padx=16, pady=10, wraplength=800).pack(fill="x")
+        wrap = tk.Frame(top, bg=C["bg"])
+        wrap.pack(fill="both", expand=True, padx=16)
         lb = tk.Listbox(wrap, bg=C["panel"], fg=C["text"], relief="flat", bd=0, highlightthickness=0, activestyle="none", font=(self.ui, 10), exportselection=False)
         sb = ttk.Scrollbar(wrap, orient="vertical", command=lb.yview)
         lb.config(yscrollcommand=sb.set)
         sb.pack(side="right", fill="y")
         lb.pack(side="left", fill="both", expand=True)
-        note_at = {}
-        for g in groups:
-            lb.insert("end", tr("── {0}개 · 각 {1}").format(len(g), mb(os.path.getsize(g[0]))))
-            for p in g:
-                name = os.path.basename(p)
-                lb.insert("end", "  " + os.path.relpath(p, self.store.media_dir))
-                users = refs.get(name, [])
-                if not users:
-                    lb.insert("end", "      " + tr("(쓰는 노트 없음)"))
-                for n in users:
-                    lb.insert("end", "      ↳ " + n["title"])
-                    note_at[lb.size() - 1] = n["path"]
-        def open_sel(e=None):
-            sel = lb.curselection()
-            if sel and sel[0] in note_at:
-                self.goto_note(note_at[sel[0]])   # 노트 목록에서 그 노트를 선택해 보여 준다
-        lb.bind("<ButtonRelease-1>", open_sel)   # 노트 줄을 클릭하면 그 노트로 간다
+        for n, url in empties:
+            lb.insert("end", f"{n['title'][:50]}   {url[:70]}")
+        state = {"next": 0}
+        def open_next():
+            import webbrowser
+            batch = empties[state["next"]:state["next"] + 10]
+            for _n, url in batch:
+                webbrowser.open(url, new=2)
+            state["next"] += len(batch)
+            if not batch:
+                messagebox.showinfo(APP, tr("모든 주소를 열었습니다."), parent=top)
+        def clean_repaired():
+            if not repaired:
+                return messagebox.showinfo(APP, tr("다시 채워진 빈 노트가 없습니다."), parent=top)
+            if not messagebox.askyesno(APP, tr("같은 주소로 내용이 채워진 옛 빈 노트 {0:,}개를 휴지통으로 보냅니다.\n(휴지통에서 복원할 수 있습니다.) 진행할까요?").format(len(repaired)), parent=top):
+                return
+            self.trash_notes([n["path"] for n in repaired])
+        bar = tk.Frame(top, bg=C["bg"])
+        bar.pack(side="bottom", fill="x", padx=16, pady=12)
+        Btn(bar, tr("다음 10개 열기"), open_next, pady=5).pack(side="left")
+        Btn(bar, tr("다시 채워진 빈 노트 정리…"), clean_repaired, pady=5).pack(side="right")
+

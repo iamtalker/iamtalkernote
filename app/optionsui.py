@@ -17,7 +17,8 @@ class OptionsMixin:
         r.bind_all("<Control-f>", lambda e: self.on_ctrl_f())
         r.bind_all("<Control-F>", lambda e: self.focus_search())
         # 윈도 미리보기가 키보드를 쥐고 있어도, 앱 안을 클릭하면 입력이 앱으로 돌아오게 한다
-        r.bind_all("<Button-1>", lambda e: winpreview.reclaim_keyboard(r.winfo_id()), add="+")
+        r.bind_all("<Button-1>", lambda e: winpreview.reclaim_keyboard(r.winfo_id())
+                     if e.widget.winfo_toplevel() is r else None, add="+")   # 이 창 안을 누른 때만: 다른 창(묶음 정리 등)을 누르면 그 창에 그대로 둔다
         self.ow.txt.bind("<Control-d>", lambda e: (self.toggle_favorite(), "break")[1])
         self.ow.txt.bind("<Control-f>", lambda e: "break")
         for w in (self.text, self.view):   # 글자 칸의 기본 Ctrl+F(커서를 한 글자 오른쪽으로)는 막는다

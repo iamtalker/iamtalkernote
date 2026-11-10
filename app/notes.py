@@ -345,11 +345,13 @@ class App(EmbeddedMixin, DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin
         self.ac_init()
         action_bar = tk.Frame(top, bg=C["bg"])
         action_bar.pack(fill="x", pady=(5, 0))
+        opt_line = tk.Frame(top, bg=C["bg"])   # 두 번째 줄: 자동완성 · 문서 내부 검색
+        opt_line.pack(fill="x", pady=(3, 0))
         left_actions = tk.Frame(action_bar, bg=C["bg"])
         left_actions.pack(side="left")
         right_actions = tk.Frame(action_bar, bg=C["bg"])
         right_actions.pack(side="right")
-        Btn(right_actions, tr("＋ 새 노트"), self.new_note, kind="primary", bold=True, pady=5).pack(side="right", padx=(7, 0))
+        self.new_btn = Btn(opt_line, tr("＋ 새 노트"), self.new_note, kind="primary", bold=True, pady=5)   # 두 번째 줄 끝(문서 내부 검색 오른쪽)
         refresh = Btn(right_actions, "⟳", self.refresh_all, pady=5, font=(self.ui, 12))
         refresh.pack(side="right", padx=(7, 0))
         self.tip(refresh, tr("새로 고침 (F5): 탐색기 등 앱 밖에서 폴더·노트를 지우거나 옮겼을 때 다시 읽습니다"))
@@ -359,6 +361,18 @@ class App(EmbeddedMixin, DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin
         self.advanced_search_btn = Btn(left_actions, tr("고급 검색"), self.open_advanced_search, pady=5)
         self.advanced_search_btn.configure(highlightthickness=1, highlightbackground=C["line"])
         self.advanced_search_btn.pack(side="left", padx=(7, 0))
+        self.v_suggest = tk.BooleanVar(value=bool(st.read_config().get("searchSuggest", False)))
+        self.ac_on = self.v_suggest.get()
+
+        def set_suggest_bar():
+            self.ac_on = self.v_suggest.get()
+            st.write_config(searchSuggest=self.ac_on)
+            if not self.ac_on:
+                self.ac_hide()
+        tk.Checkbutton(opt_line, text=tr("자동완성"), variable=self.v_suggest, command=set_suggest_bar, takefocus=False,
+                       bg=C["bg"], activebackground=C["bg"], fg=C["sub"], selectcolor=C["bg"], cursor="hand2", font=(self.ui, 9)).pack(side="left")
+        self.new_btn.pack(side="left", padx=(12, 0))
+        self.tip(self.search_btn, tr("자동완성 체크: 입력하는 동안 제목·태그 후보를 보여 줍니다"))
         self.random_btn = Btn(left_actions, tr("랜덤"), self.open_random_note, pady=5)   # 고급 검색 오른쪽: 랜덤 노트
         self.random_btn.configure(highlightthickness=1, highlightbackground=C["line"])
         self.random_btn.pack(side="left", padx=(7, 0))
@@ -374,7 +388,7 @@ class App(EmbeddedMixin, DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin
         self.tip(self.prev_btn, tr("이전 노트"))
         self.tip(self.next_btn, tr("다음 노트"))
         self.v_content = tk.BooleanVar(value=self.docs.content_search)
-        self.opt_row = tk.Frame(left_actions, bg=C["bg"])
+        self.opt_row = tk.Frame(opt_line, bg=C["bg"])
         self.cb_content = tk.Checkbutton(self.opt_row, text=tr("문서 내부 검색"), variable=self.v_content, command=self.on_content_toggle, relief="flat",
                                          bd=0, takefocus=False, bg=C["bg"], fg=C["sub"], activebackground=C["soft"], selectcolor=C["bg"],
                                          cursor="hand2", font=(self.ui, 9))
@@ -462,7 +476,7 @@ class App(EmbeddedMixin, DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin
         """'문서 내부 검색' 체크박스는 가져온 폴더가 있을 때만 보인다"""
         if self.docs.folders():
             if not self.opt_row.winfo_ismapped():
-                self.opt_row.pack(side="left", padx=(8, 0), before=self.random_btn)
+                self.opt_row.pack(side="left", padx=(8, 0), before=self.new_btn)
         else:
             self.opt_row.pack_forget()
 
