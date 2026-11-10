@@ -359,6 +359,10 @@ class App(EmbeddedMixin, DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin
         self.advanced_search_btn = Btn(left_actions, tr("고급 검색"), self.open_advanced_search, pady=5)
         self.advanced_search_btn.configure(highlightthickness=1, highlightbackground=C["line"])
         self.advanced_search_btn.pack(side="left", padx=(7, 0))
+        self.random_btn = Btn(left_actions, tr("랜덤"), self.open_random_note, pady=5)   # 고급 검색 오른쪽: 랜덤 노트
+        self.random_btn.configure(highlightthickness=1, highlightbackground=C["line"])
+        self.random_btn.pack(side="left", padx=(7, 0))
+        self.tip(self.random_btn, tr("랜덤 노트 열기"))
         self.v_content = tk.BooleanVar(value=self.docs.content_search)
         self.opt_row = tk.Frame(left_actions, bg=C["bg"])
         self.cb_content = tk.Checkbutton(self.opt_row, text=tr("문서 내부 검색"), variable=self.v_content, command=self.on_content_toggle, relief="flat",

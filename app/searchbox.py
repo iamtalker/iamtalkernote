@@ -283,3 +283,33 @@ class SearchBoxMixin:
             self.ph.place_forget()
         else:
             self.ph.place(x=10, rely=0.5, anchor="w")
+
+    def open_random_note(self):
+        """랜덤 단추: 모든 노트 가운데 하나를 무작위로 골라 연다. 목록을 '모든 파일'로 넓히고 검색·태그·고급 조건을 풀어서
+        그 노트가 목록에서 선택된 채로 보이게 한다(노트가 없으면 아무것도 하지 않는다)."""
+        import random
+        notes = [n for n in self.all_notes if not n.get("trash")]
+        if not notes:
+            return
+        n = random.choice(notes)
+        self.flush()
+        self.nb = ALL
+        self.tag = None
+        self.tag_none = False
+        self.adv_conditions = []
+        self.q.set("")
+        if self.search_job:   # 검색어를 지우며 예약된 다시 검색은 취소한다(늦게 돌아 목록을 다시 그리지 않게)
+            self.root.after_cancel(self.search_job)
+            self.search_job = None
+        self.reload_notebooks()
+        self.refresh()
+        self.open_note(n)
+        # 목록은 조금씩 나눠 그리므로, 이 노트가 그려질 때까지 덩어리를 더 그린다
+        idx = next((i for i, m in enumerate(self.results) if m["path"] == n["path"]), None)
+        if idx is not None:
+            while self.rendered <= idx and self.rendered < len(self.results):
+                self.append_cards()
+        self.mark_selected()
+        a = next((a for a, _b, m in self.cards if m["path"] == n["path"]), None)
+        if a is not None:
+            self.lst.see(f"{a}.0")
