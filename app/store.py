@@ -1082,10 +1082,8 @@ class Store:
             count[0] += 1
             return rel + name
 
-        md = re.sub(r"(!\[[^\]]*\]\()data:(image/[a-z+.\-]+);base64,([A-Za-z0-9+/=]+)(\))",
-                    lambda m: m.group(1) + save(m.group(2), m.group(3)) + m.group(4), md, flags=re.I)
-        md = re.sub(r'(<img\b[^>]*?\bsrc=")data:(image/[a-z+.\-]+);base64,([A-Za-z0-9+/=]+)(")',
-                    lambda m: m.group(1) + save(m.group(2), m.group(3)) + m.group(4), md, flags=re.I)
+        # 그림 주소가 어떤 모양이든(![](…), 제목이 붙은 그림, [링크](…), <img src="…">) 'data:image/…;base64,…' 부분만 파일 경로로 바꾼다
+        md = re.sub(r"data:(image/[a-z+.\-]+);base64,([A-Za-z0-9+/=]+)", lambda m: save(m.group(1), m.group(2)), md, flags=re.I)
         return md, count[0]
 
     def add_media(self, src, nb):

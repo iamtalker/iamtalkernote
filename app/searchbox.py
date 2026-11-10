@@ -306,8 +306,13 @@ class SearchBoxMixin:
         self.open_and_reveal(n)
 
     def open_and_reveal(self, n):
-        """노트를 열고, 목록에서 그 노트를 선택해 보이게 한다(목록은 덩어리로 그리므로 그 노트가 그려질 때까지 더 그린다)"""
+        """노트를 열고, 목록에서 그 노트를 선택해 보이게 한다"""
         self.open_note(n)
+        self.reveal_current()
+
+    def reveal_current(self):
+        """지금 열린 노트를 목록에서 선택해 보이게 한다(목록은 덩어리로 그리므로 그 노트가 그려질 때까지 더 그린다)"""
+        n = self.cur
         idx = next((i for i, m in enumerate(self.results) if m["path"] == n["path"]), None)
         if idx is not None:
             while self.rendered <= idx and self.rendered < len(self.results):
@@ -318,12 +323,8 @@ class SearchBoxMixin:
             self.lst.see(f"{a}.0")
 
     def step_note(self, step):
-        """← → 단추: 목록에서 보고 있는 노트의 앞(-1)·뒤(+1) 노트를 연다(목록 순서 그대로, 끝이면 아무것도 하지 않는다)"""
-        if not self.cur:
-            return
-        idx = next((i for i, m in enumerate(self.results) if m["path"] == self.cur["path"]), None)
-        if idx is None:
-            return
-        j = idx + step
-        if 0 <= j < len(self.results):
-            self.open_and_reveal(self.results[j])
+        """← → 단추: 뒤로·앞으로 기록(이동 > 뒤로/앞으로)과 같은 노트로 간다. 랜덤으로 본 노트도 기록에 있다.
+        목록에서 그 노트를 선택해 보여 준다."""
+        self.go(step)
+        if self.cur:
+            self.reveal_current()

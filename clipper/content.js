@@ -666,6 +666,8 @@ function jcpBlobToDataUrl(blob) {
 // of bytes we already fetched ourselves, so this never hits canvas
 // cross-origin tainting.
 function jcpDownscaleImage(blob) {
+  // 움직이는 GIF 는 그대로 둔다(캔버스로 다시 그리면 첫 장면만 남는 JPEG 가 된다)
+  if (/^image\/gif$/i.test(blob.type)) return Promise.resolve(blob);
   const MAX_WIDTH = 1600;
   const MAX_HEIGHT = 30000;
   return new Promise((resolve) => {
@@ -728,6 +730,14 @@ function jcpFetchWithTimeout(url, options, timeoutMs) {
 // case — src isn't broken there, just a smaller/compressed variant (arca.live
 // does this); preferring it gets a better-quality clip, not a fix for a
 // missing image.
+// imgur 페이지 링크로 감싼 그림 → 원본 GIF 주소(i.imgur.com/ID.gif). 링크가 imgur 페이지가 아니면 null
+function jcpImgurGifUrl(img) {
+  const a = img.closest("a[href]");
+  if (!a) return null;
+  const m = /^https?:\/\/(?:www\.|i\.)?imgur\.com\/([A-Za-z0-9]{5,10})(?:\.[a-z]+)?$/i.exec(a.getAttribute("href") || "");
+  return m ? `https://i.imgur.com/${m[1]}.gif` : null;
+}
+
 function jcpRealImgUrl(img) {
   return (
     img.getAttribute("data-original") ||
@@ -966,6 +976,22 @@ async function jcpInlineImages(root, baseUrl) {
         blob = await jcpDownscaleImage(blob);
         return blob.size <= MAX_BYTES ? jcpBlobToDataUrl(blob) : null;
       };
+
+      const gifUrl = jcpImgurGifUrl(img);
+      if (gifUrl && !isMixedContent) {
+        try {
+          const res = await jcpFetchWithTimeout(gifUrl, { credentials: "omit" }, 20000);
+          if (res.ok) {
+            const gifBlob = await res.blob();
+            if (/^image\/gif$/i.test(gifBlob.type)) {
+              const gifData = await toDataUrl(gifBlob);
+              if (gifData) return { img, abs: gifUrl, dataUrl: gifData };
+            }
+          }
+        } catch (e) {
+          // 원본 GIF 를 못 받으면 아래 원래 방식으로 간다
+        }
+      }
 
       let dataUrl = null;
       if (!isMixedContent) {

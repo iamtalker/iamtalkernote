@@ -459,7 +459,7 @@ class App(EmbeddedMixin, DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin
         """'문서 내부 검색' 체크박스는 가져온 폴더가 있을 때만 보인다"""
         if self.docs.folders():
             if not self.opt_row.winfo_ismapped():
-                self.opt_row.pack(side="left", padx=(8, 0), before=self.nav_row)
+                self.opt_row.pack(side="left", padx=(8, 0), before=self.random_btn)
         else:
             self.opt_row.pack_forget()
 
