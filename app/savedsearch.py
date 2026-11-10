@@ -154,7 +154,7 @@ class SavedSearchMixin:
             elif key == ALL:
                 label, count, parent = tr("모든 파일"), len(self.all_notes) + sum(doc_counts.get(f["id"], 0) for f in dfolders), ""   # 노트 + 가져온 문서
             elif key == "":
-                label, count, parent = self.store.root_name, None, ""   # 저장 폴더 줄에는 숫자를 달지 않는다(아래 노트북들이 실제 내용)
+                label, count, parent = self.store.root_name, len(self.all_notes) or None, ""   # 저장 폴더 아래 전체 노트 수(바로 있는 노트 + 하위 노트북 노트, 하위 노트북 줄과 같은 방식)
             elif key == "@docs":
                 n_docs = sum(doc_counts.get(f["id"], 0) for f in dfolders)
                 label, count, parent = tr("가져온 폴더"), n_docs or None, ""

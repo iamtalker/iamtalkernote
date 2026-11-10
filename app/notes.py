@@ -23,6 +23,7 @@ from notelist import NoteListMixin  # noqa: E402   (노트: notelist.py)
 from savedsearch import SavedSearchMixin  # noqa: E402   (저장된: savedsearch.py)
 from notebooks import NotebooksMixin  # noqa: E402   (노트북과: notebooks.py)
 from toolsmenu import ToolsMenuMixin  # noqa: E402   (도구: toolsmenu.py)
+from embedded import EmbeddedMixin  # noqa: E402   (도구: 글자로 박힌 그림 일괄 분리: embedded.py)
 from menubar import MenuBarMixin  # noqa: E402   (메뉴줄(파일·편집·보기·이동·도구·도움말)을: menubar.py)
 from fontsui import FontsMixin  # noqa: E402   (글꼴과: fontsui.py)
 from outlinermix import OutlinerMixin  # noqa: E402   (아웃라이너·렌더링 글 고치기: outlinermix.py)
@@ -35,7 +36,7 @@ from clipmixin import ClipperServerMixin  # noqa: E402   (웹: clipmixin.py)
 from formattools import FormatToolsMixin  # noqa: E402   (서식: formattools.py)
 
 
-class App(DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin, DocFoldersMixin, FormatToolsMixin, ClipperServerMixin, NoteInfoMixin, OptionsMixin, RestorePointMixin, NoteIOMixin, RenderSyncMixin, OutlinerMixin, FontsMixin, MenuBarMixin, ToolsMenuMixin, NotebooksMixin, SavedSearchMixin, NoteListMixin, FavoritesMixin):
+class App(EmbeddedMixin, DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin, FindBarMixin, DocFoldersMixin, FormatToolsMixin, ClipperServerMixin, NoteInfoMixin, OptionsMixin, RestorePointMixin, NoteIOMixin, RenderSyncMixin, OutlinerMixin, FontsMixin, MenuBarMixin, ToolsMenuMixin, NotebooksMixin, SavedSearchMixin, NoteListMixin, FavoritesMixin):
     def __init__(self):
         global UI
         i18n.init(st.read_config().get("lang"))

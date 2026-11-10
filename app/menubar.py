@@ -86,6 +86,7 @@ class MenuBarMixin:
         m.add_command(label=tr("중복 노트 찾기…"), command=self.show_duplicates)
         m.add_command(label=tr("스크랩 군더더기 정리…"), command=self.show_cleanup)
         m.add_command(label=tr("안 쓰는 미디어 파일 정리…"), command=self.show_unused_media)
+        m.add_command(label=tr("본문의 글자 그림을 파일로 일괄 분리…"), command=self.show_embedded_images)
         mb.add_cascade(label=tr("도구"), menu=m)
 
         m = tk.Menu(mb, tearoff=0)
