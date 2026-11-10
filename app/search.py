@@ -214,6 +214,22 @@ def title_bonus(title, q):
     return 0
 
 
+class TitleIndex:
+    """본문 검색을 끈 노트용 색인: 검색식을 제목(과 태그)에만 맞춘다. 노트 본문은 읽지 않는다"""
+
+    def __init__(self, notes):
+        self.notes = notes
+
+    def query_hits(self, node, words, scoring=False):
+        hits = {}
+        for n in self.notes:
+            if "key" not in n:
+                continue
+            if match(node, n["title"].lower() + chr(10), n.get("tags", ())):
+                hits[n["key"]] = 1.0
+        return hits
+
+
 def run(notes, query="", sort="relevance", asc=False, date_from="", date_to="", index=None):
     """notes: [{title, mtime, ...}] → (정렬된 일치 목록, 강조할 단어들).
     index(색인 DB, store.Store)가 있으면 본문 검색을 DB 안에서 하고, 없으면 메모리의 본문으로 한다."""
@@ -257,6 +273,10 @@ def run(notes, query="", sort="relevance", asc=False, date_from="", date_to="", 
         out.sort(key=lambda n: n["title"].lower(), reverse=asc)   # 기본은 가나다순
     else:
         out.sort(key=lambda n: n["mtime"], reverse=not asc)
+    if words:
+        # 제목에 검색어가 있는 노트는 정렬 방식과 상관없이 항상 위에 둔다(내용에만 있는 노트보다 먼저). 각 묶음 안의 정렬은 그대로
+        lw = [w.lower() for w in words]
+        out = [n for n in out if any(w in n["title"].lower() for w in lw)] + [n for n in out if not any(w in n["title"].lower() for w in lw)]
     return out, words
 
 

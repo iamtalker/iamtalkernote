@@ -222,13 +222,20 @@ class NoteListMixin:
                             or self.dnorm(os.path.dirname(n["path"])).startswith(cur + os.sep)]
                 else:
                     pool = [n for n in pool if self.dnorm(os.path.dirname(n["path"])) == cur]
-        self.bad_dates = search.bad_dates(self.q.get(), self.d_from.get(), self.d_to.get()) + search.bad_advanced_dates(self.adv_conditions)
+        qtext = self.q.get() + ime.composing()   # 한글 입력기가 아직 확정하지 않은 마지막 글자도 검색에 넣는다(예: '로타' 의 '타')
+        self.bad_dates = search.bad_dates(qtext, self.d_from.get(), self.d_to.get()) + search.bad_advanced_dates(self.adv_conditions)
         if self.bad_dates:   # 날짜를 읽을 수 없으면 기간 없이 찾지 말고 비워서 알린다
             self.results, self.words = [], []
         else:
-            self.results, self.words = search.run(pool, self.q.get(), self.sort, self.asc, self.d_from.get(), self.d_to.get(),
-                                                  index=None if self.nb == TRASH else self.docs if self.nb.startswith("@doc") else
-                                                  docidx.Combined(self.store, self.docs) if self.scope_all() else self.store)
+            if self.nb == TRASH:
+                index = None
+            elif self.nb.startswith("@doc"):
+                index = self.docs
+            else:
+                # '문서 내부 검색'을 끄면 노트도 제목·태그에서만 찾는다(본문은 체크를 켰을 때만)
+                notes_index = self.store if self.docs.content_search else search.TitleIndex([n for n in pool if not isinstance(n, docidx.Doc)])
+                index = docidx.Combined(notes_index, self.docs) if self.scope_all() else notes_index
+            self.results, self.words = search.run(pool, qtext, self.sort, self.asc, self.d_from.get(), self.d_to.get(), index=index)
             if self.adv_conditions:
                 self.results = [n for n in self.results if search.advanced_match(n, self.adv_conditions, self.sort)]
         self.draw_list(keep_scroll=keep_page)

@@ -796,6 +796,17 @@ class DialogsMixin:
             title(p, tr("일반"), tr("노트를 저장하는 곳과 시작할 때의 보기를 정합니다."))
             lab(p, tr("노트와 그림을 저장하는 폴더는 설정 > 폴더 설정에서 바꿉니다."), fg=C["muted"], font=(self.ui, 9)).pack(anchor="w")
             hr(p)
+            lab(p, tr("검색"), font=(self.ui, 10, "bold")).pack(anchor="w")
+            sg = tk.BooleanVar(value=bool(st.read_config().get("searchSuggest", False)))
+
+            def set_suggest():
+                st.write_config(searchSuggest=sg.get())
+                self.ac_on = sg.get()   # 바로 적용
+                if not sg.get():
+                    self.ac_hide()
+            tk.Checkbutton(p, text=tr("검색할 때 제목·태그 자동완성 보기  (끄면 검색 결과만 보입니다)"), variable=sg, command=set_suggest,
+                           bg=C["bg"], activebackground=C["bg"], font=(self.ui, 10), selectcolor=C["bg"]).pack(anchor="w")
+            hr(p)
             lab(p, tr("위키 링크"), font=(self.ui, 10, "bold")).pack(anchor="w")
             wk = tk.BooleanVar(value=st.wiki_enabled())
 

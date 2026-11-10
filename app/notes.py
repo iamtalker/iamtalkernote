@@ -409,6 +409,9 @@ class App(EmbeddedMixin, DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin
         self.update_content_check()
         self.list_sep = tk.Frame(f, height=1, bg=C["line"])
         self.list_sep.pack(fill="x")
+        self.ac_gap = tk.Frame(f, bg=C["bg"])   # 자동완성 후보가 뜨면 이 자리에 들어가고, 아래의 노트 목록이 그만큼 밀려 내려간다
+        self.ac_gap.pack(fill="x")
+        self.ac_gap.pack_propagate(False)   # 높이는 후보 목록이 차지하는 만큼만 정한다
         self.folder_box = tk.Frame(f, bg=C["bg"])   # 노트북을 고르면 그 안의 하위 노트북(폴더)이 노트 목록 맨 위에 뜬다(누르면 그 노트북으로)
         self.nb_direct = {}
         body = self.list_body = tk.Frame(f, bg=C["bg"])

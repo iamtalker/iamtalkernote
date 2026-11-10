@@ -5,6 +5,7 @@ from notes_shared import *  # noqa: F401,F403
 
 class SearchBoxMixin:
     def ac_init(self):
+        self.ac_on = bool(st.read_config().get("searchSuggest", False))   # 설정 → 일반 → 검색: 기본은 꺼짐
         old = getattr(self, "ac_top", None)
         if old is not None:
             try:
@@ -83,7 +84,12 @@ class SearchBoxMixin:
             return
         if sig != self.ac_sig:
             self.ac_sig = sig
-            self.ac_show()
+            self.schedule_search()   # 조합 중인 글자가 바뀌어도 목록을 다시 찾는다(확정 전에도)
+            # 옵션(설정 → 일반 → 검색)이 켜져 있으면 치는 동안 후보를 보여 주고, 꺼져 있으면 후보 창을 띄우지 않아 검색 결과를 가리지 않는다
+            if self.ac_on:
+                self.ac_show()
+            else:
+                self.ac_hide()
 
     def search_history(self):
         return [h for h in st.read_config().get("searchHist", []) if isinstance(h, str)]
@@ -183,8 +189,8 @@ class SearchBoxMixin:
             lb.insert("end", label)
         lb.config(height=len(self.ac_items))
         box = self.search_entry.master
-        lb.place(in_=self.listf, x=box.winfo_rootx() - self.listf.winfo_rootx(),
-                 y=box.winfo_rooty() - self.listf.winfo_rooty() + box.winfo_height() + 1, width=box.winfo_width())
+        lb.pack(in_=self.ac_gap, fill="x")   # 후보 목록은 노트 목록 위 빈 칸에 들어가 결과를 밀어 내린다
+        self.ac_gap.configure(height=lb.winfo_reqheight())
         lb.lift()
 
     def ac_hide(self):
@@ -193,7 +199,8 @@ class SearchBoxMixin:
             self.ac_job = None
         self.ac_click = False
         if self.ac_list is not None:
-            self.ac_list.place_forget()
+            self.ac_list.pack_forget()
+            self.ac_gap.configure(height=1)   # 빈 칸을 다시 줄인다(0 은 Tk 에서 줄어들지 않아 1px): 노트 목록이 원래 위치로 돌아간다
         self.ac_items = []
 
     def ac_visible(self):
@@ -210,6 +217,8 @@ class SearchBoxMixin:
 
     def ac_down(self, ev=None):
         if not self.ac_visible():
+            if not getattr(self, "ac_on", False):   # 옵션이 꺼져 있으면 후보 창을 열지 않는다(기본)
+                return None
             self.ac_show()
             return "break"
         self.ac_move(1)
