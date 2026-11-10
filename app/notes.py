@@ -363,6 +363,16 @@ class App(EmbeddedMixin, DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin
         self.random_btn.configure(highlightthickness=1, highlightbackground=C["line"])
         self.random_btn.pack(side="left", padx=(7, 0))
         self.tip(self.random_btn, tr("랜덤 노트 열기"))
+        self.nav_row = tk.Frame(left_actions, bg=C["bg"])   # 목록 안에서 앞·뒤 노트로(문서 내부 검색 체크 오른쪽, 갱신 단추 쪽)
+        self.nav_row.pack(side="left", padx=(7, 0))
+        self.prev_btn = Btn(self.nav_row, "←", lambda: self.step_note(-1), pady=5, font=(self.ui, 11))
+        self.prev_btn.configure(highlightthickness=1, highlightbackground=C["line"])
+        self.prev_btn.pack(side="left")
+        self.next_btn = Btn(self.nav_row, "→", lambda: self.step_note(1), pady=5, font=(self.ui, 11))
+        self.next_btn.configure(highlightthickness=1, highlightbackground=C["line"])
+        self.next_btn.pack(side="left", padx=(4, 0))
+        self.tip(self.prev_btn, tr("이전 노트"))
+        self.tip(self.next_btn, tr("다음 노트"))
         self.v_content = tk.BooleanVar(value=self.docs.content_search)
         self.opt_row = tk.Frame(left_actions, bg=C["bg"])
         self.cb_content = tk.Checkbutton(self.opt_row, text=tr("문서 내부 검색"), variable=self.v_content, command=self.on_content_toggle, relief="flat",
@@ -449,7 +459,7 @@ class App(EmbeddedMixin, DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin
         """'문서 내부 검색' 체크박스는 가져온 폴더가 있을 때만 보인다"""
         if self.docs.folders():
             if not self.opt_row.winfo_ismapped():
-                self.opt_row.pack(side="left", padx=(8, 0))
+                self.opt_row.pack(side="left", padx=(8, 0), before=self.nav_row)
         else:
             self.opt_row.pack_forget()
 

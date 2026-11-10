@@ -303,8 +303,11 @@ class SearchBoxMixin:
             self.search_job = None
         self.reload_notebooks()
         self.refresh()
+        self.open_and_reveal(n)
+
+    def open_and_reveal(self, n):
+        """노트를 열고, 목록에서 그 노트를 선택해 보이게 한다(목록은 덩어리로 그리므로 그 노트가 그려질 때까지 더 그린다)"""
         self.open_note(n)
-        # 목록은 조금씩 나눠 그리므로, 이 노트가 그려질 때까지 덩어리를 더 그린다
         idx = next((i for i, m in enumerate(self.results) if m["path"] == n["path"]), None)
         if idx is not None:
             while self.rendered <= idx and self.rendered < len(self.results):
@@ -313,3 +316,14 @@ class SearchBoxMixin:
         a = next((a for a, _b, m in self.cards if m["path"] == n["path"]), None)
         if a is not None:
             self.lst.see(f"{a}.0")
+
+    def step_note(self, step):
+        """← → 단추: 목록에서 보고 있는 노트의 앞(-1)·뒤(+1) 노트를 연다(목록 순서 그대로, 끝이면 아무것도 하지 않는다)"""
+        if not self.cur:
+            return
+        idx = next((i for i, m in enumerate(self.results) if m["path"] == self.cur["path"]), None)
+        if idx is None:
+            return
+        j = idx + step
+        if 0 <= j < len(self.results):
+            self.open_and_reveal(self.results[j])
