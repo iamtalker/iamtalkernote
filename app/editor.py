@@ -243,6 +243,25 @@ def local_image_png(path, cache_dir=None, max_w=IMG_MAX_W):
     return out
 
 
+def load_scaled(path, max_w):
+    """파일 그림을 화면에 쓸 크기로 줄여 메모리로 읽는다 → PIL 그림(RGB 또는 RGBA). 뒤 쓰레드에서 부른다.
+    PNG 파일로 바꿔 저장했다가 Tk 가 다시 읽는 길(local_image_png)보다 훨씬 빠르다. JPEG 는 읽으면서 1/2·1/4·1/8 로 줄인다.
+    Pillow 가 없으면 ImportError, 못 읽는 형식이면 OSError"""
+    from PIL import Image
+    try:
+        with Image.open(path) as im:
+            im.seek(0)                                   # 움직이는 그림은 첫 장면
+            if max_w and im.format == "JPEG":
+                im.draft("RGB", (max_w, 1))              # 너비가 max_w 아래로 내려가지 않는 선에서 가장 작게 디코딩
+            alpha = im.mode in ("RGBA", "LA", "PA") or "transparency" in im.info
+            out = im.convert("RGBA" if alpha else "RGB")
+            if max_w and out.width > max_w:
+                out = out.resize((max_w, max(1, out.height * max_w // out.width)), Image.BICUBIC, reducing_gap=2.0)
+            return out
+    except Exception as e:  # noqa: BLE001  (깨진 파일·지원하지 않는 형식 등 Pillow 의 여러 예외)
+        raise OSError(f"그림을 읽지 못했습니다: {e}") from None
+
+
 def find_note(base_dir, page, depth=3):
     """링크 대상 문서가 같은 폴더(또는 아래 폴더)에 있으면 그 경로."""
     want = md_name(page).lower()

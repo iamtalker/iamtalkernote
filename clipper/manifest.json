@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Joplin Clipper Plus",
-  "version": "0.54.0",
+  "version": "0.54.1",
   "description": "Evernote-style web clipper for Joplin: simplified article, full page, selection, and bookmark capture.",
   "permissions": ["activeTab", "scripting", "storage"],
   "host_permissions": ["http://127.0.0.1/*", "http://localhost/*", "<all_urls>"],

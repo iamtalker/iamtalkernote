@@ -978,13 +978,15 @@ async function jcpInlineImages(root, baseUrl) {
       };
 
       const gifUrl = jcpImgurGifUrl(img);
-      if (gifUrl && !isMixedContent) {
+      // 원본 GIF 주소는 https 로 만들어 받으므로(페이지 주소가 http 인 그림이어도) 혼합 콘텐츠 검사 대상이 아니다
+      if (gifUrl) {
         try {
           const res = await jcpFetchWithTimeout(gifUrl, { credentials: "omit" }, 20000);
           if (res.ok) {
             const gifBlob = await res.blob();
-            if (/^image\/gif$/i.test(gifBlob.type)) {
-              const gifData = await toDataUrl(gifBlob);
+            // 원본 GIF 는 용량 상한을 따로 둔다(움직이는 그림은 크기를 줄이면 안 되므로 6MB 상한 대신 20MB)
+            if (/^image\/gif$/i.test(gifBlob.type) && gifBlob.size <= 20 * 1024 * 1024) {
+              const gifData = await jcpBlobToDataUrl(gifBlob);
               if (gifData) return { img, abs: gifUrl, dataUrl: gifData };
             }
           }

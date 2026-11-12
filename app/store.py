@@ -425,27 +425,38 @@ class Store:
         return p
 
     # ---- 노트북 (하위 노트북 = 하위 폴더. 경로는 항상 "a/b" 모양)
-    def notebooks(self):
-        """모든 노트북의 상대 경로(부모 바로 뒤에 자식이 오는 순서)"""
-        out = []
+    def scan_tree(self):
+        """저장 폴더를 한 번만 훑는다 → (노트북 상대 경로들(부모 바로 뒤에 자식), {노트북 경로: 그 폴더 바로 아래의 .md 항목(DirEntry)들}).
+        폴더인지 파일인지는 훑으면서 함께 얻으므로(윈도) 항목마다 따로 묻지 않는다. 노트가 수만 개면 이 차이가 크다."""
+        books, files = [], {}
         media = os.path.normcase(self.media_dir)
 
-        def walk(rel):
+        def walk(rel, d):
+            subs, mds = [], []
             try:
-                names = sorted(os.listdir(self.nb_dir(rel)), key=str.lower)
+                with os.scandir(d) as it:
+                    for e in it:
+                        try:
+                            if e.is_dir():
+                                if not e.name.startswith(".") and e.name != LEGACY_MEDIA_DIR and os.path.normcase(e.path) != media:
+                                    subs.append(e)
+                            elif e.name.lower().endswith(".md") and e.is_file():
+                                mds.append(e)
+                        except OSError:
+                            continue
             except OSError:
                 return
-            for name in names:
-                if name.startswith(".") or name == LEGACY_MEDIA_DIR:
-                    continue
-                path = f"{rel}/{name}" if rel else name
-                if os.path.normcase(self.nb_dir(path)) == media:
-                    continue
-                if os.path.isdir(self.nb_dir(path)):
-                    out.append(path)
-                    walk(path)
-        walk("")
-        return out
+            files[rel] = mds
+            for e in sorted(subs, key=lambda e: e.name.lower()):
+                path = f"{rel}/{e.name}" if rel else e.name
+                books.append(path)
+                walk(path, e.path)
+        walk("", self.root)
+        return books, files
+
+    def notebooks(self):
+        """모든 노트북의 상대 경로(부모 바로 뒤에 자식이 오는 순서)"""
+        return self.scan_tree()[0]
 
     def create_notebook(self, name, parent=""):
         name = (name or "").strip()
@@ -801,7 +812,7 @@ class Store:
         본문은 읽지 않는다. 전체 목록('*')은 색인 DB 와 비교해서, 크기·수정 시각이 그대로인 파일은 다시 읽지 않고
         바뀌었거나 새로 생긴 파일만 읽어 색인한다(노트가 수만 개여도 시작이 빠르다).
         progress(읽은 수, 읽을 총 수) 는 처음 색인을 만들 때 진행 상황을 알린다."""
-        books = self.notebooks()
+        books, files = self.scan_tree()   # 노트북 목록과 노트 파일을 한 번에(따로 훑으면 같은 폴더를 두 번 읽는다)
         if nb == "*":
             scopes = [""] + books
         elif nb == "":
@@ -812,20 +823,11 @@ class Store:
         full = nb == "*"
         entries = []
         for s in scopes:
-            try:
-                it = os.scandir(self.nb_dir(s))
-            except OSError:
-                continue
-            with it:
-                for e in it:
-                    if not e.name.lower().endswith(".md"):
-                        continue
-                    try:
-                        if not e.is_file():
-                            continue
-                        entries.append((f"{s}/{e.name}" if s else e.name, s, e.name, e.path, e.stat()))
-                    except OSError:
-                        continue
+            for e in files.get(s, ()):
+                try:
+                    entries.append((f"{s}/{e.name}" if s else e.name, s, e.name, e.path, e.stat()))
+                except OSError:
+                    continue
         info, conn = {}, None
         if full:
             conn = self._db()
@@ -882,6 +884,7 @@ class Store:
                             mtime=upd or stt.st_mtime,                                  # 수정 시각: 머리말 updated, 없으면 파일
                             ctime=cre or upd or stt.st_mtime, created_known=bool(cre),  # 폰과 같은 기준. 기기별 파일 생성일은 쓰지 않는다.
                             tags=tags))
+        self.books_seen = (out, books)   # 이 목록을 읽을 때 함께 본 노트북들: 목록을 받은 쪽이 노트북 칸을 그릴 때 또 훑지 않게
         return out
 
     def note_external(self, changed, gone):

@@ -218,15 +218,25 @@ class RenderSyncMixin:
                 except Exception as ex:  # noqa: BLE001
                     self.img_q.put((url, "fail", str(getattr(ex, "reason", None) or ex)))
             threading.Thread(target=job, daemon=True).start()
-            self.root.after(150, self.poll_images)
+            self.watch_images()
             return None
         return s[1] if s[0] == "ok" else None
 
+    def watch_images(self, ms=60):
+        """뒤에서 읽는 그림이 끝났는지 곧 확인한다. 이미 예약돼 있으면 또 걸지 않는다(그림마다 타이머가 하나씩 늘지 않게)"""
+        if not getattr(self, "_img_poll_job", None):
+            self._img_poll_job = self.root.after(ms, self.poll_images)
+
     def poll_images(self):
+        self._img_poll_job = None
         changed = remote_changed = False
         try:
             while True:
                 url, kind, val = self.img_q.get_nowait()
+                if url.startswith("local:"):   # 파일 그림: 화면용 그림으로 만들어 기억하고, 읽어 온 원본은 바로 놓는다
+                    if kind == "ok" and not self.keep_local_photo(url, val):
+                        kind, val = "fail", "그림을 화면에 올리지 못했습니다"
+                    val = None if kind == "ok" else val
                 self.imgs[url] = (kind, val)
                 changed = True
                 remote_changed |= not url.startswith("local:")
@@ -236,7 +246,7 @@ class RenderSyncMixin:
         if changed and (remote_changed or not local_pending):
             self.render()
         if any(v[0] == "pending" for v in self.imgs.values()):
-            self.root.after(200, self.poll_images)
+            self.watch_images(80)
 
     def on_view_click(self, e):
         self.view.focus_set()   # 클릭하면 키보드(PageUp/PageDown, 방향키)가 이 화면에 먹히게

@@ -361,9 +361,10 @@ class NoteIOMixin:
         self.cur["mtime"] = time.time()
         self.cur["tags"] = note_tags(body)
         self.cur.pop("_hay", None)
+        self.cur.pop("_snip", None)
         if self.cur["tags"] != old_tags:
             self.reload_tags()
-        self.refresh(keep_page=True)
+        self.refresh_saved()
         self.update_status(tr("저장됨 ") + time.strftime("%H:%M:%S"))
 
     def update_status(self, extra=""):
@@ -570,7 +571,8 @@ class NoteIOMixin:
             return self.status.config(text=tr("렌더링 오류: ") + str(ex))
         # 그림 변환이 아직 끝나지 않았으면 그리지 않고 기다린다. 글자 칩으로 한 번 그린 뒤 그림으로 또 바꾸면
         # 화면이 두 번 뒤바뀌어 번쩍이기 때문이다. 너무 오래 기다리면(1.5초) 그냥 그린다.
-        pending = any(e and e[0] == "img" and self.img_pending(e) for _, _, e in segs)
+        # 목록으로 다 훑는다(any 에 바로 넣으면 첫 그림에서 멈춰서, 그림을 한 장씩 차례로만 읽기 시작한다)
+        pending = any([e and e[0] == "img" and self.img_pending(e) for _, _, e in segs])
         now = time.monotonic()
         if pending:
             since = getattr(self, "_img_hold_since", None)
@@ -592,13 +594,4 @@ class NoteIOMixin:
         width = extra[3] if len(extra) > 3 else 0
         avail = self.img_avail()
         target = min(width, avail) if width else avail
-        try:
-            st = os.stat(path)
-        except OSError:
-            return False
-        key = f"local:{os.path.normcase(os.path.abspath(path))}:{st.st_mtime_ns}:{st.st_size}:{target}"
-        state = self.imgs.get(key)
-        if state is None:
-            self.local_image_photo(path, target)   # 변환을 시작한다(끝나면 poll_images 가 다시 그린다)
-            return True
-        return state[0] == "pending"
+        return self.local_image_waiting(path, target)   # 아직 안 읽었으면 지금 읽기 시작한다(끝나면 poll_images 가 다시 그린다)

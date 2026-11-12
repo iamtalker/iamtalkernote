@@ -113,7 +113,8 @@ class App(EmbeddedMixin, DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin
         self.resize_job = None        # 렌더링 칸 너비가 바뀐 뒤 그림 크기를 다시 맞추는 예약
         self.img_w_used, self.has_imgs = None, False   # 마지막으로 그릴 때 쓴 그림 너비 / 그 글에 그림이 있는지
         self.imgs, self.img_q, self.photos = {}, queue.Queue(), []
-        self.local_img_q, self.local_img_lock, self.local_img_worker = queue.Queue(), threading.Lock(), False
+        self.local_img_q, self.local_img_lock, self.local_img_workers = queue.Queue(), threading.Lock(), 0
+        self.photo_cache, self.photo_used = collections.OrderedDict(), set()   # 화면용으로 줄여 둔 그림(키 → PhotoImage) / 마지막으로 그릴 때 쓴 키
         self.gif_jobs, self.gif_sources, self.gif_generation = set(), [], 0
         self.multi = {}       # 목록에서 Shift/Ctrl+클릭으로 고른 노트들 {경로: 노트} (한 개만 고르면 비어 있다)
         self.anchor = None    # Shift+클릭 범위의 시작 노트 경로

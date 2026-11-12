@@ -2,6 +2,7 @@
 notes.py 의 머리에서 그대로 옮겨 왔다(동작 변경 없음). UI 글꼴 이름은 App 이 정해 이 모듈의 UI 도 같이 바꾼다."""
 import base64
 import bisect
+import collections
 import hashlib
 import math
 import os

@@ -655,16 +655,40 @@ def st_decode(data):
 
 
 def _source_url(text):
-    import re
-    m = re.search(r"^source:\s*(\S+)", text[:2000], re.M)
-    return m.group(1) if m else None
+    """노트의 출처 주소. 머리말의 긴 주소(source: >- 다음 줄)·따옴표·'원본:' 줄도 읽는다(store.note_source 와 같은 규칙)"""
+    return st.note_source(text) or None
+
+
+def scrap_url_key(url):
+    """출처 주소를 짝 맞추기용으로 줄인다 → (호스트, 경로, 질의). http/https, www.·m. 머리, 끝의 /, # 뒤는 무시한다.
+    다시 받으면 주소가 http → https 로 바뀌거나 모바일 주소로 열리는 일이 흔해서 글자 그대로 비교하면 짝을 못 찾는다."""
+    s = urlsplit((url or "").strip())
+    host = re.sub(r"^(?:www|m|mobile)\.", "", s.netloc.lower())
+    return host, s.path.rstrip("/"), s.query
+
+
+def _id_like_query(query):
+    """질의에 글 번호처럼 보이는 값(숫자가 든 4글자 이상)이 있는가. ?s=09 · ?iskin=webzine 같은 꼬리표는 글을 가리키지 않는다"""
+    return any(len(v) >= 4 and re.search(r"\d", v) for _k, v in parse_qsl(query))
+
+
+def _titles_alike(a, b):
+    """두 제목에 길게 겹치는 부분이 있는가(공백·기호·대소문자 무시, 짧은 쪽의 60% 이상이고 4글자 이상)"""
+    from difflib import SequenceMatcher
+    ka, kb = (re.sub(r"[\W_]+", "", x or "").lower() for x in (a, b))
+    if not ka or not kb:
+        return False
+    size = SequenceMatcher(None, ka, kb, autojunk=False).find_longest_match(0, len(ka), 0, len(kb)).size
+    return size >= max(4, 0.6 * min(len(ka), len(kb)))
 
 
 def empty_scraps(notes, progress=None, cancelled=lambda: False):
-    """출처 주소(source:)가 있는 스크랩 중 본문이 거의 없는 노트와, 같은 주소로 내용이 채워진 노트 짝을 찾는다.
-    → (빈 노트 [(노트, 주소)…], 다시 채워진 짝 [빈 노트…])"""
+    """출처 주소(source:)가 있는 스크랩 중 본문이 거의 없는 노트와, 같은 글을 다시 받아 내용이 채워진 노트 짝을 찾는다.
+    → (빈 노트 [(노트, 주소)…], 다시 채워진 짝 [(빈 노트, 채워진 노트)…])
+    짝은 ① 호스트·경로·질의가 같을 때. 다만 주소가 글 하나를 가리키지 않으면(질의도 없고 경로에 숫자도 없는 카페 첫 화면 등) 제목도 비슷해야 한다.
+    ② 사이트가 주소 모양을 바꿔 경로만 달라졌을 때: 호스트와 글 번호가 든 질의가 같고 제목도 비슷해야 한다."""
     empties = []
-    filled_urls = set()
+    exact, by_query = {}, {}
     total = len(notes) or 1
     for i, n in enumerate(notes):
         if cancelled():
@@ -682,6 +706,20 @@ def empty_scraps(notes, progress=None, cancelled=lambda: False):
         if _words_without_images(text) <= 2 and not _image_refs(text):
             empties.append((n, url))
         else:
-            filled_urls.add(url)
-    repaired = [n for n, url in empties if url in filled_urls]
+            host, path, query = scrap_url_key(url)
+            if host:
+                exact.setdefault((host, path, query), []).append(n)
+                if _id_like_query(query):
+                    by_query.setdefault((host, query), []).append(n)
+    repaired = []
+    for n, url in empties:
+        host, path, query = scrap_url_key(url)
+        if not host:
+            continue
+        specific = bool(query) or bool(re.search(r"\d", path))
+        twin = next((x for x in exact.get((host, path, query), []) if specific or _titles_alike(n["title"], x["title"])), None)
+        if twin is None and _id_like_query(query):
+            twin = next((x for x in by_query.get((host, query), []) if _titles_alike(n["title"], x["title"])), None)
+        if twin is not None:
+            repaired.append((n, twin))
     return empties, repaired

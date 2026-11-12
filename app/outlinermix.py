@@ -41,6 +41,7 @@ class OutlinerMixin:
         v.delete("1.0", "end")
         self.links.clear()
         self.photos.clear()
+        self.photo_used = set()
         self.img_files.clear()
         vmap, w_off, s_off = [], 0, 0        # 화면 위치(w) ↔ 렌더링 글 위치(s): 렌더링만으로는 원문 위치를 몰라서 블록 맞추기에 쓴다
         wiki, widx = self.wiki_on(), None
@@ -91,6 +92,7 @@ class OutlinerMixin:
         self.view_w0 = [m[0] for m in vmap]
         self.view_s0 = [m[2] for m in vmap]
         self.view_total_s = s_off
+        self.trim_photo_cache()
         v.tk.call(v._w, "sync")
         top_view = self.s2w(top_source) if top_source is not None else None
         if top_view is not None:
@@ -262,44 +264,95 @@ class OutlinerMixin:
         except (tk.TclError, OSError):
             return None
 
+    LOCAL_IMG_WORKERS = 4            # 그림을 동시에 읽는 쓰레드 수
+    PHOTO_CACHE_PIXELS = 40_000_000  # 지금 글에 쓰지 않는 그림을 기억해 두는 한도(화소 수, 약 160MB)
+
+    @staticmethod
+    def local_image_key(path, stat, target):
+        return f"local:{os.path.normcase(os.path.abspath(path))}:{stat.st_mtime_ns}:{stat.st_size}:{target}"
+
     def local_image_photo(self, path, target):
-        """파일 그림을 작은 PNG 캐시로 뒤에서 바꾼 뒤 화면에 올린다."""
+        """파일 그림을 뒤에서 화면 크기로 줄여 읽은 뒤 화면에 올린다.
+        한 번 읽은 그림은 기억해 두어, 다시 그릴 때(글을 고칠 때·같은 글을 다시 열 때) 또 읽지 않는다."""
         try:
             stat = os.stat(path)
         except OSError:
             return None
-        key = f"local:{os.path.normcase(os.path.abspath(path))}:{stat.st_mtime_ns}:{stat.st_size}:{target}"
+        key = self.local_image_key(path, stat, target)
+        photo = self.photo_cache.get(key)
+        if photo is not None:
+            self.photo_cache.move_to_end(key)
+            self.photo_used.add(key)
+            return photo
         state = self.imgs.get(key)
-        if state is None:
+        if state is None or state[0] == "ok":   # 처음 보는 그림이거나, 기억에서 밀려난 그림: 뒤에서 (다시) 읽는다
             self.imgs[key] = ("pending",)
             with self.local_img_lock:
                 self.local_img_q.put((key, path, target))
-                if not self.local_img_worker:
-                    self.local_img_worker = True
+                if self.local_img_workers < self.LOCAL_IMG_WORKERS:
+                    self.local_img_workers += 1
                     threading.Thread(target=self.convert_local_images, daemon=True).start()
-            self.root.after(150, self.poll_images)
-            return None
-        if state[0] != "ok":
-            return None
-        return self.photo_from_file(state[1], target)
+            self.watch_images()
+        return None
+
+    def local_image_waiting(self, path, target):
+        """이 파일 그림을 아직 화면에 올릴 수 없는가(읽는 중이거나 읽기를 지금 시작했다). 읽지 못한 그림은 False(글자 칩으로 남는다)"""
+        try:
+            stat = os.stat(path)
+        except OSError:
+            return False
+        key = self.local_image_key(path, stat, target)
+        if key in self.photo_cache:
+            return False
+        state = self.imgs.get(key)
+        if state is not None and state[0] == "fail":
+            return False
+        if state is None or state[0] == "ok":
+            self.local_image_photo(path, target)
+        return True
 
     def convert_local_images(self):
         while True:
+            with self.local_img_lock:   # 넣는 쪽과 같은 잠금 안에서 꺼내야, 비어서 끝내는 순간에 들어온 일이 남겨지지 않는다
+                try:
+                    key, path, target = self.local_img_q.get_nowait()
+                except queue.Empty:
+                    self.local_img_workers -= 1
+                    return
             try:
-                key, path, target = self.local_img_q.get(timeout=0.1)
-            except queue.Empty:
-                with self.local_img_lock:
-                    if self.local_img_q.empty():
-                        self.local_img_worker = False
-                        return
-                continue
-            try:
-                result = ed.local_image_png(path, max_w=target)
+                try:
+                    result = ed.load_scaled(path, target)             # 줄인 그림을 메모리로(빠른 길)
+                except (ImportError, OSError):
+                    result = ed.local_image_png(path, max_w=target)   # Pillow 가 없거나 못 읽는 형식: PNG 파일로 바꿔서
                 self.img_q.put((key, "ok", result))
             except Exception as ex:  # noqa: BLE001
                 self.img_q.put((key, "fail", str(ex)))
-            finally:
-                self.local_img_q.task_done()
+
+    def keep_local_photo(self, key, result):
+        """뒤에서 읽어 온 그림(PIL 그림 또는 PNG 파일 경로)을 화면용 PhotoImage 로 만들어 기억한다(화면 쓰레드). 못 만들면 False"""
+        try:
+            if isinstance(result, str):
+                photo = tk.PhotoImage(file=result)
+            else:
+                from PIL import ImageTk
+                photo = ImageTk.PhotoImage(result, master=self.view)
+        except (tk.TclError, OSError, ValueError, ImportError):
+            return False
+        self.photo_cache[key] = photo
+        self.photo_cache.move_to_end(key)
+        return True
+
+    def trim_photo_cache(self):
+        """기억해 둔 그림이 한도를 넘으면 오래된 것부터 잊는다.
+        지금 화면에 그린 그림은 잊지 않는다(잊으면 다시 그릴 때마다 읽고 잊기를 되풀이한다)."""
+        total = sum(p.width() * p.height() for p in self.photo_cache.values())
+        for key in list(self.photo_cache):
+            if total <= self.PHOTO_CACHE_PIXELS:
+                break
+            if key in self.photo_used:
+                continue
+            p = self.photo_cache.pop(key)
+            total -= p.width() * p.height()
 
     def stop_gifs(self):
         self.gif_generation += 1

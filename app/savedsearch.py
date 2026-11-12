@@ -93,7 +93,10 @@ class SavedSearchMixin:
 
     def visible_notebooks(self):
         """노트북 목록에 보일 폴더: 달력 마크다운 폴더(달력/)는 '바로가기 > 달력·할일' 로만 들어가므로 뺀다"""
-        return [n for n in self.store.notebooks() if n != pm.MD_DIR and not n.startswith(pm.MD_DIR + "/")]
+        books, self._books_once = getattr(self, "_books_once", None), None   # 노트 목록을 읽으며 이미 훑었으면 그것을 한 번만 쓴다
+        if books is None:
+            books = self.store.notebooks()
+        return [n for n in books if n != pm.MD_DIR and not n.startswith(pm.MD_DIR + "/")]
 
     def reload_notebooks(self):
         names = self.visible_notebooks()

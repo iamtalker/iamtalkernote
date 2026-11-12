@@ -81,7 +81,12 @@ class NoteListMixin:
         self.cur = next((n for n in self.notes if n["path"] == keep), None) if keep else None
         if keep and self.cur is None and self.doc_open:   # 보던 가져온 문서가 목록에서 사라졌으면 미리보기도 닫는다
             self.close_note()
-        self.reload_notebooks()
+        seen = getattr(self.store, "books_seen", None)
+        self._books_once = seen[1] if seen and seen[0] is loaded else None   # 방금 이 목록과 함께 훑은 노트북들(다른 목록의 것이면 쓰지 않는다)
+        try:
+            self.reload_notebooks()
+        finally:
+            self._books_once = None
         self.reload_tags()
         self.refresh(keep_page=keep_scroll)
 
@@ -199,11 +204,88 @@ class NoteListMixin:
     def schedule_search(self):
         if self.search_job:
             self.root.after_cancel(self.search_job)
-        self.search_job = self.root.after(180, self.refresh)
+        self.search_gen = getattr(self, "search_gen", 0) + 1   # 뒤에서 돌고 있는 이전 검색의 결과는 버린다
+        self.search_job = self.root.after(180, self.search_bg)
+
+    def search_index(self, pool):
+        """지금 범위에서 검색에 쓸 색인(휴지통은 None: 메모리의 본문으로 찾는다)"""
+        if self.nb == TRASH:
+            return None
+        if self.nb.startswith("@doc"):
+            return self.docs
+        # '문서 내부 검색'을 끄면 노트도 제목·태그에서만 찾는다(본문은 체크를 켰을 때만)
+        notes_index = self.store if self.docs.content_search else search.TitleIndex([n for n in pool if not isinstance(n, docidx.Doc)])
+        return docidx.Combined(notes_index, self.docs) if self.scope_all() else notes_index
+
+    def hits_key(self, qtext):
+        """색인 DB 를 훑는 검색(본문 검색)인지, 그렇다면 찾은 결과를 다시 써도 되는지 가리는 열쇠 → (검색식, 점수 여부, 범위 종류, 노트 목록).
+        검색어가 없거나 색인을 훑지 않는 검색(휴지통, 제목만 찾기)이면 None"""
+        q = search.split_date(qtext.strip())[0]
+        node = search.parse(q) if q else None
+        if node is None or self.nb == TRASH or not self.docs.content_search:
+            return None
+        kind = "docs" if self.nb.startswith("@doc") else "all" if self.scope_all() else "notes"
+        return node, self.sort == "relevance", kind, id(self.all_notes)
+
+    def search_bg(self):
+        """입력 중 검색: 색인 훑기(본문 사본 전체를 읽어 0.2~0.5초 걸린다)를 뒤 쓰레드에서 하고, 끝나면 그 결과로 목록을 그린다.
+        그동안 화면이 멈추지 않아 글자가 끊기지 않는다. 색인을 훑지 않는 검색은 바로 그린다."""
+        self.search_job = None
+        key = self.hits_key(self.q.get() + ime.composing())
+        if key is None:
+            return self.refresh()
+        index = self.search_index(())
+        node, scoring = key[0], key[1]
+        words = search.positive_words(node)
+        self.search_gen = gen = getattr(self, "search_gen", 0) + 1
+        box = queue.Queue()
+
+        def work():
+            try:
+                box.put(index.query_hits(node, words, scoring=scoring))
+            except Exception:  # noqa: BLE001  (못 찾으면 화면 쓰레드에서 예전처럼 다시 찾는다)
+                box.put(None)
+        threading.Thread(target=work, daemon=True).start()
+
+        def poll():
+            if gen != self.search_gen:
+                return                                # 그 사이 검색어가 바뀌었거나 다른 곳에서 목록을 다시 그렸다
+            try:
+                hits = box.get_nowait()
+            except queue.Empty:
+                return self.root.after(15, poll)
+            self._hits_ready = (key, hits) if hits is not None else None
+            try:
+                self.refresh()
+            finally:
+                self._hits_ready = None
+        self.root.after(15, poll)
+
+    def refresh_saved(self):
+        """자동 저장 뒤의 목록 갱신. 본문 검색 중이면 색인을 다시 훑지 않고 직전 검색 결과에서 방금 저장한 노트만 다시 맞춰 본다
+        (저장할 때마다 본문 사본 전체를 훑으면 글을 쓰는 동안 화면이 계속 멈춘다)."""
+        key = self.hits_key(self.q.get() + ime.composing())
+        last = getattr(self, "_last_hits", None)
+        n = self.cur
+        if key is not None and last and last[0] == key and n and "key" in n and not isinstance(n, docidx.Doc):
+            node, scoring, hits = key[0], key[1], last[1]
+            body = n["body"]
+            hay = (n["title"] + "\n" + (st.DATA_IMG.sub(" ", body) if "base64," in body else body)).lower()   # 색인에 넣는 글과 같은 모양
+            if search.match(node, hay, n.get("tags", ())):
+                ws = [w for w in search.positive_words(node) if w]
+                hits[n["key"]] = 1000 * sum(hay.count(w) for w in ws) / max(1, len(hay)) if scoring else 0.0
+            else:
+                hits.pop(n["key"], None)
+            self._hits_ready = (key, hits)
+        try:
+            self.refresh(keep_page=True)
+        finally:
+            self._hits_ready = None
 
     def refresh(self, keep_page=False):
         """검색·정렬을 다시 하고 목록을 그린다. keep_page=True 는 자동 저장 때처럼 보던 자리를 유지"""
         self.search_job = None
+        self.search_gen = getattr(self, "search_gen", 0) + 1   # 뒤에서 돌고 있는 검색이 있으면 그 결과는 버린다
         if self.tag_none:
             pool = [n for n in self.notes if not n["tags"]]
         elif self.tag:
@@ -227,15 +309,13 @@ class NoteListMixin:
         if self.bad_dates:   # 날짜를 읽을 수 없으면 기간 없이 찾지 말고 비워서 알린다
             self.results, self.words = [], []
         else:
-            if self.nb == TRASH:
-                index = None
-            elif self.nb.startswith("@doc"):
-                index = self.docs
-            else:
-                # '문서 내부 검색'을 끄면 노트도 제목·태그에서만 찾는다(본문은 체크를 켰을 때만)
-                notes_index = self.store if self.docs.content_search else search.TitleIndex([n for n in pool if not isinstance(n, docidx.Doc)])
-                index = docidx.Combined(notes_index, self.docs) if self.scope_all() else notes_index
+            index = self.search_index(pool)
+            key = self.hits_key(qtext) if index is not None else None
+            if key is not None:   # 색인을 훑는 검색: 미리 찾아 둔 결과가 이 검색의 것이면 그것을 쓰고, 아니면 지금 찾아서 기억한다
+                ready = getattr(self, "_hits_ready", None)
+                index = search.HitsOnce(index, ready[1] if ready and ready[0] == key else None)
             self.results, self.words = search.run(pool, qtext, self.sort, self.asc, self.d_from.get(), self.d_to.get(), index=index)
+            self._last_hits = (key, index.hits) if key is not None and index.hits is not None else None
             if self.adv_conditions:
                 self.results = [n for n in self.results if search.advanced_match(n, self.adv_conditions, self.sort)]
         self.draw_list(keep_scroll=keep_page)
@@ -349,7 +429,10 @@ class NoteListMixin:
                 if isinstance(n, docidx.Doc) and not self.docs.content_search:   # 본문을 찾지 않았으니 글 대신 경로를 보여 준다
                     L.insert("end", n["path"] + "\n", "snip")
                 else:
-                    L.insert("end", search.snippet(n.read(), self.words) + "\n", "snip")
+                    snip, wkey = n.get("_snip"), tuple(self.words)
+                    if not snip or snip[0] != wkey:   # 같은 검색어로 다시 그릴 때(자동 저장·이어 그리기) 파일을 또 읽지 않는다
+                        snip = n["_snip"] = (wkey, search.snippet(n.read(), self.words))
+                    L.insert("end", snip[1] + "\n", "snip")
                 lines = 3
             else:            # 평소에는 제목과 날짜만
                 L.insert("end", meta + "\n", ("meta", "pad"))

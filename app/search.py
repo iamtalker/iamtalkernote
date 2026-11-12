@@ -231,6 +231,19 @@ class TitleIndex:
         return hits
 
 
+class HitsOnce:
+    """색인을 감싸 query_hits 결과를 기억한다. hits 를 미리 주면 색인을 훑지 않고 그것을 돌려준다
+    (뒤 쓰레드에서 미리 찾아 둔 결과, 자동 저장 뒤에 다시 쓰는 결과)."""
+
+    def __init__(self, index, hits=None):
+        self.index, self.hits = index, hits
+
+    def query_hits(self, node, words, scoring=False):
+        if self.hits is None:
+            self.hits = self.index.query_hits(node, words, scoring)
+        return self.hits
+
+
 def run(notes, query="", sort="relevance", asc=False, date_from="", date_to="", index=None):
     """notes: [{title, mtime, ...}] → (정렬된 일치 목록, 강조할 단어들).
     index(색인 DB, store.Store)가 있으면 본문 검색을 DB 안에서 하고, 없으면 메모리의 본문으로 한다."""

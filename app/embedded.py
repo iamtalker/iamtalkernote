@@ -249,25 +249,59 @@ class EmbeddedMixin:
         lb.config(yscrollcommand=sb.set)
         sb.pack(side="right", fill="y")
         lb.pack(side="left", fill="both", expand=True)
-        for n, url in empties:
-            lb.insert("end", f"{n['title'][:50]}   {url[:70]}")
-        state = {"next": 0}
+        state = {"empties": empties, "repaired": repaired, "opened": set()}   # opened: 브라우저로 연 빈 노트의 경로
+        info = tk.Label(top, text="", bg=C["bg"], fg=C["text"], font=(self.ui, 10), anchor="w", padx=16)
+
+        def render():
+            done = {n["path"] for n, _twin in state["repaired"]}
+            lb.delete(0, "end")
+            for n, url in state["empties"]:
+                mark = tr("[채워짐] ") if n["path"] in done else tr("[열었음] ") if n["path"] in state["opened"] else ""
+                lb.insert("end", f"{mark}{n['title'][:50]}   {url[:70]}")
+            left = sum(1 for n, _u in state["empties"] if n["path"] not in state["opened"] and n["path"] not in done)
+            top.title(tr("빈 스크랩 다시 받기 — {0:,}개").format(len(state["empties"])))
+            info.config(text=tr("빈 노트 {0:,}개 · 다시 채워진 것 {1:,}개 · 아직 안 연 것 {2:,}개").format(len(state["empties"]), len(done), left))
+
+        def rescan(after=None):
+            """노트를 다시 훑어 목록을 지금 상태로 맞춘다(창을 연 뒤에 받은 스크랩도 짝으로 잡힌다)"""
+            def got(result):
+                if not top.winfo_exists():
+                    return
+                state["empties"], state["repaired"] = result
+                render()
+                top.lift()
+                if after:
+                    after()
+            self.scan_notes(tr("빈 스크랩 다시 받기"), lambda notes, prog, cancel: cleanup.empty_scraps(notes, prog, cancel), got)
+
         def open_next():
             import webbrowser
-            batch = empties[state["next"]:state["next"] + 10]
-            for _n, url in batch:
-                webbrowser.open(url, new=2)
-            state["next"] += len(batch)
+            done = {n["path"] for n, _twin in state["repaired"]}
+            batch = [(n, url) for n, url in state["empties"] if n["path"] not in state["opened"] and n["path"] not in done][:10]
             if not batch:
-                messagebox.showinfo(APP, tr("모든 주소를 열었습니다."), parent=top)
-        def clean_repaired():
-            if not repaired:
-                return messagebox.showinfo(APP, tr("다시 채워진 빈 노트가 없습니다."), parent=top)
-            if not messagebox.askyesno(APP, tr("같은 주소로 내용이 채워진 옛 빈 노트 {0:,}개를 휴지통으로 보냅니다.\n(휴지통에서 복원할 수 있습니다.) 진행할까요?").format(len(repaired)), parent=top):
+                return messagebox.showinfo(APP, tr("모든 주소를 열었습니다."), parent=top)
+            for n, url in batch:
+                webbrowser.open(url, new=2)
+                state["opened"].add(n["path"])
+            render()
+
+        def clean_now():
+            pairs = state["repaired"]
+            if not pairs:
+                return messagebox.showinfo(APP, tr("다시 채워진 빈 노트가 없습니다.\n(다시 받은 글의 주소가 옛 주소와 사이트·글 번호까지 달라졌으면 짝을 찾지 못합니다.)"), parent=top)
+            shown = "\n".join(f"· {old['title'][:34]}  ←  {new['title'][:34]}" for old, new in pairs[:12])
+            if len(pairs) > 12:
+                shown += "\n" + tr("… 외 {0:,}개").format(len(pairs) - 12)
+            if not messagebox.askyesno(APP, tr("다시 받아 내용이 채워진 옛 빈 노트 {0:,}개를 휴지통으로 보냅니다.\n(왼쪽이 휴지통으로 갈 빈 노트, 오른쪽이 남는 새 노트. 휴지통에서 복원할 수 있습니다.)\n\n{1}\n\n진행할까요?").format(len(pairs), shown), parent=top):
                 return
-            self.trash_notes([n["path"] for n in repaired])
+            self.trash_notes([old["path"] for old, _new in pairs])
+            rescan()
+
         bar = tk.Frame(top, bg=C["bg"])
         bar.pack(side="bottom", fill="x", padx=16, pady=12)
+        info.pack(side="bottom", fill="x")
         Btn(bar, tr("다음 10개 열기"), open_next, pady=5).pack(side="left")
-        Btn(bar, tr("다시 채워진 빈 노트 정리…"), clean_repaired, pady=5).pack(side="right")
+        Btn(bar, tr("목록 새로 고침"), rescan, pady=5).pack(side="left", padx=(8, 0))
+        Btn(bar, tr("다시 채워진 빈 노트 정리…"), lambda: rescan(clean_now), pady=5).pack(side="right")
+        render()
 
