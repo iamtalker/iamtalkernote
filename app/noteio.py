@@ -57,6 +57,11 @@ class NoteIOMixin:
         노트 화면 안에 직접 그리고, 아니면(또는 실패하면) 색인해 둔 글을 읽기 전용으로 보여 준다(Ctrl+F 로 찾을 수 있다)."""
         self.pv.unload()
         self.pv_active = False
+        old_audio = getattr(self, "audio_player", None)
+        if old_audio:
+            old_audio.close()
+            self.audio_player = None
+        self.audio_active = False
         can = self.doc_can_preview(n)
         if native and can:
             # 원본 미리보기는 별도 창으로 그려진다. 이전에 보던 문서의
@@ -79,9 +84,18 @@ class NoteIOMixin:
                 self.relayout()
                 self.root.update_idletasks()
                 self.schedule_preview_fit()
+        if native and not self.pv_active and n["ext"] in docidx.AUDIO_EXT:
+            self.apply_layout("pv")
+            self.root.update_idletasks()
+            self.audio_player = winpreview.AudioPlayer(self.pv_frame, n["path"], C)
+            self.audio_player.frame.pack(fill="both", expand=True, anchor="nw")
+            self.audio_active = True
         if self.pv_active:
             self.hide_find(focus=False)
             self.status.config(text=tr('원본 미리보기 (윈도 기본 프로그램)   ·   {0}   ·   글로 바꾸면 Ctrl+F 로 찾을 수 있습니다').format(n['path']))
+        elif self.audio_active:
+            self.hide_find(focus=False)
+            self.status.config(text=tr('앱 안 음악 재생   ·   {0}').format(n['path']))
         else:
             self.apply_layout("edit")
             body = n.read()
@@ -171,6 +185,11 @@ class NoteIOMixin:
         self.doc_open = False
         self.pv.unload()
         self.pv_active = False
+        player = getattr(self, "audio_player", None)
+        if player:
+            player.close()
+            self.audio_player = None
+        self.audio_active = False
         self.doc_toggle.pack_forget()
         self.memo_btn.pack_forget()
         for k, b in self.mode_btns.items():

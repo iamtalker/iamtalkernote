@@ -140,6 +140,9 @@ class OptionsMixin:
             self.pv.unload()
             self.pv_active = False
             self.pv_was_active = True
+        if getattr(self, "audio_active", False) and getattr(self, "audio_player", None):
+            self.audio_player.stop()
+            self.audio_was_active = True
         if not self.tray.start():
             return self.root.iconify()
         self.tray_was_zoomed = self.root.state() == "zoomed"
@@ -188,6 +191,10 @@ class OptionsMixin:
                 self.show_doc(self.cur, native=True)
             elif self.pdf_note and self.cur:
                 self.show_pdf_note(self.pdf_note)
+        if getattr(self, "audio_was_active", False):
+            self.audio_was_active = False
+            if self.doc_open and getattr(self, "audio_player", None):
+                self.audio_player.toggle()
 
     def quit(self):
         self.tray_hidden = False
