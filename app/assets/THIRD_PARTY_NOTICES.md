@@ -3367,6 +3367,42 @@ permission to use and distribute the software in accordance with the
 terms specified in this license.
 ```
 
+## Microsoft Edge WebView2 SDK 1.0.4314.35 (WebView2Loader.dll) — BSD-3-Clause
+
+노트 칸 안에서 pdf·음악·동영상을 보여 주는 브라우저(WebView2)를 불러오는 로더. 수정하지 않고 그대로 포함합니다. 브라우저 본체(WebView2 런타임)는 포함하지 않고 PC 에 설치된 것을 씁니다. Loader for the in-app browser (WebView2) that shows PDFs, audio and video inside the note pane. Included unmodified. The WebView2 Runtime itself is not bundled; the one installed on the PC is used.
+
+원본: https://www.nuget.org/packages/Microsoft.Web.WebView2
+
+```text
+Copyright (C) Microsoft Corporation. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+   * Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+   * Redistributions in binary form must reproduce the above
+copyright notice, this list of conditions and the following disclaimer
+in the documentation and/or other materials provided with the
+distribution.
+   * The name of Microsoft Corporation, or the names of its contributors 
+may not be used to endorse or promote products derived from this
+software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
 ## Syncthing — MPL-2.0 (실행할 때 내려받음 / downloaded at run time)
 
 동기화를 켜면 공식 GitHub 릴리스에서 Syncthing 을 내려받아(코드에 박아 둔 SHA-256 과 같을 때만) 실행합니다. 이 프로그램에 포함되어 있지 않고 수정하지 않았습니다. When sync is turned on, the app downloads Syncthing from its official GitHub release (only if the SHA-256 matches) and runs it. It is not bundled and not modified. Syncthing 은 Mozilla Public License 2.0 입니다: https://www.mozilla.org/MPL/2.0/ · 소스 코드 / source code: https://github.com/syncthing/syncthing

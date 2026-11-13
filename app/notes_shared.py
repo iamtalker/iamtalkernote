@@ -55,6 +55,7 @@ from planner.view import PlannerView  # noqa: E402
 import wikilinks  # noqa: E402
 import syncsettings  # noqa: E402
 import winpreview  # noqa: E402   (윈도 미리보기 처리기를 노트 화면 안에: pdf·mp3 …)
+import winwebview  # noqa: E402   (노트 화면 안의 브라우저(WebView2): pdf, 음악·동영상 재생 목록)
 from version import VERSION  # noqa: E402
 
 APP = "iamtalkernote"
@@ -84,7 +85,7 @@ def u16_to_idx(t, u):
 
 SOURCE_LINE = re.compile(r"\A[ \t]*원본:[ \t]*<?https?://[^\s>]+>?[ \t]*(?:\r?\n)+")   # 글 맨 위의 '원본: <주소>' 줄
 DOC_RESCAN_SECONDS = 300   # 앱을 열어 두는 동안 가져온 폴더를 이 간격(초)마다 훑어 바뀐 파일만 다시 읽는다
-PREVIEW_EXT = ("pdf", *docidx.AUDIO_EXT, *docidx.OFFICE_EXT)   # 윈도 미리보기 처리기로 원본을 보여 줄 형식(txt·md 같은 글 파일은 글로)
+PREVIEW_EXT = ("pdf", *docidx.AUDIO_EXT, *winwebview.VIDEO_EXT, *docidx.OFFICE_EXT)   # 노트 칸 안에 원본을 보여 줄 형식: WebView2 또는 윈도 미리보기 처리기(txt·md 같은 글 파일은 글로)
 MORE_MAX = 4000      # 목록을 이어 그릴 때 한 번에 붙이는 노트 수의 상한(이미 그린 만큼을 붙이되 이 이상은 안 붙인다)
 MORE_MAX_SEARCH = 600  # 검색 중에는 노트마다 본문을 읽어 미리 보기를 만들어서 더 적게
 MORE_SCREENS = 4  # 목록 아래에 남은 글이 이만큼의 화면보다 적어지면 미리 다음 노트들을 이어 그린다

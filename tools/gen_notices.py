@@ -105,6 +105,10 @@ add("PyInstaller %s — GPL-2.0-or-later with Bootloader Exception" % v,
 add("Python — PSF License", "exe 에 파이썬 실행 환경이 들어 있습니다 · the exe embeds the Python runtime.", read(os.path.join(PYDIR, "LICENSE.txt")), "https://www.python.org")
 add("Tcl/Tk — Tcl/Tk License", "화면(tkinter) 라이브러리 · the GUI toolkit behind tkinter.", read(os.path.join(PYDIR, "tcl", "tk8.6", "license.terms")), "https://www.tcl-lang.org")
 
+add('Microsoft Edge WebView2 SDK 1.0.4314.35 (WebView2Loader.dll) — BSD-3-Clause',
+    '노트 칸 안에서 pdf·음악·동영상을 보여 주는 브라우저(WebView2)를 불러오는 로더. 수정하지 않고 그대로 포함합니다. 브라우저 본체(WebView2 런타임)는 포함하지 않고 PC 에 설치된 것을 씁니다. Loader for the in-app browser (WebView2) that shows PDFs, audio and video inside the note pane. Included unmodified. The WebView2 Runtime itself is not bundled; the one installed on the PC is used.',
+    read(os.path.join(ROOT, "app", "assets", "WebView2Loader.LICENSE.txt")), 'https://www.nuget.org/packages/Microsoft.Web.WebView2')
+
 add("Syncthing — MPL-2.0 (실행할 때 내려받음 / downloaded at run time)",
     "동기화를 켜면 공식 GitHub 릴리스에서 Syncthing 을 내려받아(코드에 박아 둔 SHA-256 과 같을 때만) 실행합니다. 이 프로그램에 포함되어 있지 않고 수정하지 않았습니다. "
     "When sync is turned on, the app downloads Syncthing from its official GitHub release (only if the SHA-256 matches) and runs it. It is not bundled and not modified. "

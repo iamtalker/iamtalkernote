@@ -42,7 +42,7 @@ class NoteIOMixin:
         self.mark_selected()
 
     def doc_can_preview(self, n):
-        return n["ext"] in PREVIEW_EXT and winpreview.available(n["ext"])
+        return n["ext"] in PREVIEW_EXT and winwebview.can_show(n["ext"])
 
     def schedule_preview_fit(self):
         """일부 미리보기 처리기는 DoPreview 뒤늦게 창을 만들므로 본문 크기를 다시 맞춘다."""
@@ -81,7 +81,10 @@ class NoteIOMixin:
                 self.schedule_preview_fit()
         if self.pv_active:
             self.hide_find(focus=False)
-            self.status.config(text=tr('원본 미리보기 (윈도 기본 프로그램)   ·   {0}   ·   글로 바꾸면 Ctrl+F 로 찾을 수 있습니다').format(n['path']))
+            if self.pv.using is self.pv.web:
+                self.status.config(text=tr('원본 보기 (앱 안 브라우저)   ·   {0}').format(n['path']))
+            else:
+                self.status.config(text=tr('원본 미리보기 (윈도 기본 프로그램)   ·   {0}   ·   글로 바꾸면 Ctrl+F 로 찾을 수 있습니다').format(n['path']))
         else:
             self.apply_layout("edit")
             body = n.read()
@@ -129,7 +132,7 @@ class NoteIOMixin:
 
     def try_pdf_note(self, n):
         """본문이 pdf 파일 링크 하나뿐인 노트면 pdf 뷰어(윈도 미리보기 처리기)로 보여 준다. 노트 글은 머리줄 단추로 오간다."""
-        if n.get("trash") or not winpreview.available("pdf"):
+        if n.get("trash") or not winwebview.can_show("pdf"):
             return
         path = pdflink.pdf_target(n["body"], n["path"])
         if path and self.cur is n:
@@ -153,7 +156,7 @@ class NoteIOMixin:
         if not self.doc_toggle.winfo_ismapped():
             self.doc_toggle.pack(side="right", padx=(8, 0), before=self.mode_seg if self.mode_seg.winfo_manager() else self.mode_anchor)
         self.doc_toggle.config(text=tr("노트 글로 보기"))
-        self.status.config(text=tr('PDF 미리보기 (윈도 기본 프로그램)   ·   {0}').format(path))
+        self.status.config(text=(tr('PDF 보기 (앱 안 브라우저)   ·   {0}') if self.pv.using is self.pv.web else tr('PDF 미리보기 (윈도 기본 프로그램)   ·   {0}')).format(path))
 
     def leave_pdf_note(self):
         if not self.pdf_note:

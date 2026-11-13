@@ -192,7 +192,7 @@ class OptionsMixin:
     def quit(self):
         self.tray_hidden = False
         self.tray.stop()
-        self.pv.unload()
+        self.pv.close()
         self.save_window()
         self.flush()
         self.stop_clipper()

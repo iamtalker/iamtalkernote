@@ -72,6 +72,8 @@ EN_MAIN = {
     "프로그램": "Programs",
     "노트 글로 보기": "View note text",
     "PDF 미리보기 (윈도 기본 프로그램)   ·   {0}": "PDF preview (Windows default program)   ·   {0}",
+    "PDF 보기 (앱 안 브라우저)   ·   {0}": "PDF view (in-app browser)   ·   {0}",
+    "원본 보기 (앱 안 브라우저)   ·   {0}": "Original view (in-app browser)   ·   {0}",
     "메모 ●": "Memo ●",
     "휴지통의 노트 — 읽기 전용입니다. 목록에서 우클릭 → 복원 · 완전히 삭제": "A note in the trash — read-only. Right-click in the list → Restore · Delete permanently",
     "저장 실패: ": "Save failed: ",

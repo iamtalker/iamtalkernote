@@ -72,7 +72,8 @@ class App(EmbeddedMixin, DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin
         self.doc_scanning = False      # 가져온 폴더를 뒤에서 다시 읽는 중인가(겹쳐 돌지 않게)
         self.doc_scan_progress = None
         self.doc_scan_last = None      # 마지막 가져온 폴더 색인 결과(옵션 화면에 완료 상태를 남김)
-        self.pv = winpreview.Preview() # 윈도 미리보기 처리기(pdf → Edge, mp3 → Media Player …)
+        self.pv = winwebview.Viewer()  # 노트 칸 안 원본 보기: WebView2(pdf, 음악·동영상 재생 목록), 없으면 윈도 미리보기 처리기
+        winwebview.media_roots = lambda: [f["path"] for f in self.docs.folders()]   # 재생 목록의 범위: 그 파일이 든 가져온 폴더 전체
         self.pdf_note = None           # 본문이 pdf 링크 하나뿐인 노트를 열어 둔 중이면 그 pdf 경로
         self.pv_active = False         # 지금 노트 화면에 윈도 미리보기를 띄워 두었는가
         self.snap = sn.Snapshots(self.store)   # 복원 지점
