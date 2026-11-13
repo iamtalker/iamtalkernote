@@ -5,7 +5,6 @@ Windows 전용."""
 import ctypes
 import os
 import sys
-import tkinter as tk
 from ctypes import POINTER, WINFUNCTYPE, byref, c_ubyte, c_ulong, c_ushort, c_void_p, wintypes
 
 IID_PREVIEW = "{8895b1c6-b41f-4c1c-a562-0d564250836f}"      # IPreviewHandler (확장자 아래 ShellEx 키 이름이기도 하다)
@@ -212,86 +211,3 @@ class Preview:
         for c in self.keep:
             c.release()
         self.keep = []
-
-
-class AudioPlayer:
-    """미리보기 처리기가 없는 음악 파일을 Windows MCI로 앱 안에서 재생한다."""
-
-    def __init__(self, parent, path, colors):
-        self.path = os.path.abspath(path)
-        self.alias = "iamtalker_audio_%x" % id(self)
-        self.opened = False
-        self.started = False
-        self.paused = False
-        self.frame = tk.Frame(parent, bg=colors["bg"])
-        self.error = None
-        if sys.platform != "win32":
-            self.error = "Windows에서만 재생할 수 있습니다."
-        else:
-            try:
-                self._command('open "%s" type mpegvideo alias %s' % (self.path.replace('"', '""'), self.alias))
-                self.opened = True
-            except OSError as exc:
-                self.error = str(exc)
-        if self.error:
-            tk.Label(self.frame, text="음악을 재생할 수 없습니다.\n" + self.error, bg=colors["bg"], fg=colors["text"],
-                     justify="left", wraplength=560).pack(anchor="w", padx=20, pady=20)
-            return
-        tk.Label(self.frame, text=os.path.basename(self.path), bg=colors["bg"], fg=colors["text"],
-                 font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=20, pady=(20, 12))
-        row = tk.Frame(self.frame, bg=colors["bg"])
-        row.pack(anchor="w", padx=20)
-        tk.Button(row, text="재생 / 일시정지", command=self.toggle).pack(side="left")
-        tk.Button(row, text="정지", command=self.stop).pack(side="left", padx=(8, 0))
-        tk.Label(self.frame, text="Windows 미디어 재생", bg=colors["bg"], fg=colors["muted"]).pack(anchor="w", padx=20, pady=(12, 0))
-
-    def _command(self, command):
-        buf = ctypes.create_unicode_buffer(512)
-        rc = ctypes.windll.winmm.mciSendStringW(command, buf, len(buf), 0)
-        if rc:
-            msg = ctypes.create_unicode_buffer(512)
-            ctypes.windll.winmm.mciGetErrorStringW(rc, msg, len(msg))
-            raise OSError(msg.value or "MCI error %d" % rc)
-        return buf.value
-
-    def toggle(self):
-        if not self.opened:
-            return
-        try:
-            if self.paused:
-                self._command("resume %s" % self.alias)
-                self.paused = False
-            elif self.started:
-                self._command("pause %s" % self.alias)
-                self.paused = True
-            else:
-                self._command("play %s" % self.alias)
-                self.started = True
-        except OSError:
-            try:
-                self._command("play %s" % self.alias)
-                self.started = True
-                self.paused = False
-            except OSError:
-                pass
-
-    def stop(self):
-        if self.opened:
-            try:
-                self._command("stop %s" % self.alias)
-                self.started = False
-                self.paused = False
-            except OSError:
-                pass
-
-    def close(self):
-        if self.opened:
-            try:
-                self._command("close %s" % self.alias)
-            except OSError:
-                pass
-            self.opened = False
-        try:
-            self.frame.destroy()
-        except tk.TclError:
-            pass
