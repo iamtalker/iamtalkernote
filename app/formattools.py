@@ -3,6 +3,34 @@ notes.py 에서 옮겨 왔다(동작 변경 없음)."""
 from notes_shared import *  # noqa: E402,F401,F403   (공용 이름: notes_shared.py)
 import tidytext  # noqa: E402   (글 정리: 줄 앞 공백·여러 빈 줄)
 
+# 글 정리 설명 창의 내용: (메뉴 이름, 하는 일, 바꾸기 전, 바꾼 뒤, 조건). '·' 은 빈칸을 보이게 한 표시다.
+TIDY_HELP = [
+    ("줄 앞 공백 지우기", "줄 맨 앞의 빈칸을 없앱니다. 들여 쓴 하위 목록과 코드 블록은 그대로 둡니다.",
+     "··안녕하세요", "안녕하세요", ""),
+    ("줄 끝 공백 지우기", "줄 맨 뒤의 빈칸을 없앱니다.",
+     "안녕하세요···\n만나서 반가워요·", "안녕하세요\n만나서 반가워요", ""),
+    ("단어 사이 빈칸 줄이기", "단어 사이의 빈칸이 두 칸 이상이면 한 칸으로 줄입니다.",
+     "나는····학생이다", "나는 학생이다", ""),
+    ("여러 빈 줄을 하나로", "빈 줄이 여러 줄 이어지면 한 줄만 남깁니다.",
+     "첫 문단\n\n\n\n둘째 문단", "첫 문단\n\n둘째 문단", ""),
+    ("빈 줄 전부 없애기", "모든 빈 줄을 지웁니다. 문단 사이 간격도 없어집니다.",
+     "첫 문단\n\n둘째 문단", "첫 문단\n둘째 문단", ""),
+    ("같은 내용 삭제", "같은 줄이 다시 나오면 뒤의 것을 지웁니다. 첫 번째 줄은 남깁니다.",
+     "사과\n바나나\n사과\n포도", "사과\n바나나\n포도", ""),
+    ("문단 줄 잇기", "빈 줄로 나뉜 문단마다 줄을 이어 한 줄로 만듭니다. 제목·표·가로줄·목록은 그대로 둡니다.",
+     "오늘은 날씨가\n좋아서 산책했다.\n\n내일은 비가 온다.", "오늘은 날씨가 좋아서 산책했다.\n\n내일은 비가 온다.", ""),
+    ("고른 줄 합치기", "고른 줄들을 빈 줄 없이 공백 하나로 이어 한 줄로 만듭니다.",
+     "가\n나\n다", "가 나 다", "고른 글이 있어야 합니다"),
+    ("줄 가나다순 정렬 (오름차순)", "고른 줄을 가나다·abc 순으로 정렬합니다. 빈 줄은 뺍니다.",
+     "다\n가\n나", "가\n나\n다", "고른 글이 있어야 합니다"),
+    ("줄 가나다순 정렬 (내림차순)", "고른 줄을 거꾸로, 즉 뒤에서부터 순서대로 정렬합니다.",
+     "가\n나\n다", "다\n나\n가", "고른 글이 있어야 합니다"),
+    ("대문자로", "고른 영문자를 모두 대문자로 바꿉니다.",
+     "hello world", "HELLO WORLD", "고른 글이 있어야 합니다"),
+    ("소문자로", "고른 영문자를 모두 소문자로 바꿉니다.",
+     "Hello World", "hello world", "고른 글이 있어야 합니다"),
+]
+
 
 class FormatToolsMixin:
     # ------------------------------------------------------------ 서식 도구 (위키나루)
@@ -135,6 +163,39 @@ class FormatToolsMixin:
         t.see("insert")
         t.focus_set()
         self.status.config(text=tr("{0}곳을 고쳤습니다").format(len(ops)) + note)
+
+    def show_tidy_help(self):
+        """글 정리 메뉴의 '설명 보기…': 항목마다 하는 일과 바꾸기 전·후 예시를 보여 준다(읽기 전용)"""
+        top = self.tool_window(tr("글 정리 설명"), "700x640")
+        box = tk.Frame(top, bg=C["bg"])
+        box.pack(fill="both", expand=True, padx=12, pady=(12, 6))
+        sb = tk.Scrollbar(box)
+        sb.pack(side="right", fill="y")
+        t = tk.Text(box, wrap="word", bg=C["bg"], fg=C["text"], font=(self.ui, 10), relief="flat",
+                    padx=6, pady=6, yscrollcommand=sb.set, cursor="arrow")
+        t.pack(side="left", fill="both", expand=True)
+        sb.config(command=t.yview)
+        t.tag_configure("title", font=(self.ui, 11, "bold"), spacing1=12)
+        t.tag_configure("ex", font=("Consolas", 10), lmargin1=18, lmargin2=18)
+        t.tag_configure("note", font=(self.ui, 9, "italic"), foreground=C["muted"])
+        t.tag_configure("lab_do", font=(self.ui, 10, "bold"), foreground=C["accent"])
+        t.tag_configure("lab_before", font=(self.ui, 10, "bold"), foreground="#b91c1c")
+        t.tag_configure("lab_after", font=(self.ui, 10, "bold"), foreground="#15803d")
+        t.tag_configure("ex_before", font=("Consolas", 10), lmargin1=18, lmargin2=18, background="#fef2f2")
+        t.tag_configure("ex_after", font=("Consolas", 10), lmargin1=18, lmargin2=18, background="#f0fdf4")
+        t.insert("end", tr("메뉴 「글 정리」 항목별 설명입니다. 편집 칸에서 줄을 골라 두면 그 줄만 고치고, 고른 글이 없으면 노트 전체를 고칩니다. '·' 은 빈칸을 보이게 한 표시입니다.") + "\n")
+        for name, what, before, after, cond in TIDY_HELP:
+            t.insert("end", "\n" + name + "\n", "title")
+            t.insert("end", tr("하는 일") + ": ", "lab_do")
+            t.insert("end", what + "\n")
+            if cond:
+                t.insert("end", tr(cond) + "\n", "note")
+            t.insert("end", tr("바꾸기 전") + ":\n", "lab_before")
+            t.insert("end", before + "\n", "ex_before")
+            t.insert("end", tr("바꾼 뒤") + ":\n", "lab_after")
+            t.insert("end", after + "\n", "ex_after")
+        t.config(state="disabled")
+        Btn(top, tr("닫기"), top.destroy, padx=14, pady=3).pack(pady=(0, 12))
 
     def run_action(self, action):
         if not self.cur:
