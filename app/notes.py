@@ -199,8 +199,12 @@ class App(EmbeddedMixin, DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin
         self.pane.add(self.editf, minsize=360, stretch="always")
         if self.show["syntax"]:
             self.pane.add(self.sidebar, minsize=220, width=self.widths["syntax"], stretch="never")
-        self.capture_nb_height()
+        # 노트북·태그 칸은 켜고 끈 것이 바뀌었을 때만 다시 놓는다. 그대로인데 forget/add 하면 Tk 가 두 칸 높이를
+        # 각 칸이 원하는 높이로 다시 나눠서 경계가 튄다(음악·PDF 를 고를 때마다 show_doc 이 relayout 을 부름)
         inner = [str(p) for p in self.left_pane.panes()]
+        want = [str(w) for w, k in ((self.nb_sec, "notebooks"), (self.tag_sec, "tags")) if self.show[k]]
+        if inner == want:
+            return
         for w in (self.nb_sec, self.tag_sec):
             if str(w) in inner:
                 self.left_pane.forget(w)
@@ -210,7 +214,7 @@ class App(EmbeddedMixin, DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin
             self.left_pane.add(self.tag_sec, minsize=90, stretch="always")
         if self.show["notebooks"] and self.show["tags"] and self.nb_h:   # 노트북·태그 사이 경계를 끌어 둔 자리를 다시 켜도 유지
             self.left_pane.paneconfigure(self.nb_sec, height=self.nb_h)
-            self.root.after_idle(self.place_nb_sash)
+            self.root.after(100, self.place_nb_sash)   # after_idle 은 바깥 칸이 다시 놓이며 높이를 다시 나누기 전에 돌아 경계가 도로 밀린다
 
     def fit_panes(self):
         """저장해 둔 칸 너비의 합이 지금 창보다 크면(창을 줄였거나 작은 화면) 노트 칸이 최소 너비를 지키도록 목록 → 노트북 → 문법 해설 순으로 줄인다"""
@@ -244,7 +248,7 @@ class App(EmbeddedMixin, DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin
         """노트북·태그 사이 경계를 저장해 둔 높이에 놓는다. 창이 아직 화면에 그려지기 전(칸 높이가 작을 때)에 놓으면 값이 엉뚱하게 잘리므로, 그려질 때까지 기다린다"""
         try:
             if len(self.left_pane.panes()) == 2 and self.nb_h:
-                if self.left_pane.winfo_height() < 250 and tries < 20:
+                if self.left_pane.winfo_height() < self.nb_h + 90 and tries < 20:   # 칸이 아직 다 그려지지 않은 높이에 맞춰 줄이지 않는다
                     return self.root.after(100, lambda: self.place_nb_sash(tries + 1))
                 self.root.update_idletasks()
                 self.left_pane.sash_place(0, 0, min(self.nb_h, max(90, self.left_pane.winfo_height() - 90)))
@@ -287,6 +291,8 @@ class App(EmbeddedMixin, DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin
         f = self.leftf = tk.Frame(self.pane, bg=C["bg"])
         self.left_pane = tk.PanedWindow(f, orient="vertical", sashwidth=4, sashrelief="flat", bg=C["line"], bd=0)
         self.left_pane.pack(fill="both", expand=True)
+        # 노트북·태그 경계는 사용자가 끌어 놓았을 때만 기억한다(레이아웃이 잠깐 흔들린 높이를 기억하면 칸이 조금씩 밀린다)
+        self.left_pane.bind("<ButtonRelease-1>", lambda e: self.root.after_idle(self.capture_nb_height))
         self.nb_sec = tk.Frame(self.left_pane, bg=C["bg"])
         nb_head = self.section_head(self.nb_sec, tr("노트북"))
         for icon, opened, hint in (("📁", False, tr("모두 접음")), ("📂", True, tr("모두 펼침"))):   # pack(side=right) 라서 먼저 놓은 것이 오른쪽 끝

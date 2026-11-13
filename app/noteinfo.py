@@ -24,7 +24,6 @@ class NoteInfoMixin:
         cur_path = self.cur["path"] if self.cur else None
         q, d1, d2 = self.q.get(), self.d_from.get(), self.d_to.get()
         widths = dict(self.widths)
-        self.capture_nb_height()
         for job in (self.render_job, self.search_job):
             if job:
                 self.root.after_cancel(job)

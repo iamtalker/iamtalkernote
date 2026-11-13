@@ -116,7 +116,6 @@ class OptionsMixin:
                 self.root.state("normal")
                 self.root.update_idletasks()
             geo = self.root.geometry()
-            self.capture_nb_height()
             managed = [str(p) for p in self.pane.panes()]
             for key, w in (("left", self.leftf), ("list", self.listf), ("syntax", self.sidebar)):
                 if str(w) in managed and w.winfo_width() > 1:
