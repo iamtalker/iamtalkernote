@@ -1,6 +1,7 @@
 """서식 도구(위키나루 도구줄의 서식 적용·파일 첨부)를 붙이는 동작. notes.py 의 App 이 이 믹스인을 상속한다.
 notes.py 에서 옮겨 왔다(동작 변경 없음)."""
 from notes_shared import *  # noqa: E402,F401,F403   (공용 이름: notes_shared.py)
+import tidytext  # noqa: E402   (글 정리: 줄 앞 공백·여러 빈 줄)
 
 
 class FormatToolsMixin:
@@ -59,6 +60,81 @@ class FormatToolsMixin:
         new = "\n".join(out) + "\n"
         self.replace(a, b, new, len(new), len(new))
         self.status.config(text=tr('{0}개를 리소스 폴더로 복사해 넣었습니다').format(len(out)))
+
+    TIDY_NEED_SEL = ("join", "sort", "rsort", "upper", "lower")   # 고른 글이 있어야 하는 것(나머지는 없으면 노트 전체)
+
+    def tidy(self, kind):
+        """글 정리(편집 → 글 정리): 고른 줄들, 고른 글이 없으면 노트 전체를 고친다. 되돌리기 한 번으로 돌아온다.
+        lead·trail·blank·noblank·spaces·dupes 는 고칠 곳만 지우고(tidytext.OPS), unwrap·join·sort·rsort·upper·lower 는 범위를 통째로 바꾼다."""
+        if not self.cur or self.doc_open or self.is_outline_note():
+            return
+        if self.mode == "view":
+            self.set_mode("split")
+        t = self.text
+        has_sel = bool(t.tag_ranges("sel"))
+        if kind in self.TIDY_NEED_SEL and not has_sel:
+            self.status.config(text=tr("먼저 바꿀 글을 고르세요"))
+            return
+        lines = t.get("1.0", "end-1c").split("\n")
+        if has_sel:
+            a, b = self.sel_range(True)
+            lo, hi = int(a.split(".")[0]) - 1, int(b.split(".")[0]) - 1
+        else:
+            lo, hi = 0, len(lines) - 1
+        nothing = tr("고칠 곳이 없습니다")
+        if kind in ("upper", "lower"):       # 고른 글자만
+            a, b = self.sel_range()
+            old = t.get(a, b)
+            new = old.upper() if kind == "upper" else old.lower()
+            if new == old:
+                self.status.config(text=nothing)
+                return
+            self.replace(a, b, new, 0, len(new))
+            self.status.config(text=tr("바꿨습니다"))
+            return
+        if kind in ("unwrap", "join", "sort", "rsort"):   # 줄들을 통째로
+            part = lines[lo:hi + 1]
+            if kind == "unwrap":
+                out = tidytext.unwrap(lines, lo, hi)
+            elif kind == "join":
+                out = [tidytext.join_lines(part)]
+            else:
+                out = tidytext.sort_lines(part, kind == "rsort")
+            if out == part:
+                self.status.config(text=nothing)
+                return
+            new = "\n".join(out)
+            a, b = f"{lo + 1}.0", f"{hi + 1}.end"
+            if has_sel:
+                self.replace(a, b, new, 0, len(new))
+            else:
+                self.replace(a, b, new)
+                t.mark_set("insert", "1.0")
+                t.see("insert")
+            self.status.config(text=tr("{0}줄을 {1}줄로 바꿨습니다").format(len(part), len(out)))
+            return
+        kept = 0
+        if kind == "lead":
+            ops, kept = tidytext.leading_ops(lines, lo, hi)
+        else:
+            ops = tidytext.OPS[kind](lines, lo, hi)
+        note = tr(" (목록·코드 블록 {0}줄은 그대로)").format(kept) if kept else ""
+        if not ops:
+            self.status.config(text=nothing + note)
+            return
+        t.edit_separator()
+        t.config(autoseparators=False)   # 여러 군데를 고쳐도 되돌리기 한 번으로
+        try:
+            for i, c, j, d, new in sorted(ops, reverse=True):   # 아래에서 위로: 앞쪽 줄·칸 번호가 안 밀린다
+                t.delete(f"{i + 1}.{c}", f"{j + 1}.{d}")
+                if new:
+                    t.insert(f"{i + 1}.{c}", new)
+        finally:
+            t.config(autoseparators=True)
+            t.edit_separator()
+        t.see("insert")
+        t.focus_set()
+        self.status.config(text=tr("{0}곳을 고쳤습니다").format(len(ops)) + note)
 
     def run_action(self, action):
         if not self.cur:

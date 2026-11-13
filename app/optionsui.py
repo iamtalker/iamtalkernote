@@ -24,6 +24,9 @@ class OptionsMixin:
         for w in (self.text, self.view):   # 글자 칸의 기본 Ctrl+F(커서를 한 글자 오른쪽으로)는 막는다
             w.bind("<Control-f>", lambda e: (self.on_ctrl_f(), "break")[1])
             w.bind("<Control-d>", lambda e: (self.toggle_favorite(), "break")[1])   # 글자 칸의 기본 Ctrl+D(오른쪽 글자 지우기)는 즐겨찾기로 바꾼다
+        r.bind_all("<Control-h>", lambda e: self.show_replace())
+        for w in (self.text, self.view):   # 글자 칸의 기본 Ctrl+H(왼쪽 글자 지우기)는 찾아 바꾸기로 바꾼다
+            w.bind("<Control-h>", lambda e: (self.show_replace(), "break")[1])
         r.bind_all("<F3>", lambda e: self.find_step(1) if self.findbar.winfo_ismapped() else None)
         r.bind_all("<Shift-F3>", lambda e: self.find_step(-1) if self.findbar.winfo_ismapped() else None)
         r.bind_all("<Control-comma>", lambda e: self.show_options("general"))

@@ -53,12 +53,25 @@ class MenuBarMixin:
         m.add_command(label=tr("날짜 및 시간 삽입"), accelerator="Ctrl+Shift+T", command=self.insert_datetime)
         m.add_separator()
         m.add_command(label=tr("문서에서 찾기"), accelerator="Ctrl+F", command=lambda: self.cur and self.show_find())
+        m.add_command(label=tr("찾아 바꾸기"), accelerator="Ctrl+H", command=self.show_replace)
         m.add_command(label=tr("모든 파일에서 검색"), accelerator="Ctrl+Shift+F", command=self.focus_search)
         m.add_separator()
         m.add_command(label=tr("노트 속성…"), command=self.show_properties)
         m.add_command(label=tr("노트 버전…"), command=self.show_versions)
         m.add_command(label=tr("비슷한 노트 찾기…"), command=self.show_similar)
         mb.add_cascade(label=tr("편집"), menu=m)
+
+        td = tk.Menu(mb, tearoff=0)   # 글 정리: 고른 줄들만, 고른 글이 없으면 노트 전체 (formattools.tidy)
+        for item in (("줄 앞 공백 지우기", "lead"), ("줄 끝 공백 지우기", "trail"), ("줄 안의 여러 공백을 하나로", "spaces"), None,
+                     ("여러 빈 줄을 하나로", "blank"), ("빈 줄 모두 지우기", "noblank"), ("중복 줄 지우기", "dupes"), None,
+                     ("문단 안 줄 바꿈 지우기", "unwrap"), ("줄 바꿈 지우기 (고른 줄을 한 줄로)", "join"), None,
+                     ("줄 정렬 (오름차순)", "sort"), ("줄 정렬 (내림차순)", "rsort"), None,
+                     ("대문자로", "upper"), ("소문자로", "lower")):
+            if item is None:
+                td.add_separator()
+            else:
+                td.add_command(label=tr(item[0]), command=lambda k=item[1]: self.tidy(k))
+        mb.add_cascade(label=tr("글 정리"), menu=td)
 
         m = tk.Menu(mb, tearoff=0)
         m.add_command(label=tr("새로 고침"), accelerator="F5", command=self.refresh_all)

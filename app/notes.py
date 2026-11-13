@@ -597,6 +597,19 @@ class App(EmbeddedMixin, DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin
         self.find_entry.bind("<Return>", lambda e: self.find_step(1))
         self.find_entry.bind("<Shift-Return>", lambda e: self.find_step(-1))
         self.find_entry.bind("<Escape>", lambda e: self.hide_find())
+        # 찾아 바꾸기 줄(Ctrl+H): 찾기 막대 바로 아래에 붙는다. 찾을 글은 위 막대의 것을 쓴다.
+        self.replbar = tk.Frame(self.main, bg=C["soft"])
+        self.repl_var = tk.StringVar()
+        tk.Label(self.replbar, text=tr("바꿀 글"), bg=C["soft"], fg=C["sub"], font=(self.ui, 9), padx=14).pack(side="left")
+        self.repl_entry = tk.Entry(self.replbar, textvariable=self.repl_var, width=30, relief="flat", bg=C["bg"], fg=C["text"],
+                                   insertbackground=C["accent"], highlightthickness=1, highlightbackground=C["line"],
+                                   highlightcolor=C["accent"], font=(self.ui, 10))
+        self.repl_entry.pack(side="left", pady=(0, 5), ipady=2)
+        for label, cmd in ((tr("바꾸기"), self.replace_one), (tr("모두 바꾸기"), self.replace_all)):
+            Btn(self.replbar, label, cmd, padx=8, pady=1).pack(side="left", padx=(8, 0), pady=(0, 5))
+        tk.Label(self.replbar, text=tr("Enter 바꾸고 다음 · 대소문자 구분 없음"), bg=C["soft"], fg=C["muted"], font=(self.ui, 8), padx=12).pack(side="left")
+        self.repl_entry.bind("<Return>", lambda e: self.replace_one())
+        self.repl_entry.bind("<Escape>", lambda e: self.hide_find())
         ring = dict(highlightthickness=2, highlightbackground=C["line"], highlightcolor=C["accent"], relief="flat", bd=0)
 
         self.edit_frame = tk.Frame(self.body, bg=C["panel"])

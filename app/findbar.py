@@ -37,6 +37,7 @@ class FindBarMixin:
         if not self.findbar.winfo_ismapped():
             return
         self.findbar.pack_forget()
+        self.replbar.pack_forget()
         for w in (self.text, self.view):
             w.tag_remove("find", "1.0", "end")
             w.tag_remove("findcur", "1.0", "end")
@@ -110,6 +111,67 @@ class FindBarMixin:
         if self.find_job:
             self.root.after_cancel(self.find_job)
         self.find_job = self.root.after(300, lambda: self.find_run(goto=False))
+
+    # ------------------------------------------------------------ 찾아 바꾸기 (Ctrl+H)
+    def can_replace(self):
+        return bool(self.cur) and not self.doc_open and not self.is_outline_note()
+
+    def show_replace(self):
+        """찾기 막대 아래에 '바꿀 글' 줄을 붙인다. 렌더링만 보는 중이면 편집 칸이 보이게 바꾼다."""
+        if not self.can_replace():
+            return
+        if self.mode == "view":
+            self.set_mode("split")
+        self.show_find()
+        if not self.replbar.winfo_ismapped():
+            self.replbar.pack(side="top", fill="x", before=self.body)
+        if self.find_var.get():
+            self.repl_entry.focus_set()
+            self.repl_entry.select_range(0, "end")
+
+    def replace_one(self):
+        """지금 가리키는 곳(주황색)을 바꾸고 다음 곳으로 간다"""
+        if not self.can_replace() or not self.replbar.winfo_ismapped() or self.find_target() is not self.text:
+            return
+        if not self.find_hits or self.find_i < 0:
+            return self.find_run()
+        t, new = self.text, self.repl_var.get()
+        a, b = self.find_hits[self.find_i]
+        t.edit_separator()
+        t.config(autoseparators=False)   # 지우기+넣기를 되돌리기 한 번으로
+        t.delete(a, b)
+        t.insert(a, new)
+        t.config(autoseparators=True)
+        t.edit_separator()
+        t.mark_set("insert", f"{a}+{len(new)}c")   # 바꾼 글 안에서 다시 걸리지 않게 그 뒤부터 찾는다
+        self.find_run()
+
+    def replace_all(self):
+        """노트 안의 모든 곳을 바꾼다(되돌리기 한 번으로 돌아온다). 편집 칸에서 여러 줄을 골라 두었으면 그 안에서만 바꾼다."""
+        if not self.can_replace() or not self.replbar.winfo_ismapped():
+            return
+        t, needle, new = self.text, self.find_var.get(), self.repl_var.get()
+        hits = self.find_matches(t, needle, limit=10 ** 9) if needle else []
+        scoped = False
+        if t.tag_ranges("sel") and "\n" in t.get("sel.first", "sel.last"):
+            lo, hi = t.index("sel.first"), t.index("sel.last")
+            hits = [(a, b) for a, b in hits if t.compare(a, ">=", lo) and t.compare(b, "<=", hi)]
+            scoped = True
+        if not hits:
+            self.status.config(text=tr("바꿀 곳이 없습니다"))
+            return
+        hits = [(t.index(a), t.index(b)) for a, b in hits]
+        t.edit_separator()
+        t.config(autoseparators=False)
+        try:
+            for a, b in reversed(hits):   # 뒤에서 앞으로: 앞쪽 위치가 안 밀린다
+                t.delete(a, b)
+                t.insert(a, new)
+        finally:
+            t.config(autoseparators=True)
+            t.edit_separator()
+        self.find_run(goto=False)
+        self.status.config(text=(tr("고른 범위에서 {0}곳을 바꿨습니다") if scoped else tr("{0}곳을 바꿨습니다")).format(len(hits)))
 
     def on_ctrl_f(self, e=None):
         """Ctrl+F: 노트가 열려 있으면 그 문서에서 찾기, 아니면(또는 목록 검색칸에 있으면) 모든 노트에서 검색. 모든 노트 검색은 Ctrl+Shift+F"""
