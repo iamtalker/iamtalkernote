@@ -293,6 +293,7 @@ class RestorePointMixin:
     MANUAL_URL = "https://github.com/iamtalker/iamtalkernote/blob/main/docs/manual.md"
 
     ANDROID_URL = "https://github.com/iamtalker/iamtalkernote-android/releases/latest"   # 폰 앱(APK) 최신 릴리스
+    BOOK_URL = "https://bookk.co.kr/bookStore/6af3769e04f230844ed9303c"   # 도움말 → 책 소개(작가의 책 페이지)
 
     def open_manual(self):
         """도움말 → 사용 설명서(F1): GitHub 의 설명서 문서를 기본 브라우저로 연다"""

@@ -196,3 +196,6 @@ EN.update(EN_MAIN)
 
 from lang_en4 import EN_MSG  # noqa: E402   (저장소·업데이트·군더더기 이유 메시지)
 EN.update(EN_MSG)
+
+from lang_en5 import EN_MORE  # noqa: E402   (그림·중복 이미지·빈 스크랩 정리 대화창, 메뉴 새 항목, 노트 메뉴)
+EN.update(EN_MORE)

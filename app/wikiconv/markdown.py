@@ -15,7 +15,7 @@ import json
 import re
 import urllib.parse
 
-from .tree import CAT, Doc, InlineScanner, build_lists, cell_inline, flatten_blocks, merge_text, raw_fallback, text_of, video_from_link, youtube_id, video_label, video_url
+from .tree import CAT, Doc, InlineScanner, build_lists, cell_inline, flatten_blocks, is_video_file, merge_text, raw_fallback, text_of, video_from_link, youtube_id, video_label, video_url
 
 MD_BAD = str.maketrans('\\/:*?"<>|#', "＼／：＊？＂＜＞｜＃")
 MD_BACK = str.maketrans("＼／：＊？＂＜＞｜＃", '\\/:*?"<>|#')
@@ -63,6 +63,8 @@ def html_img(tag):
                 break
     if not src:
         return ["t", tag]
+    if is_video_file(src):   # <img src="…mp4"> 는 그림이 아니라 영상 파일이다
+        return ["video", "file", src]
     node = ["img", src, attrs.get("alt", "")]
     w = re.match(r"\d+", attrs.get("width", ""))
     if w:
@@ -394,7 +396,11 @@ class Reader:
     @staticmethod
     def image(src, alt):
         yt = youtube_id(src)   # ![](유튜브 주소) 는 Joplin 등에서 재생기가 되는 표기라 영상으로 읽는다
-        return ["video", "youtube", yt] if yt else ["img", src, alt]
+        if yt:
+            return ["video", "youtube", yt]
+        if is_video_file(src):   # ![](clip.mp4) 도 영상 파일로 읽는다(그림으로 두면 재생되지 않는다)
+            return ["video", "file", src]
+        return ["img", src, alt]
 
     def html_link(self, m):
         href, label = html.unescape(m.group(1)), m.group(2)
@@ -417,12 +423,16 @@ class Reader:
             vid = lab and video_from_link(href, text_of(lab))
             if not vid and lab and youtube_id(href) and text_of(lab).strip().rstrip("/") == href.strip().rstrip("/"):
                 vid = ["video", "youtube", youtube_id(href)]
+            if not vid and is_video_file(href):   # [글](https://…/clip.mp4) 는 노트 안에서 재생한다
+                vid = ["video", "file", href]
             return vid or ["url", href, lab]
         path, _, anchor = href.partition("#")
         path = urllib.parse.unquote(path)
         if path.lower().endswith(".md") or not path:
             page = md_title(path.rsplit("/", 1)[-1]) if path else self.title
             return ["link", page, lab, anchor]
+        if is_video_file(path):   # [글](clip.mp4) 처럼 이 컴퓨터의 영상 파일도 노트 안에서 재생한다
+            return ["video", "file", href]
         return ["url", href, lab]
 
     # ---------------- 블록

@@ -254,7 +254,52 @@ class RenderSyncMixin:
         for t in self.view.tag_names(idx):
             if t in self.links:
                 kind, target = self.links[t]
+                if kind == "task":
+                    return self.toggle_task(idx)
                 return self.follow(kind, target)
+
+    def toggle_task(self, idx):
+        """렌더링 화면의 체크 칸(☐·☑)을 누르면 원문 그 줄의 [ ] ↔ [x] 를 바꾼다. 원문에서 누른 줄의 그 칸만 고친다."""
+        v = self.view
+        # 1) 누른 칸이 화면의 체크 칸 가운데 몇 번째인지 센다 (화면 위치와 원문 위치는 달라서 글자로는 못 맞춘다)
+        boxes, hit = [], None
+        for key, (kind, _t) in list(self.links.items()):
+            if kind != "task":
+                continue
+            rng = v.tag_ranges(key)
+            for a, b in zip(rng[0::2], rng[1::2]):
+                w = self.wcount(v, a)
+                boxes.append(w)
+                if v.compare(a, "<=", idx) and v.compare(idx, "<", b):
+                    hit = w
+        if hit is None:
+            return "break"
+        k = sorted(boxes).index(hit)
+        # 2) 원문에서 체크 목록 줄을 같은 순서로 찾는다(코드 블록 안의 "- [ ]" 는 뺀다)
+        text = self.text.get("1.0", "end-1c")
+        pat = re.compile(r"^\s*(?:>\s*)*(?:[-*+]|\d+[.)])\s+\[( |x|X)\]")
+        found, n, fence, pos = None, -1, None, 0
+        for ln in text.split("\n"):
+            s = ln.strip()
+            if fence is None:
+                if s[:3] in ("```", "~~~"):
+                    fence = s[:3]
+                else:
+                    m = pat.match(ln)
+                    if m:
+                        n += 1
+                        if n == k:
+                            found = pos + m.start(1)
+            elif s.startswith(fence):
+                fence = None
+            pos += len(ln) + 1
+        if found is None or n + 1 != len(boxes):   # 원문과 화면의 체크 칸 수가 맞지 않으면 아무것도 바꾸지 않는다
+            return "break"
+        self.text.edit_separator()
+        self.text.delete(f"1.0+{found}c", f"1.0+{found + 1}c")
+        self.text.insert(f"1.0+{found}c", " " if text[found] in "xX" else "x")
+        self.text.edit_separator()
+        return "break"
 
     def open_url(self, url):
         """주소를 연다. 유튜브 영상은 설정에 따라 작은 재생 창(Brave 앱 창, 없으면 Edge, 주소창 없음)으로, 아니면 기본 브라우저로."""

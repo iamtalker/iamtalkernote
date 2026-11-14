@@ -464,6 +464,9 @@ class OutlinerMixin:
         if sys.platform != "win32" or not target or not winwebview.available():
             return False
         if re.match(r"(?i)^https?://", target):
+            ext = os.path.splitext(target.split("?", 1)[0].split("#", 1)[0])[1].lower().lstrip(".")
+            if ext not in winwebview.VIDEO_EXT:   # .mov·.mkv 등은 WebView2 가 못 재생하므로 링크로 둔다
+                return False
             url = target
         else:
             path = self.local_file(target)

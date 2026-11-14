@@ -623,21 +623,44 @@ class App(EmbeddedMixin, DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin
         # 원문 편집 칸 위의 최소 서식 툴바(원문만·좌우 분할에서도 서식과 그림 첨부를 쓸 수 있게)
         tools = self.edit_tools = tk.Frame(self.edit_frame, bg=C["panel"])
         tools.pack(fill="x", padx=10, pady=(0, 4))
-        self.undo_btn = Btn(tools, "↶", lambda: self.text_do("edit_undo"), kind="icon", padx=8, pady=1)
-        self.redo_btn = Btn(tools, "↷", lambda: self.text_do("edit_redo"), kind="icon", padx=8, pady=1)
-        self.undo_btn.pack(side="left", padx=1)
-        self.redo_btn.pack(side="left", padx=1)
+        self.undo_btn = Btn(tools, "↶", lambda: self.text_do("edit_undo"), kind="icon", padx=6, pady=3, font=("Segoe UI Symbol", 13))
+        self.redo_btn = Btn(tools, "↷", lambda: self.text_do("edit_redo"), kind="icon", padx=6, pady=3, font=("Segoe UI Symbol", 13))
         self.tip(self.undo_btn, tr("실행 취소 (Ctrl+Z)"))
         self.tip(self.redo_btn, tr("다시 실행 (Ctrl+Y)"))
-        tk.Frame(tools, width=1, bg=C["line"]).pack(side="left", fill="y", padx=6, pady=3)
-        for label, hint, act in (("B", tr("굵게 (Ctrl+B)"), ("wrap", "b")), ("I", tr("기울임 (Ctrl+I)"), ("wrap", "i")), ("S", tr("취소선"), ("wrap", "s")),
-                                 ("H", tr("제목"), ("heading", 2)), ("•", tr("글머리 목록"), ("line", "ul")), ("1.", tr("번호 목록"), ("line", "ol")),
-                                 ("☐", tr("할 일"), ("line", "task")), ("❝", tr("인용"), ("line", "quote")), ("</>", tr("코드"), ("wrap", "code")),
-                                 ("🔗", tr("링크"), ("wrap", "link")), ("🖼", tr("그림·파일 첨부 (리소스 폴더로 복사)"), None)):
-            b = Btn(tools, label, (lambda a=act: self.run_action(a)) if act else self.attach_files, kind="icon", padx=8, pady=1,
-                    font=(self.ui, 10, "bold" if label in ("B", "H") else "normal"))
-            b.pack(side="left", padx=1)
+        flow = [self.undo_btn, self.redo_btn, tk.Frame(tools, width=1, height=22, bg=C["line"])]   # 칸이 좁으면 줄을 바꿔 전부 보이게(place 로 배치)
+        # 글자 모양을 그대로 쓴 기호 단추(마우스를 올리면 이름이 뜬다). 글꼴은 기호가 있는 것으로 고른다
+        sym_font = ("Segoe UI Symbol", 12)
+        emo_font = ("Segoe UI Emoji", 11)
+        for glyph, hint, act, fnt in (
+                ("B", tr("굵게 (Ctrl+B)"), ("wrap", "b"), (self.ui, 11, "bold")),
+                ("I", tr("기울임 (Ctrl+I)"), ("wrap", "i"), (self.ui, 11, "italic")),
+                ("S", tr("취소선"), ("wrap", "s"), tkfont.Font(family=self.ui, size=11, overstrike=True)),
+                ("H", tr("제목"), ("heading", 2), (self.ui, 11, "bold")),
+                ("•", tr("글머리 목록"), ("line", "ul"), sym_font),
+                ("1.", tr("번호 목록"), ("line", "ol"), (self.ui, 11, "bold")),
+                ("☑", tr("할 일"), ("line", "task"), sym_font),
+                ("❝", tr("인용"), ("line", "quote"), sym_font),
+                ("</>", tr("코드"), ("wrap", "code"), (self.mono, 10, "bold")),
+                ("🔗", tr("링크 (Ctrl+K)"), ("wrap", "link"), emo_font),
+                ("🖼", tr("그림·영상·파일 넣기 (리소스 폴더로 복사, 영상은 노트 안에서 재생)"), None, emo_font)):
+            b = Btn(tools, glyph, (lambda a=act: self.run_action(a)) if act else self.attach_files, kind="icon", padx=6, pady=3, font=fnt)
+            flow.append(b)
             self.tip(b, hint)
+
+        def reflow(_e=None):
+            """툴바 칸 너비에 맞춰 단추를 왼쪽부터 놓고, 안 들어가는 단추는 다음 줄로 내린다"""
+            tools.update_idletasks()
+            avail = max(tools.winfo_width(), 200)
+            x = y = row_h = 0
+            for w in flow:
+                ww, wh = w.winfo_reqwidth(), w.winfo_reqheight()
+                if x and x + ww > avail:
+                    x, y, row_h = 0, y + row_h + 3, 0
+                w.place(x=x, y=y)
+                x += ww + 1
+                row_h = max(row_h, wh)
+            tools.config(height=y + row_h)
+        tools.bind("<Configure>", lambda _e: tools.after_idle(reflow))
         box = tk.Frame(self.edit_frame, bg=C["panel"])
         box.pack(fill="both", expand=True, padx=8, pady=(0, 8))
         self.text = tk.Text(box, wrap="word", undo=True, maxundo=-1, font=(self.mono, self.size) + (("bold",) if self.note_bold else ()), padx=14, pady=10,
@@ -710,6 +733,10 @@ class App(EmbeddedMixin, DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin
             self.text.bind(f"<{key}>", lambda e, d=step: self.wiki_move(d), add="+")
         for key in ("Return", "Tab"):
             self.text.bind(f"<{key}>", lambda e: self.wiki_pick(), add="+")
+        self.text.bind("<Return>", self.list_enter, add="+")   # 목록 줄에서 Enter: 다음 번호·글머리를 자동으로 붙인다
+        self.text.bind("<Tab>", self.list_tab, add="+")       # 목록 줄에서 Tab: 한 단계 들여쓰기
+        self.text.bind("<ISO_Left_Tab>", lambda e: self.list_tab(e, True), add="+")   # Shift+Tab: 한 단계 내어쓰기
+        self.text.bind("<Shift-Tab>", lambda e: self.list_tab(e, True), add="+")
         self.text.bind("<Escape>", lambda e: self.wiki_close(True), add="+")
         self.text.bind("<FocusOut>", lambda e: self.wiki_close(), add="+")
         self.show_empty(True)

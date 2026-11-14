@@ -63,6 +63,7 @@ class FormatToolsMixin:
         t.focus_set()
 
     IMAGE_EXT = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg")
+    VIDEO_EXT = (".mp4", ".webm", ".m4v", ".ogv")   # WebView2 가 재생하는 영상 형식
 
     def attach_files(self):
         """그림(또는 다른 파일)을 골라 노트에 넣는다: 파일은 리소스 폴더로 복사되고 노트에는 그 상대 경로 링크가 들어간다"""
@@ -71,8 +72,11 @@ class FormatToolsMixin:
         if self.mode == "view":
             self.set_mode("split")
         down = os.path.join(os.path.expanduser("~"), "Downloads")
-        paths = filedialog.askopenfilenames(parent=self.root, title=tr("노트에 넣을 그림·파일 고르기"), initialdir=down if os.path.isdir(down) else None,
-                                            filetypes=[(tr("그림"), " ".join("*" + e for e in self.IMAGE_EXT)), (tr("모든 파일"), "*.*")])
+        paths = filedialog.askopenfilenames(parent=self.root, title=tr("노트에 넣을 그림·영상·파일 고르기"), initialdir=down if os.path.isdir(down) else None,
+                                            filetypes=[(tr("그림·영상"), " ".join("*" + e for e in self.IMAGE_EXT + self.VIDEO_EXT)),
+                                                       (tr("그림"), " ".join("*" + e for e in self.IMAGE_EXT)),
+                                                       (tr("영상"), " ".join("*" + e for e in self.VIDEO_EXT)),
+                                                       (tr("모든 파일"), "*.*")])
         if not paths:
             return
         out = []
@@ -83,7 +87,8 @@ class FormatToolsMixin:
                 messagebox.showerror(APP, tr('파일을 복사하지 못했습니다.\n{0}').format(ex), parent=self.root)
                 continue
             base = os.path.basename(p)
-            out.append(f"![{os.path.splitext(base)[0]}]({rel})" if p.lower().endswith(self.IMAGE_EXT) else f"[{base}]({rel})")
+            # 그림·영상은 ![..](..) 로 넣는다. 영상 파일은 노트 안에서 재생 화면으로 보인다(markdown.py 가 읽는다)
+            out.append(f"![{os.path.splitext(base)[0]}]({rel})" if p.lower().endswith(self.IMAGE_EXT + self.VIDEO_EXT) else f"[{base}]({rel})")
         if not out:
             return
         a, b = self.sel_range()
@@ -223,6 +228,65 @@ class FormatToolsMixin:
             t.insert("end", after + "\n", "ex_after")
         t.config(state="disabled")
         Btn(top, tr("닫기"), top.destroy, padx=14, pady=3).pack(pady=(0, 12))
+
+    LIST_LINE = re.compile(r"^(\s*)(?:([-*+])|(\d+)([.)]))( +)(\[[ xX]\] )?(.*)$")   # 들여쓰기 · 글머리(- * +) 또는 번호(1. 1)) · 빈칸 · 할 일 표시 · 글
+
+    def list_enter(self, e=None):
+        """목록 줄에서 Enter: 다음 줄에 같은 목록 표시를 붙인다(1. → 2., - → -). 내용 없는 항목에서 Enter 면 표시를 지우고 목록을 끝낸다.
+        그 밖의 경우는 None 을 돌려 평범한 줄 바꿈으로 둔다."""
+        if getattr(self, "wiki_pop", None) or self.text.tag_ranges("sel"):
+            return None
+        t = self.text
+        if t.compare("insert", "!=", "insert lineend"):   # 줄 끝에서만 이어 준다
+            return None
+        m = self.LIST_LINE.match(t.get("insert linestart", "insert lineend"))
+        if not m:
+            return None
+        indent, bullet, num, punct, space, task, body = m.groups()
+        if not body.strip():   # 내용이 없는 항목: 표시를 지우고 평범한 줄로
+            t.edit_separator()
+            t.delete("insert linestart", "insert lineend")
+            t.insert("insert", "\n")
+            t.edit_separator()
+            t.see("insert")
+            return "break"
+        if bullet:
+            prefix = f"{indent}{bullet}{space}"
+        else:
+            prefix = f"{indent}{int(num) + 1}{punct}{space}"
+        if task:
+            prefix += "[ ] "
+        t.edit_separator()
+        t.insert("insert", "\n" + prefix)
+        t.edit_separator()
+        t.see("insert")
+        return "break"
+
+    def list_tab(self, e=None, back=False):
+        """목록 줄에서 Tab: 그 줄을 한 단계 들여쓴다(Shift+Tab: 한 단계 내어쓴다). 목록 줄이 아니면 None 을 돌려 평범한 Tab 으로 둔다.
+        여러 줄을 골랐을 때는 고른 줄을 모두 옮기되, 골랐던 줄 가운데 목록 줄이 하나라도 있을 때만 맡는다."""
+        if getattr(self, "wiki_pop", None):
+            return None
+        t = self.text
+        if t.tag_ranges("sel"):
+            a, b = t.index("sel.first linestart"), t.index("sel.last linestart")
+            lines = t.get(a, f"{b} lineend").split("\n")
+            if not any(self.LIST_LINE.match(ln) for ln in lines):
+                return None
+            self.run_action(("indent", -1 if back else 1))
+            return "break"
+        line = t.get("insert linestart", "insert lineend")
+        if not self.LIST_LINE.match(line):
+            return None
+        t.edit_separator()
+        if back:
+            m = re.match(r"(  |\t| )", line)   # 내어쓰기: 줄 앞의 공백 두 칸(또는 탭·한 칸)을 지운다
+            if m:
+                t.delete("insert linestart", f"insert linestart+{len(m.group(1))}c")
+        else:
+            t.insert("insert linestart", "  ")
+        t.edit_separator()
+        return "break"
 
     def run_action(self, action):
         if not self.cur:

@@ -3,6 +3,7 @@
 조각 = (글, 태그들, 덧붙임)   덧붙임은 None 이거나 ("img", 원래 이름, 설명) · ("link", 종류, 대상)
 태그: h1..h6 · b i u s sup sub · code codeblock math raw chip muted · link · quote · hr · M{n}(들여쓰기) B{n}(목록 첫 줄)
 """
+import re
 import unicodedata
 
 from wikiconv.tree import cell_inline, text_of, video_label, video_url
@@ -261,9 +262,20 @@ class Layout:
         for n, item in enumerate(b[2], 1):
             mark = f"{n}. " if b[1] else "• "
             first = True
+            box = None   # 체크 목록 항목 "- [ ] 글" / "- [x] 글": 표시는 ☐ ☑ 로 그리고, 누르면 원문의 칸을 바꾼다
+            if item and item[0][0] == "p" and item[0][1] and item[0][1][0][0] == "t":
+                box = re.match(r"\[( |x|X)\] ", item[0][1][0][1])
             for sub in item:
                 if sub[0] == "list":
                     self.list(sub, lvl + 1, tags)
+                    continue
+                if first and box and sub[0] == "p":
+                    mk = "☑  " if box.group(1) in "xX" else "☐  "
+                    self.emit(mk, tags + ("B%d" % min(lvl, MAX_LEVEL),), ("link", "task", ""))
+                    sub = ["p", [["t", sub[1][0][1][len(box.group(0)):]]] + sub[1][1:]]
+                    self.inline(sub[1], tags + ("B%d" % min(lvl, MAX_LEVEL),))
+                    self.emit("\n", tags + ("B%d" % min(lvl, MAX_LEVEL),))
+                    first = False
                     continue
                 if first:
                     self.emit(mark, tags + ("B%d" % min(lvl, MAX_LEVEL),))
