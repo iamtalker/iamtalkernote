@@ -356,10 +356,19 @@ class NoteListMixin:
             box.pack_forget()
             return
         box.pack(fill="x", before=self.list_body, pady=(4, 2))
+        doc_counts = None
+        sub_counts = {}
         for k in kids[:12]:
-            if k.startswith("@doc:"):   # 가져온 폴더: 색인된 파일 수
-                counts = self.docs.counts()
-                n = counts.get(k[5:] if "/" not in k[5:] else k, 0)
+            if k.startswith("@doc:"):   # 가져온 폴더: 색인된 파일 수(하위 폴더는 그 폴더 아래 전체 수)
+                fid, rel = self.doc_key_parts(k)
+                if rel:
+                    if fid not in sub_counts:
+                        sub_counts[fid] = self.docs.subfolders(fid)
+                    n = sub_counts[fid].get(rel, 0)
+                else:
+                    if doc_counts is None:
+                        doc_counts = self.docs.counts()
+                    n = doc_counts.get(fid, 0)
                 name = self.nb_label(k)
             else:
                 n = sum(c for kk, c in self.nb_direct.items() if kk == k or kk.startswith(k + "/"))

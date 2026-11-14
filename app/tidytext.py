@@ -8,10 +8,24 @@ _LIST = re.compile(r"^[ \t　 ]+(?:[-*+]|\d+[.)])[ \t]")   # 들여 쓴 목록 
 _GAP = re.compile(r"(?<=[^ \t　 ])[ \t　 ]{2,}(?=[^ \t　 ])")   # 글자 사이의 공백 2칸 이상
 
 
+def front_matter_end(lines):
+    """맨 위 머리말(첫 줄이 --- 이고 뒤에 닫는 --- 가 있는 구간)이 차지하는 줄 수. 머리말이 없으면 0"""
+    if not lines or lines[0].strip() != "---":
+        return 0
+    for j in range(1, len(lines)):
+        if lines[j].strip() in ("---", "..."):
+            return j + 1
+    return 0
+
+
 def fenced(lines):
-    """줄마다 코드 블록 안(울타리 줄 포함)인지: [bool]"""
+    """줄마다 코드 블록 안(울타리 줄 포함)인지: [bool]. 맨 위 머리말(--- … ---)도 건드리면 안 되므로 같이 True 로 표시한다."""
     out, mark = [], ""
-    for ln in lines:
+    front = front_matter_end(lines)
+    for idx, ln in enumerate(lines):
+        if idx < front:
+            out.append(True)
+            continue
         s = ln.lstrip(SPACES)
         if mark:
             out.append(True)

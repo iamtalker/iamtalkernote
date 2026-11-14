@@ -29,7 +29,8 @@ DEFAULT_EXTS = ["pdf", "txt", "md", "mp3", "mp4"]
 KNOWN_EXTS = ["pdf", *TEXT_EXT, *OFFICE_EXT, *AUDIO_EXT]
 MAX_TEXT_BYTES = 30_000_000     # 이보다 큰 글 파일은 이름만 색인
 MAX_PDF_BYTES = 300_000_000
-MAX_CHARS = 3_000_000           # 파일 하나에서 색인할 글자 수 상한
+MAX_OFFICE_PART = 60_000_000    # docx·pptx·xlsx 안에서 풀어 읽을 xml 한 개의 크기 상한
+MAX_CHARS = 3_000_000          # 파일 하나에서 색인할 글자 수 상한
 PDF_SECONDS = 120               # PDF 한 개를 읽는 데 쓸 시간 상한(넘으면 읽은 데까지만)
 STUCK_SECONDS = PDF_SECONDS + 60   # 이 시간이 넘도록 끝나지 않는 파일은 멈춘 것으로 보고 그 작업 프로세스를 죽인다
 HEAVY_EXT = ("pdf", *OFFICE_EXT)   # 오래 걸려서 다른 프로세스에서 나눠 읽는 형식
@@ -80,7 +81,7 @@ def _read_office(path, size):
         if parts is None:   # pptx: 슬라이드 순서대로
             parts = sorted((n for n in names if re.match(r"ppt/slides/slide\d+\.xml$", n)), key=lambda n: int(re.findall(r"\d+", n)[-1]))
         for name in parts:
-            if name not in names:
+            if name not in names or z.getinfo(name).file_size > MAX_OFFICE_PART:   # 압축 비율이 아주 큰 파일은 읽지 않는다
                 continue
             root = ElementTree.fromstring(z.read(name))
             for el in root.iter():
@@ -185,33 +186,33 @@ def heavy_results(jobs, cancelled=None, name_of=None, progress=None):
             return
         finished, started, stuck = set(), {}, None
         pending = set(futs)
-        while pending and stuck is None:
-            if cancelled and cancelled():
-                _kill(pool)
+        try:   # 부르는 쪽이 중간에 그만둬도(제너레이터를 닫아도) 작업 프로세스가 남지 않게 한다
+            while pending and stuck is None:
+                if cancelled and cancelled():
+                    return
+                done, pending = wait(pending, timeout=0.5, return_when=FIRST_COMPLETED)
+                for f in done:
+                    p = futs[f][0]
+                    finished.add(p)
+                    try:
+                        text = f.result()
+                    except Exception:  # noqa: BLE001
+                        text = ""
+                    if progress and name_of:
+                        progress(name_of(p))
+                    yield p, text
+                now = time.time()
+                for f in pending:
+                    if f.running():
+                        started.setdefault(f, now)
+                        if now - started[f] > STUCK_SECONDS:
+                            stuck = f
+                            break
+            if stuck is None:
                 return
-            done, pending = wait(pending, timeout=0.5, return_when=FIRST_COMPLETED)
-            for f in done:
-                p = futs[f][0]
-                finished.add(p)
-                try:
-                    text = f.result()
-                except Exception:  # noqa: BLE001
-                    text = ""
-                if progress and name_of:
-                    progress(name_of(p))
-                yield p, text
-            now = time.time()
-            for f in pending:
-                if f.running():
-                    started.setdefault(f, now)
-                    if now - started[f] > STUCK_SECONDS:
-                        stuck = f
-                        break
-        if stuck is None:
-            pool.shutdown()
-            return
-        _kill(pool)                       # 멈춘 파일: 이름만 색인하고 나머지는 새 프로세스로 이어서
-        finished.add(futs[stuck][0])
+        finally:
+            _kill(pool)   # 끝났으면 할 일이 없고, 멈춘 파일이 있으면 그 프로세스를 죽인다
+        finished.add(futs[stuck][0])      # 멈춘 파일: 이름만 색인하고 나머지는 새 프로세스로 이어서
         yield futs[stuck][0], ""
         todo = [t for t in todo if t[0] not in finished]
 
@@ -324,9 +325,14 @@ class DocIndex:
 
     # ---- DB
     def _db(self):
+        ready = getattr(self, "_ready", None) == (self.db_path, DOC_VERSION) and os.path.exists(self.db_path)   # 이 객체가 이미 표를 맞춰 둔 DB 는 연결만 한다
         conn = sqlite3.connect(self.db_path, timeout=30)
-        conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
+        if ready:
+            if time.time() - self._swept > 3600:   # 오래 켜 둬도 3일 지난 보관 색인은 지워지게 한 시간마다 훑는다
+                self._sweep(conn)
+            return conn
+        conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT)")
         ver = conn.execute("SELECT v FROM meta WHERE k='version'").fetchone()
         if not ver or ver[0] != str(DOC_VERSION):
@@ -344,8 +350,7 @@ class DocIndex:
         conn.execute("CREATE TABLE IF NOT EXISTS docs_retained AS SELECT * FROM docs WHERE 0")
         conn.execute("CREATE INDEX IF NOT EXISTS retained_folder ON docs_retained(folder)")
         conn.execute("CREATE TABLE IF NOT EXISTS removed_folders (folder TEXT PRIMARY KEY, expires REAL)")
-        conn.execute("DELETE FROM docs_retained WHERE folder IN (SELECT folder FROM removed_folders WHERE expires<=?)", (time.time(),))
-        conn.execute("DELETE FROM removed_folders WHERE expires<=?", (time.time(),))
+        self._sweep(conn)
         # 내가 붙인 태그·메모. 원본 파일은 건드리지 않고 여기에만 적으며, docs 표를 다시 만들어도(색인 판이 바뀌어도) 남는다
         conn.execute("CREATE TABLE IF NOT EXISTS annot (path TEXT PRIMARY KEY, tags TEXT, memo TEXT)")
         # 폴더에 붙인 태그(노트북·가져온 폴더). 폴더 자체에만 붙고 안의 노트·파일에는 붙지 않는다. key 는 노트북·가져온 폴더 목록의 키
@@ -361,7 +366,16 @@ class DocIndex:
         if conn.execute("PRAGMA auto_vacuum").fetchone()[0] != 2:
             conn.execute("PRAGMA auto_vacuum=INCREMENTAL")
             conn.execute("VACUUM")
+        self._ready = (self.db_path, DOC_VERSION)
         return conn
+
+    def _sweep(self, conn):
+        """3일 보관이 끝난 뺀 폴더의 색인을 지운다"""
+        now = time.time()
+        conn.execute("DELETE FROM docs_retained WHERE folder IN (SELECT folder FROM removed_folders WHERE expires<=?)", (now,))
+        conn.execute("DELETE FROM removed_folders WHERE expires<=?", (now,))
+        conn.commit()
+        self._swept = now
 
     # ---- 태그·메모
     def annots(self):

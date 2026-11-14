@@ -24,6 +24,7 @@ class _Md(HTMLParser):
         self.base, self.out, self.skip = base, [], 0
         self.lists, self.href, self.pre, self.cell_row = [], [], 0, None
         self.table, self.link_start = None, []
+        self.tstack = []   # 표 안의 표: 바깥 표의 (행들, 지금 칸) 을 맡아 둔다
 
     def w(self, s):
         if self.table is not None and self.cell_row is not None:
@@ -80,7 +81,8 @@ class _Md(HTMLParser):
             if src:
                 self.w(f"![{a.get('alt', '')}]({self.abs(src)})")
         elif tag == "table":
-            self.table = []
+            self.tstack.append((self.table, self.cell_row))
+            self.table, self.cell_row = [], None
         elif tag == "tr" and self.table is not None:
             self.table.append([])
         elif tag in ("td", "th") and self.table is not None:
@@ -117,8 +119,11 @@ class _Md(HTMLParser):
                 self.table[-1].append(cell)
             self.cell_row = None
         elif tag == "table" and self.table is not None:
-            rows, self.table = [r for r in self.table if r], None
-            if rows:
+            rows = [r for r in self.table if r]
+            self.table, self.cell_row = self.tstack.pop() if self.tstack else (None, None)
+            if rows and self.cell_row is not None:   # 칸 안의 표: 마크다운 표는 칸에 못 넣으므로 글만 이어 바깥 칸에 넣는다
+                self.cell_row.append(" ".join(c for r in rows for c in r if c) + " ")
+            elif rows:
                 n = max(len(r) for r in rows)
                 rows = [r + [""] * (n - len(r)) for r in rows]
                 lines = ["| " + " | ".join(rows[0]) + " |", "|" + " --- |" * n]
@@ -235,13 +240,20 @@ def start(store, get_token, on_saved, ports=PORTS):
 
         def do_POST(self):
             u = urlsplit(self.path)
-            n = int(self.headers.get("Content-Length") or 0)
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                n = -1
+            if n < 0:
+                self.close_connection = True
+                return self.send(400, {"error": "Bad Content-Length"})
+            if not self.authorized(parse_qs(u.query)):   # 본문을 읽기 전에 토큰부터 본다(없는 사람에게 200MB 를 받지 않는다)
+                self.close_connection = True
+                return self.send(403, {"error": "Invalid token"})
             if n > MAX_BODY:
                 self.close_connection = True
                 return self.send(413, {"error": "Too large"})
             raw = self.rfile.read(n)
-            if not self.authorized(parse_qs(u.query)):
-                return self.send(403, {"error": "Invalid token"})
             if u.path != "/notes":
                 return self.send(404, {"error": "Not found"})
             try:

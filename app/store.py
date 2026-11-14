@@ -45,18 +45,29 @@ def wiki_scoped():
     return bool(read_config().get("wikiScope", False))
 
 
-def read_config():
-    """파일이 없으면 빈 설정. 다른 쓰레드가 바꿔치기하는 찰나에 잠겨 있으면 잠깐 기다렸다 다시 읽는다(빈 설정으로 잘못 읽고 그 위에 덮어쓰지 않게)"""
+def _load_config():
+    """→ (설정, 오류). 파일이 없으면 ({}, None). 다른 쓰레드가 바꿔치기하는 찰나에 잠겨 있으면 잠깐 기다렸다 다시 읽는다.
+    끝내 못 읽으면 ({}, 마지막 오류) — 쓰는 쪽이 '없음'과 '못 읽음'을 구분해서 읽지 못한 설정 위에 덮어쓰지 않게 한다."""
+    err = None
     for i in range(8):
         try:
             with open(config_path(), encoding="utf-8") as f:
-                return json.load(f)
+                c = json.load(f)
+            if not isinstance(c, dict):
+                raise ValueError("config is not an object")
+            return c, None
         except FileNotFoundError:
-            return {}
-        except (OSError, ValueError):
+            return {}, None
+        except (OSError, ValueError) as e:
+            err = e
             if i < 7:
                 time.sleep(0.02)
-    return {}
+    return {}, err
+
+
+def read_config():
+    """파일이 없거나 못 읽으면 빈 설정"""
+    return _load_config()[0]
 
 
 _cfg_lock = threading.RLock()   # 화면·동기화 시작 같은 여러 쓰레드가 동시에 설정을 쓰면 파일이 깨졌다
@@ -65,9 +76,18 @@ _cfg_lock = threading.RLock()   # 화면·동기화 시작 같은 여러 쓰레�
 def write_config(**patch):
     """읽고 고쳐 쓰는 동안 잠그고, 임시 파일에 쓴 뒤 바꿔치기해서 읽는 쪽이 반쯤 쓴 파일을 보지 않게 한다"""
     with _cfg_lock:
-        c = read_config()
-        c.update(patch)
+        c, err = _load_config()
         path = config_path()
+        if err is not None:
+            if isinstance(err, ValueError):   # 파일이 깨져 있다: 지우지 말고 따로 남긴 뒤 새로 시작한다
+                try:
+                    shutil.copy2(path, f"{path}.broken-{time.strftime('%Y%m%d-%H%M%S')}")
+                except OSError:
+                    raise OSError(tr("설정 파일이 깨졌고 백업도 못 해서 저장하지 않았습니다")) from err
+                c = {}
+            else:   # 잠겨 있어 못 읽었다: 빈 설정 위에 쓰면 있던 설정이 사라지므로 저장하지 않는다
+                raise OSError(tr("설정 파일을 읽을 수 없어 저장하지 않았습니다")) from err
+        c.update(patch)
         tmp = path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(c, f, ensure_ascii=False)
@@ -79,6 +99,28 @@ def write_config(**patch):
                 if i == 9:
                     raise
                 time.sleep(0.03)
+
+
+_DB_READY = set()   # 표 검사를 마친 색인 DB (경로, 판)
+
+
+def atomic_write(path, text):
+    """임시 파일에 다 쓴 뒤 바꿔치기한다: 쓰는 도중 앱이 죽거나 동기화가 읽어도 노트가 비거나 잘리지 않는다"""
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8", newline="\n") as f:
+        f.write(text)
+    for i in range(10):   # 다른 곳이 읽는 중이면 윈도가 바꿔치기를 잠깐 거절한다
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if i == 9:
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
+                raise
+            time.sleep(0.03)
 
 
 def version_settings():
@@ -750,9 +792,13 @@ class Store:
         return os.path.join(os.path.dirname(config_path()), f"index-{key}.db")
 
     def _db(self):
-        conn = sqlite3.connect(self.index_path, timeout=30)
-        conn.execute("PRAGMA journal_mode=WAL")
+        path = self.index_path
+        ready = (path, INDEX_VERSION) in _DB_READY and os.path.exists(path)   # 이 실행에서 이미 표를 맞춰 둔 DB 는 연결만 한다(저장마다 표 검사를 되풀이하지 않는다)
+        conn = sqlite3.connect(path, timeout=30)
         conn.execute("PRAGMA synchronous=NORMAL")
+        if ready:
+            return conn
+        conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT)")
         ver = conn.execute("SELECT v FROM meta WHERE k='version'").fetchone()
         if not ver or ver[0] != str(INDEX_VERSION):
@@ -761,6 +807,7 @@ class Store:
         conn.execute("CREATE TABLE IF NOT EXISTS notes (path TEXT PRIMARY KEY, size INTEGER, mtime_ns INTEGER, "
                      "updated REAL, created REAL, tags TEXT, hay BLOB)")
         conn.commit()
+        _DB_READY.add((path, INDEX_VERSION))
         return conn
 
     def key_of(self, path):
@@ -955,15 +1002,20 @@ class Store:
         os.makedirs(d, exist_ok=True)
         if wiki_enabled():   # 노트북이 달라도 같은 제목이 없게
             title = wikilinks.free_title(title, self.titles(wikilinks.space(nb) if wiki_scoped() else None))
-        name, i = title, 2
-        while os.path.exists(os.path.join(d, md_name(name))):
-            name = f"{title} ({i})"
-            i += 1
-        p = os.path.join(d, md_name(name))
         now = time.time()
         body = ensure_dates(body, now, now)
-        with open(p, "w", encoding="utf-8", newline="\n") as f:
-            f.write(body)
+        name, i = title, 2
+        while True:   # 'x' 로 열어 같은 이름을 동시에 만들려는 다른 쓰레드(클리퍼)가 있어도 덮어쓰지 않는다
+            p = os.path.join(d, md_name(name))
+            try:
+                f = open(p, "x", encoding="utf-8", newline="\n")
+            except FileExistsError:
+                name = f"{title} ({i})"
+                i += 1
+                continue
+            with f:
+                f.write(body)
+            break
         self.journal("create", p)
         return {"nb": nb, "title": name, "path": p}
 
@@ -992,8 +1044,7 @@ class Store:
             except OSError:
                 pass   # 버전 기록 실패가 저장을 막지 않게
         self.before_change(path)
-        with open(path, "w", encoding="utf-8", newline="\n") as f:
-            f.write(body)
+        atomic_write(path, body)
         self.index_one(path, body)
         self.journal(ev, path)
         return body
@@ -1011,8 +1062,7 @@ class Store:
                 raise ValueError(tr("이 노트에는 생성 시각을 적어 둘 머리말(created)이 없어서 바꿀 수 없습니다."))
         if new != body:
             self.before_change(path)
-            with open(path, "w", encoding="utf-8", newline="\n") as fh:
-                fh.write(new)
+            atomic_write(path, new)
         if updated is not None:
             os.utime(path, (updated, updated))
         self.index_one(path)
@@ -1022,18 +1072,25 @@ class Store:
         d = os.path.dirname(path)
         base = (new_title or "").strip() or "제목 없음"
         target = os.path.join(d, md_name(base))
-        if os.path.normcase(target) == os.path.normcase(path):
+        case_only = os.path.normcase(target) == os.path.normcase(path)   # 윈도: 대소문자만 다른 이름도 같은 파일로 보인다
+        if case_only and os.path.basename(target) == os.path.basename(path):
             return md_title(os.path.basename(path)), path
-        if wiki_enabled():
-            own = self.key_of(path)
-            base = wikilinks.free_title(base, self.titles(wikilinks.space(os.path.dirname(own)) if wiki_scoped() else None), own=own)
-        n, i = base, 2
-        while os.path.exists(os.path.join(d, md_name(n))):
-            n = f"{base} ({i})"
-            i += 1
-        target = os.path.join(d, md_name(n))
+        if not case_only:
+            if wiki_enabled():
+                own = self.key_of(path)
+                base = wikilinks.free_title(base, self.titles(wikilinks.space(os.path.dirname(own)) if wiki_scoped() else None), own=own)
+            n, i = base, 2
+            while os.path.exists(os.path.join(d, md_name(n))):
+                n = f"{base} ({i})"
+                i += 1
+            target = os.path.join(d, md_name(n))
         self.before_change(path)
-        os.rename(path, target)
+        if case_only:   # 대소문자만 바꾸는 이름 바꾸기는 임시 이름을 거쳐야 윈도가 받아 준다
+            tmp = target + ".rename-tmp"
+            os.rename(path, tmp)
+            os.rename(tmp, target)
+        else:
+            os.rename(path, target)
         self.move_history(path, target)
         self.journal("rename", path, to=target)
         return md_title(os.path.basename(target)), target
@@ -1064,8 +1121,7 @@ class Store:
             name = re.escape(os.path.basename(self.media_dir))
             fixed = re.sub(r"(?<![\w/.])(?:\.\./)*" + name + "/", lambda m: prefix, body)
             if fixed != body:
-                with open(target, "w", encoding="utf-8", newline="\n") as fh:
-                    fh.write(fixed)
+                atomic_write(target, fixed)
         except OSError:
             pass
         return target
@@ -1086,7 +1142,13 @@ class Store:
             return rel + name
 
         # 그림 주소가 어떤 모양이든(![](…), 제목이 붙은 그림, [링크](…), <img src="…">) 'data:image/…;base64,…' 부분만 파일 경로로 바꾼다
-        md = re.sub(r"data:(image/[a-z+.\-]+);base64,([A-Za-z0-9+/=]+)", lambda m: save(m.group(1), m.group(2)), md, flags=re.I)
+        def replace(m):
+            try:
+                return save(m.group(1), m.group(2))
+            except ValueError:   # 길이·패딩이 틀린(잘린) base64: 그 그림만 그대로 두고 나머지는 계속 뺀다
+                return m.group(0)
+
+        md = re.sub(r"data:(image/[a-z+.\-]+);base64,([A-Za-z0-9+/=]+)", replace, md, flags=re.I)
         return md, count[0]
 
     def add_media(self, src, nb):
