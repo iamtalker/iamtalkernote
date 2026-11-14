@@ -91,13 +91,18 @@ def noblank_ops(lines, lo=0, hi=None):
     return [_drop_lines(lines, i, j) for i, j in _blank_runs(lines, lo, _hi(lines, hi))]
 
 
+_CODE_SPAN = re.compile(r"`[^`]*`")   # 한 줄 안의 인라인 코드(`…`)
+
+
 def spaces_ops(lines, lo=0, hi=None):
-    """줄 안의 여러 공백을 하나로(줄 앞 들여쓰기와 줄 끝은 그대로)"""
+    """줄 안의 여러 공백을 하나로(줄 앞 들여쓰기와 줄 끝, 코드 블록·인라인 코드 안은 그대로)"""
     code = fenced(lines)
     ops = []
     for i in range(lo, _hi(lines, hi) + 1):
         if not code[i]:
-            ops += [(i, m.start(), i, m.end(), " ") for m in _GAP.finditer(lines[i])]
+            spans = [m.span() for m in _CODE_SPAN.finditer(lines[i])]
+            ops += [(i, m.start(), i, m.end(), " ") for m in _GAP.finditer(lines[i])
+                    if not any(s <= m.start() < e for s, e in spans)]
     return ops
 
 
@@ -158,6 +163,39 @@ def unwrap(lines, lo=0, hi=None):
         else:
             out.append(ln)
         glue = not (ln.endswith("  ") or ln.endswith("\\"))
+    return out
+
+
+def space_paras(lines, lo=0, hi=None):
+    """문단 안에서 붙어 있는 줄 사이에 빈 줄을 넣어, 줄마다 따로 한 문단이 되게 한다(lo..hi 줄을 바꾼 새 줄 목록).
+    코드 블록, 제목·표·가로줄·목록·인용 줄, 빈 줄은 건드리지 않는다. 목록 항목에 이어 쓴 줄도 그대로 둔다."""
+    code = fenced(lines)
+    hi = _hi(lines, hi)
+    out = []
+    for i in range(lo, hi + 1):
+        ln = lines[i]
+        if out and ln.strip() and out[-1].strip() and not code[i] and not code[i - 1] \
+                and not _BLOCK.match(ln) and not _ALONE.match(out[-1]) and not _BLOCK.match(out[-1]):
+            out.append("")
+        out.append(ln)
+    return out
+
+
+def outside_code(lines, lo, hi, fn):
+    """lo..hi 줄 가운데 코드 블록 밖의 연속된 줄 묶음마다 fn(묶음) 을 적용한다. 코드 블록 줄은 제자리에 그대로 둔다.
+    결과 줄 목록을 돌려준다(코드 블록이 섞인 범위의 정렬·줄 합치기에 쓴다)."""
+    code = fenced(lines)
+    out, run = [], []
+    for i in range(lo, hi + 1):
+        if code[i]:
+            if run:
+                out += fn(run)
+                run = []
+            out.append(lines[i])
+        else:
+            run.append(lines[i])
+    if run:
+        out += fn(run)
     return out
 
 

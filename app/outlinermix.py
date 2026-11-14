@@ -31,6 +31,9 @@ class OutlinerMixin:
     def draw_view_body(self, segs):
         v = self.view
         self.stop_gifs()
+        for _frame, player in getattr(self, "video_players", {}).values():   # 글을 지우면 재생 틀도 사라지므로 브라우저를 먼저 닫는다(다시 그릴 때마다 새로 만든다)
+            player.close()
+        self.video_players = {}
         self.img_w_used = self.img_avail()
         self.has_imgs = any(extra and extra[0] == "img" for _, _, extra in segs)
         top = v.yview()[0]
@@ -43,6 +46,7 @@ class OutlinerMixin:
         self.photos.clear()
         self.photo_used = set()
         self.img_files.clear()
+        self._video_used = set()    # 이번에 그린 재생 화면의 주소(같은 영상이 두 번 나오는지 가린다)
         vmap, w_off, s_off = [], 0, 0        # 화면 위치(w) ↔ 렌더링 글 위치(s): 렌더링만으로는 원문 위치를 몰라서 블록 맞추기에 쓴다
         wiki, widx = self.wiki_on(), None
         if wiki and st.read_config().get("wikiAuto", False) and self.cur and not self.doc_open:
@@ -63,6 +67,15 @@ class OutlinerMixin:
                 key = "L%d" % len(self.links)
                 self.links[key] = extra[1:]
                 tg.append(key)
+            if extra and extra[0] == "video":
+                if self.show_video(extra[1]):   # 재생 화면 한 칸(그림처럼 글 한 글자 자리)
+                    vmap.append((w_off, 1, s_off, len(t), None))
+                    w_off += 1
+                    s_off += len(t)
+                    continue
+                key = "L%d" % len(self.links)   # 재생 화면을 못 넣었으면 글자 링크로
+                self.links[key] = ("url", extra[1])
+                tg += [key, "link"]
             if extra and extra[0] == "img" and self.show_image(extra[1], extra[3] if len(extra) > 3 else 0):
                 vmap.append((w_off, 1, s_off, len(t), None))        # 화면에는 그림 한 칸, 렌더링 글로는 '[그림: …]'
                 w_off += 1
@@ -441,6 +454,47 @@ class OutlinerMixin:
         else:
             img = self.local_image_photo(path, target)
         return self.put_image(img, width, path, animation) if img is not None else False
+
+    VIDEO_MAX = 4       # 재생 화면을 같이 쥐고 있을 수(브라우저 하나씩 든다)
+
+    def show_video(self, target):
+        """직접 든 영상(http(s) 주소, 또는 이 컴퓨터의 영상 파일)을 본문 중간에 WebView2 재생 화면으로 넣는다.
+        글 칸에 빈 틀(Frame)을 끼워 넣고 그 틀의 창에 브라우저를 붙인다. 틀이 글과 함께 움직이므로 스크롤해도 따라간다.
+        넣지 못하면 False 를 돌려주고, 부른 쪽이 글자 링크로 남긴다."""
+        if sys.platform != "win32" or not target or not winwebview.available():
+            return False
+        if re.match(r"(?i)^https?://", target):
+            url = target
+        else:
+            path = self.local_file(target)
+            if not path or os.path.splitext(path)[1].lower().lstrip(".") not in winwebview.VIDEO_EXT:
+                return False
+            url = winwebview.file_url(path)
+        used = self._video_used
+        if url in used or len(self.video_players) >= self.VIDEO_MAX:   # 같은 영상이 두 번 나오거나 한도를 넘으면 글자 링크
+            return False
+        w = self.img_avail()          # 본문 칸 너비만큼 채운다(16:9)
+        h = w * 9 // 16
+        frame = tk.Frame(self.view, bg="#000000", width=w, height=h)
+        frame.pack_propagate(False)
+        player = winwebview.WebView()
+        pos = self.view.index("end-1c")
+        try:
+            self.view.window_create("end", window=frame)
+        except tk.TclError:
+            frame.destroy()          # 아직 글에 들어가지 않았다
+            return False
+        try:
+            ok = player.show_url(frame.winfo_id(), url, w, h)
+        except tk.TclError:
+            ok = False
+        if not ok:
+            player.close()
+            self.view.delete(pos, f"{pos}+1c")   # 글에 끼운 틀을 치운다(delete 가 틀도 없앤다)
+            return False
+        self.video_players[url] = (frame, player)
+        used.add(url)
+        return True
 
     def put_image(self, img, width=0, path=None, animation=None):
         """그림을 렌더링 화면에 넣는다. 파일 그림은 photo_from_file 에서 이미 알맞게 줄였고, 본문에 박힌 PNG·GIF 처럼 못 줄인 것만

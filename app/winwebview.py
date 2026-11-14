@@ -422,6 +422,20 @@ class WebView:
             url = page_url(path)
         except OSError:
             return False
+        return self.show_url(hwnd, url, width, height)
+
+    def show_url(self, hwnd, url, width, height):
+        """주소 url 을 창 hwnd 안에 보여 준다. 같은 창·같은 주소라면 다시 열지 않는다(재생이 끊기지 않게)"""
+        if self.failed or not available():
+            return False
+        if self.ctl and self.hwnd == hwnd and self.url == url:
+            self.size = (max(width, 10), max(height, 10))
+            try:
+                self._bounds()
+                _com(self.ctl, 4, HRESULT, [c_int], 1)     # put_IsVisible
+            except OSError:
+                return False
+            return True
         if self.ctl and self.hwnd != hwnd:   # 붙일 창이 바뀌었다: 새로 만든다
             self.close()
         self.hwnd, self.url, self.size = hwnd, url, (max(width, 10), max(height, 10))

@@ -64,7 +64,7 @@ class MenuBarMixin:
         td = tk.Menu(mb, tearoff=0)   # 글 정리: 고른 줄들만, 고른 글이 없으면 노트 전체 (formattools.tidy)
         for item in (("줄 앞 공백 지우기", "lead"), ("줄 끝 공백 지우기", "trail"), ("단어 사이 빈칸 줄이기", "spaces"), None,
                      ("여러 빈 줄을 하나로", "blank"), ("빈 줄 전부 없애기", "noblank"), ("같은 내용 삭제", "dupes"), None,
-                     ("문단 줄 잇기", "unwrap"), ("고른 줄 합치기", "join"), None,
+                     ("문단 줄 잇기", "unwrap"), ("문장마다 빈 줄 넣기", "split"), ("고른 줄 합치기", "join"), None,
                      ("줄 가나다순 정렬 (오름차순)", "sort"), ("줄 가나다순 정렬 (내림차순)", "rsort"), None,
                      ("대문자로", "upper"), ("소문자로", "lower")):
             if item is None:

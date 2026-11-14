@@ -19,6 +19,8 @@ TIDY_HELP = [
      "사과\n바나나\n사과\n포도", "사과\n바나나\n포도", ""),
     ("문단 줄 잇기", "빈 줄로 나뉜 문단마다 줄을 이어 한 줄로 만듭니다. 제목·표·가로줄·목록은 그대로 둡니다.",
      "오늘은 날씨가\n좋아서 산책했다.\n\n내일은 비가 온다.", "오늘은 날씨가 좋아서 산책했다.\n\n내일은 비가 온다.", ""),
+    ("문장마다 빈 줄 넣기", "문단 안에서 붙어 있는 줄 사이에 빈 줄을 넣어, 줄마다 따로 한 문단이 되게 합니다. 제목·표·목록·인용·코드 블록은 그대로 둡니다.",
+     "첫 문장이다.\n둘째 문장이다.", "첫 문장이다.\n\n둘째 문장이다.", ""),
     ("고른 줄 합치기", "고른 줄들을 빈 줄 없이 공백 하나로 이어 한 줄로 만듭니다.",
      "가\n나\n다", "가 나 다", "고른 글이 있어야 합니다"),
     ("줄 가나다순 정렬 (오름차순)", "고른 줄을 가나다·abc 순으로 정렬합니다. 빈 줄은 뺍니다.",
@@ -110,24 +112,49 @@ class FormatToolsMixin:
         else:
             lo, hi = 0, len(lines) - 1
         nothing = tr("고칠 곳이 없습니다")
-        if kind in ("upper", "lower"):       # 고른 글자만
+        if kind in ("upper", "lower"):       # 고른 글자만(코드 블록 안은 그대로)
             a, b = self.sel_range()
-            old = t.get(a, b)
-            new = old.upper() if kind == "upper" else old.lower()
-            if new == old:
+            la, ca = (int(x) for x in a.split("."))
+            lb, cb = (int(x) for x in b.split("."))
+            code = tidytext.fenced(lines)
+            edits = []
+            for k in range(la, lb + 1):
+                ln = lines[k - 1]
+                s0 = ca if k == la else 0
+                s1 = cb if k == lb else len(ln)
+                if code[k - 1] or s1 <= s0:
+                    continue
+                old = ln[s0:s1]
+                new = old.upper() if kind == "upper" else old.lower()
+                if new != old:
+                    edits.append((k, s0, s1, new))
+            if not edits:
                 self.status.config(text=nothing)
                 return
-            self.replace(a, b, new, 0, len(new))
+            t.edit_separator()
+            t.config(autoseparators=False)
+            try:
+                for k, s0, s1, new in reversed(edits):   # 아래에서 위로: 앞쪽 칸 번호가 안 밀린다
+                    t.delete(f"{k}.{s0}", f"{k}.{s1}")
+                    t.insert(f"{k}.{s0}", new)
+            finally:
+                t.config(autoseparators=True)
+                t.edit_separator()
+            t.tag_remove("sel", "1.0", "end")   # 고른 글은 그대로 골라 둔다(이어서 다른 변환을 할 수 있게)
+            t.tag_add("sel", a, b)
+            t.focus_set()
             self.status.config(text=tr("바꿨습니다"))
             return
-        if kind in ("unwrap", "join", "sort", "rsort"):   # 줄들을 통째로
+        if kind in ("unwrap", "split", "join", "sort", "rsort"):   # 줄들을 통째로(코드 블록 줄은 제자리에)
             part = lines[lo:hi + 1]
             if kind == "unwrap":
                 out = tidytext.unwrap(lines, lo, hi)
+            elif kind == "split":
+                out = tidytext.space_paras(lines, lo, hi)
             elif kind == "join":
-                out = [tidytext.join_lines(part)]
+                out = tidytext.outside_code(lines, lo, hi, lambda run: [tidytext.join_lines(run)])
             else:
-                out = tidytext.sort_lines(part, kind == "rsort")
+                out = tidytext.outside_code(lines, lo, hi, lambda run: tidytext.sort_lines(run, kind == "rsort"))
             if out == part:
                 self.status.config(text=nothing)
                 return
