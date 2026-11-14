@@ -316,7 +316,7 @@ class EmbeddedMixin:
         if not empties:
             return messagebox.showinfo(APP, tr("본문이 빈 옛 스크랩이 없습니다."), parent=self.root)
         top = self.tool_window(tr("빈 스크랩 다시 받기 — {0:,}개").format(len(empties)), "860x560", native=True)
-        tk.Label(top, text=tr("출처 주소는 있는데 본문이 없는 노트 {0:,}개입니다. '다음 10개 열기'로 브라우저에서 열어 조플린 클리퍼로 다시 스크랩하세요. 같은 주소로 내용이 채워진 노트가 생기면 '다시 채워진 빈 노트 정리'로 옛 빈 노트를 휴지통에 보냅니다.").format(len(empties)),
+        tk.Label(top, text=tr("출처 주소는 있는데 본문이 없는 노트 {0:,}개입니다. 먼저 '주소 확인 · 죽은 글 정리'로 없어진 웹페이지의 빈 노트를 휴지통으로 보내고, '다음 10개 열기'로 살아 있는 글만 브라우저에서 열어 조플린 클리퍼로 다시 스크랩하세요. 같은 주소로 내용이 채워진 노트가 생기면 '다시 채워진 빈 노트 정리'로 옛 빈 노트를 휴지통에 보냅니다.").format(len(empties)),
                  bg=C["bg"], fg=C["muted"], font=(self.ui, 9), anchor="w", justify="left", padx=16, pady=10, wraplength=800).pack(fill="x")
         wrap = tk.Frame(top, bg=C["bg"])
         wrap.pack(fill="both", expand=True, padx=16)
@@ -325,14 +325,15 @@ class EmbeddedMixin:
         lb.config(yscrollcommand=sb.set)
         sb.pack(side="right", fill="y")
         lb.pack(side="left", fill="both", expand=True)
-        state = {"empties": empties, "repaired": repaired, "opened": set()}   # opened: 브라우저로 연 빈 노트의 경로
+        state = {"empties": empties, "repaired": repaired, "opened": set(), "status": {}}   # opened: 브라우저로 연 빈 노트의 경로
         info = tk.Label(top, text="", bg=C["bg"], fg=C["text"], font=(self.ui, 10), anchor="w", padx=16)
 
         def render():
             done = {n["path"] for n, _twin in state["repaired"]}
             lb.delete(0, "end")
             for n, url in state["empties"]:
-                mark = tr("[채워짐] ") if n["path"] in done else tr("[열었음] ") if n["path"] in state["opened"] else ""
+                mark = (tr("[채워짐] ") if n["path"] in done else tr("[열었음] ") if n["path"] in state["opened"]
+                        else {"alive": tr("[살아 있음] "), "dead": tr("[없어짐] "), "blocked": tr("[로그인 필요] "), "unknown": tr("[확인 못 함] ")}.get(state["status"].get(n["path"]), ""))
                 lb.insert("end", f"{mark}{n['title'][:50]}   {url[:70]}")
             left = sum(1 for n, _u in state["empties"] if n["path"] not in state["opened"] and n["path"] not in done)
             top.title(tr("빈 스크랩 다시 받기 — {0:,}개").format(len(state["empties"])))
@@ -353,7 +354,9 @@ class EmbeddedMixin:
         def open_next():
             import webbrowser
             done = {n["path"] for n, _twin in state["repaired"]}
-            batch = [(n, url) for n, url in state["empties"] if n["path"] not in state["opened"] and n["path"] not in done][:10]
+            order = {"alive": 0, None: 1, "unknown": 1, "blocked": 2}   # 살아 있는 글부터. 없어진 글은 열지 않는다
+            batch = sorted(((n, url) for n, url in state["empties"] if n["path"] not in state["opened"] and n["path"] not in done
+                            and state["status"].get(n["path"]) != "dead"), key=lambda x: order.get(state["status"].get(x[0]["path"]), 1))[:10]
             if not batch:
                 return messagebox.showinfo(APP, tr("모든 주소를 열었습니다."), parent=top)
             for n, url in batch:
@@ -373,11 +376,43 @@ class EmbeddedMixin:
             self.trash_notes([old["path"] for old, _new in pairs])
             rescan()
 
+        def check_dead():
+            """빈 노트의 출처 주소가 살아 있는지 확인하고, 없어진 글의 빈 노트는 휴지통으로 보낸다(다시 받을 수 없으므로)"""
+            todo = [(n, url) for n, url in state["empties"] if n["path"] not in {m["path"] for m, _t in state["repaired"]}]
+            if not todo:
+                return messagebox.showinfo(APP, tr("확인할 빈 노트가 없습니다."), parent=top)
+            if not messagebox.askyesno(APP, tr("빈 노트 {0:,}개의 출처 주소에 접속해 웹페이지가 아직 있는지 확인합니다.\n각 사이트에 요청이 가며 시간이 걸릴 수 있습니다(같은 사이트에는 동시에 2개까지).\n\n진행할까요?").format(len(todo)), parent=top):
+                return
+
+            def done_check(res):
+                if not top.winfo_exists():
+                    return
+                if res is None:
+                    return messagebox.showerror(APP, tr("인터넷에 연결되어 있지 않은 것 같습니다. 연결을 확인한 뒤 다시 해 보세요."), parent=top)
+                for n, url in todo:
+                    state["status"][n["path"]] = res.get(url, "unknown")
+                render()
+                top.lift()
+                dead = [n for n, url in todo if res.get(url) == "dead"]
+                count = {k: sum(1 for v in res.values() if v == k) for k in ("alive", "dead", "blocked", "unknown")}
+                summary = tr("살아 있음 {0:,} · 없어짐 {1:,} · 로그인 필요 {2:,} · 확인 못 함 {3:,}").format(count["alive"], count["dead"], count["blocked"], count["unknown"])
+                if not dead:
+                    return messagebox.showinfo(APP, tr("없어진 웹페이지가 없습니다.") + "\n" + summary, parent=top)
+                shown = "\n".join(f"· {n['title'][:40]}" for n in dead[:10])
+                if len(dead) > 10:
+                    shown += "\n" + tr("… 외 {0:,}개").format(len(dead) - 10)
+                if not messagebox.askyesno(APP, tr("{0}\n\n웹페이지가 없어져 다시 받을 수 없는 빈 노트 {1:,}개를 휴지통으로 보냅니다(휴지통에서 복원할 수 있습니다).\n살아 있는 글·로그인이 필요한 글·확인 못 한 글은 그대로 둡니다.\n\n{2}\n\n진행할까요?").format(summary, len(dead), shown), parent=top):
+                    return
+                self.trash_notes([n["path"] for n in dead])
+                rescan()
+            self.run_task(tr("주소 확인"), lambda prog, cancel: cleanup.check_urls([url for _n, url in todo], prog, cancel), done_check, text=tr("출처 주소를 확인하는 중…"))
+
         bar = tk.Frame(top, bg=C["bg"])
         bar.pack(side="bottom", fill="x", padx=16, pady=12)
         info.pack(side="bottom", fill="x")
         Btn(bar, tr("다음 10개 열기"), open_next, pady=5).pack(side="left")
         Btn(bar, tr("목록 새로 고침"), rescan, pady=5).pack(side="left", padx=(8, 0))
+        Btn(bar, tr("주소 확인 · 죽은 글 정리"), check_dead, pady=5).pack(side="left", padx=(8, 0))
         Btn(bar, tr("다시 채워진 빈 노트 정리…"), lambda: rescan(clean_now), pady=5).pack(side="right")
         render()
 

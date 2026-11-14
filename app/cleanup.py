@@ -792,3 +792,80 @@ def merge_and_remove(store, groups, refs, notes, progress=None, cancelled=lambda
         except OSError as e:
             failed.append((store.media_dir, str(e)))
     return changed, links, merged, failed, trashed, len(extras) - len(drop)
+
+
+# ------------------------------------------------------------------ 출처 주소가 살아 있는지 확인
+_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+
+
+def online(timeout=6):
+    """인터넷에 연결돼 있는가(이름 풀이 실패를 '죽은 주소'로 잘못 보지 않으려고 먼저 본다)"""
+    import socket
+    for host in ("www.google.com", "www.cloudflare.com", "www.naver.com"):
+        try:
+            socket.create_connection((host, 443), timeout=timeout).close()
+            return True
+        except OSError:
+            continue
+    return False
+
+
+def check_url(url, timeout=8):
+    """출처 주소 하나를 확인한다 → 'alive' 살아 있음 / 'dead' 없어진 글(404·410, 없는 주소, 글이 아닌 첫 화면으로 보냄) /
+    'blocked' 로그인·접근 제한(401·403) / 'unknown' 확인 못 함(시간 초과·서버 오류·인증서 문제 등). 확실히 없어진 것만 'dead' 로 본다."""
+    import socket
+    import urllib.error
+    import urllib.request
+    parts = urlsplit(url)
+    if parts.scheme not in ("http", "https") or not parts.netloc:
+        return "unknown"
+    deep = bool(parts.query) or len([p for p in parts.path.split("/") if p]) >= 1
+    for method in ("HEAD", "GET"):
+        try:
+            req = urllib.request.Request(url, method=method, headers={"User-Agent": _UA, "Accept": "text/html,*/*;q=0.8", "Accept-Language": "ko,en;q=0.8"})
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                final = urlsplit(r.geturl())
+            if deep and final.path in ("", "/") and not final.query:   # 글 주소가 사이트 첫 화면으로 넘어가면 없어진 글
+                return "dead"
+            return "alive"
+        except urllib.error.HTTPError as e:
+            if e.code in (404, 410):
+                return "dead"
+            if e.code in (401, 403):
+                if method == "HEAD":
+                    continue   # HEAD 만 막는 서버가 있다: GET 으로 다시
+                return "blocked"
+            if method == "HEAD":
+                continue
+            return "unknown"
+        except urllib.error.URLError as e:
+            return "dead" if isinstance(e.reason, socket.gaierror) else "unknown"
+        except (OSError, ValueError):
+            return "unknown"
+    return "unknown"
+
+
+def check_urls(urls, progress=None, cancelled=lambda: False, workers=8, timeout=8):
+    """주소들을 한꺼번에 확인한다 → {주소: 상태}. 인터넷이 안 되면 None. 같은 사이트에는 동시에 2개까지만 요청한다."""
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    urls = list(dict.fromkeys(urls))
+    if not online():
+        return None
+    gates, lock = {}, threading.Lock()
+    out = {}
+
+    def one(u):
+        host = urlsplit(u).netloc.lower()
+        with lock:
+            gate = gates.setdefault(host, threading.Semaphore(2))
+        with gate:
+            return u, ("unknown" if cancelled() else check_url(u, timeout))
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        for i, (u, status) in enumerate(ex.map(one, urls)):
+            out[u] = status
+            if progress and i % 5 == 0:
+                progress(i, len(urls))
+            if cancelled():
+                break
+    return out
