@@ -83,6 +83,7 @@ class EmbeddedMixin:
             groups = cleanup.duplicate_media(self.store, prog, cancel)
             if not groups:
                 return [], {}
+            media_re = re.escape(os.path.basename(self.store.media_dir)) + r"/([^)\s\"'<>]+)"   # 리소스 폴더 이름(.resources · _resources) 뒤의 파일 이름
             wanted = {os.path.basename(p): None for g in groups for p in g}
             refs = {k: [] for k in wanted}
             for n in notes:
@@ -93,7 +94,7 @@ class EmbeddedMixin:
                         text = st.decode(fh.read())
                 except OSError:
                     continue
-                names = set(re.findall(r"\.resources/([^)\s\"'<>]+)", text))
+                names = set(re.findall(media_re, text))
                 for name in names & set(refs):
                     refs[name].append(n)
             # 아무 노트도 쓰지 않는 파일(휴지통 노트만 쓰던 파일 포함)은 중복 대상이 아니다 → 안 쓰는 미디어 정리 대상
@@ -110,30 +111,38 @@ class EmbeddedMixin:
             return f"{n / 1048576:,.1f}MB" if n >= 1048576 else f"{n / 1024:,.0f}KB"
         extra = sum(len(g) - 1 for g in groups)
         wasted = sum(os.path.getsize(g[0]) * (len(g) - 1) for g in groups)
-        top = self.tool_window(tr("중복 이미지 — {0:,}묶음").format(len(groups)), "900x580", native=True)
+        top = self.tool_window(tr("중복 이미지 — {0:,}묶음").format(len(groups)), "1000x620", native=True)
         head = tk.Frame(top, bg=C["bg"])
         head.pack(fill="x", padx=16, pady=(12, 4))
-        tk.Label(head, text=tr("내용이 같은 그림 {0:,}묶음 · 줄이면 남는 파일 {1:,}개 (약 {2})").format(len(groups), extra, mb(wasted)),
+        tk.Label(head, text=tr("내용이 같은 그림 {0:,}묶음 · 줄이면 남는 파일 {1:,}개 (약 {2}) · 줄일 용량이 큰 묶음부터").format(len(groups), extra, mb(wasted)),
                  bg=C["bg"], fg=C["text"], font=(self.ui, 10), anchor="w").pack(side="left")
-        Btn(head, tr("그림만 있는 노트 정리…"), self.image_only_cleanup, pady=4).pack(side="right")
-        tk.Label(top, text=tr("▸를 누르면 그 그림을 쓰는 노트가 펼쳐집니다. 노트 이름을 누르면 그 노트로 갑니다."),
-                 bg=C["bg"], fg=C["muted"], font=(self.ui, 9), anchor="w", padx=16).pack(fill="x", pady=(0, 6))
+        tk.Label(top, text=tr("그림을 누르면 오른쪽에 미리 봅니다. ▸를 누르면 그 그림을 쓰는 노트가 펼쳐지고, 노트 이름을 누르면 그 노트로 갑니다. 합치면 묶음마다 파일 하나만 남기고 노트의 링크를 그 파일로 고칩니다(쓰는 노트가 가장 많은 파일을 남깁니다)."),
+                 bg=C["bg"], fg=C["muted"], font=(self.ui, 9), anchor="w", justify="left", wraplength=960, padx=16).pack(fill="x", pady=(0, 6))
+        bar = tk.Frame(top, bg=C["bg"])
+        bar.pack(side="bottom", fill="x", padx=16, pady=(0, 12))
         wrap = tk.Frame(top, bg=C["bg"])
-        wrap.pack(fill="both", expand=True, padx=16, pady=(0, 12))
-        tree = ttk.Treeview(wrap, show="tree", selectmode="none")
-        tree.column("#0", width=840, stretch=True)
+        wrap.pack(fill="both", expand=True, padx=16, pady=(0, 8))
+        side = tk.Frame(wrap, bg=C["panel"], width=320)   # 미리보기
+        side.pack(side="right", fill="y", padx=(10, 0))
+        side.pack_propagate(False)
+        preview = tk.Label(side, bg=C["panel"], fg=C["muted"], font=(self.ui, 9), wraplength=300, justify="center")
+        preview.pack(fill="both", expand=True, padx=8, pady=8)
+        tree = ttk.Treeview(wrap, show="tree", selectmode="browse")
+        tree.column("#0", width=600, stretch=True)
         sb = ttk.Scrollbar(wrap, orient="vertical", command=tree.yview)
         tree.configure(yscrollcommand=sb.set)
         sb.pack(side="right", fill="y")
         tree.pack(side="left", fill="both", expand=True)
-        note_at = {}
+        note_at, file_at, shown = {}, {}, {}
         for gi, g in enumerate(groups):
             head_iid = f"g{gi}"
-            tree.insert("", "end", iid=head_iid, text=tr("[같은 그림 {0}개] {1} (각 {2})").format(len(g), os.path.basename(g[0]), mb(os.path.getsize(g[0]))))
+            tree.insert("", "end", iid=head_iid, text=tr("[같은 그림 {0}개] {1} (각 {2} · 줄이면 {3})").format(
+                len(g), os.path.basename(g[0]), mb(os.path.getsize(g[0])), mb(os.path.getsize(g[0]) * (len(g) - 1))))
             for pi, p in enumerate(g):
                 name = os.path.basename(p)
                 users = refs.get(name, [])
                 file_iid = f"f{gi}_{pi}"
+                file_at[file_iid] = p
                 tree.insert(head_iid, "end", iid=file_iid, text=f"{os.path.relpath(p, self.store.media_dir)}   ({tr('쓰는 노트 {0}개').format(len(users))})")
                 if not users:
                     tree.insert(file_iid, "end", text="    " + tr("(쓰는 노트 없음)"))
@@ -141,6 +150,38 @@ class EmbeddedMixin:
                     iid = f"u{gi}_{pi}_{ui}"
                     tree.insert(file_iid, "end", iid=iid, text=f"    ↳ {n['title']}")
                     note_at[iid] = n["path"]
+
+        def show_preview(path):
+            """고른 그림을 오른쪽에 보인다(그림이 아니거나 못 읽으면 이름만)"""
+            shown.pop("img", None)
+            try:
+                from PIL import Image, ImageTk
+                with Image.open(path) as im:
+                    size = im.size
+                    im.seek(0)
+                    frame = im.convert("RGBA")
+                frame.thumbnail((300, 360))
+                shown["img"] = ImageTk.PhotoImage(frame, master=top)
+                preview.config(image=shown["img"], text=f"{os.path.basename(path)}\n{size[0]}×{size[1]} · {mb(os.path.getsize(path))}", compound="top")
+            except Exception:  # noqa: BLE001  (동영상·깨진 파일 등)
+                preview.config(image="", text=f"{os.path.basename(path)}\n{tr('미리 볼 수 없는 파일입니다')}")
+
+        def group_of(iid):
+            while iid and not iid.startswith("g"):
+                iid = tree.parent(iid)
+            return int(iid[1:]) if iid else None
+
+        def on_select(_e=None):
+            sel = tree.selection()
+            if not sel:
+                return
+            iid = sel[0]
+            if iid.startswith("g"):
+                show_preview(groups[int(iid[1:])][0])
+            elif iid in file_at:
+                show_preview(file_at[iid])
+        tree.bind("<<TreeviewSelect>>", on_select)
+
         def on_click(e):
             if tree.identify_element(e.x, e.y) == "Treeitem.indicator":
                 return
@@ -150,7 +191,41 @@ class EmbeddedMixin:
                 top.lift()
         tree.bind("<ButtonRelease-1>", on_click)
 
-        Btn(top, tr("그림만 있는 노트 정리…"), self.image_only_cleanup, pady=5).pack(side="bottom", anchor="e", padx=16, pady=(0, 12))
+        def merge(which, label):
+            todo = [groups[i] for i in which]
+            fix = 0
+            for g in todo:
+                names = [os.path.basename(q) for q in g]
+                keep = cleanup.keep_name(names, refs)
+                fix += sum(len(refs.get(n, [])) for n in names if n != keep)
+            if not messagebox.askyesno(APP, tr("{0}: 그림 {1:,}묶음을 한 파일로 합치고, 노트 {2:,}곳의 링크를 고칩니다.\n바뀌기 전 내용은 노트 버전에 남고 수정 시각은 그대로 둡니다. 파일은 지우지 않습니다.\n\n진행할까요?").format(label, len(todo), fix), parent=top):
+                return
+            top.destroy()
+            self.flush()
+            self.run_task(tr("그림 합치는 중"), lambda prog, cancel: cleanup.merge_duplicate_media(self.store, todo, refs, prog, cancel),
+                          self.merge_media_done, text=tr("노트의 그림 링크를 고치는 중…"))
+
+        def merge_selected():
+            sel = tree.selection()
+            gi = group_of(sel[0]) if sel else None
+            if gi is None:
+                return messagebox.showinfo(APP, tr("합칠 묶음을 먼저 고르세요."), parent=top)
+            merge([gi], tr("이 묶음"))
+        Btn(bar, tr("모두 합치기"), lambda: merge(range(len(groups)), tr("모든 묶음")), pady=5).pack(side="right")
+        Btn(bar, tr("고른 묶음 합치기"), merge_selected, pady=5).pack(side="right", padx=(0, 8))
+        Btn(bar, tr("그림만 있는 노트 정리…"), self.image_only_cleanup, pady=5).pack(side="left")
+        first = tree.get_children()
+        if first:
+            tree.selection_set(first[0])
+
+    def merge_media_done(self, result):
+        changed, links, merged, failed = result
+        text = tr("노트 {0:,}개의 링크 {1:,}곳을 고쳤습니다.").format(changed, links)
+        if failed:
+            text += "\n\n" + tr("실패 {0}개:").format(len(failed)) + "\n" + "\n".join(f"{p}: {e}" for p, e in failed[:10])
+        self.reload_notes(keep_scroll=True)
+        if messagebox.askyesno(APP, text + "\n\n" + tr("이제 아무 노트도 쓰지 않는 그림 파일은 '안 쓰는 미디어 파일 정리'에서 지울 수 있습니다. 지금 열까요?"), parent=self.root):
+            self.show_unused_media()
 
     # ------------------------------------------------------------ 중복 이미지 창: 그림만 있는 노트 정리
     def image_only_cleanup(self):

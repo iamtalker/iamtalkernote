@@ -723,3 +723,48 @@ def empty_scraps(notes, progress=None, cancelled=lambda: False):
         if twin is not None:
             repaired.append((n, twin))
     return empties, repaired
+
+
+def keep_name(names, refs):
+    """묶음에서 남길 파일 이름: 쓰는 노트가 가장 많은 것(고칠 노트가 적다), 같으면 이름순으로 앞의 것"""
+    return max(names, key=lambda n: (len(refs.get(n, [])), -names.index(n)))
+
+
+def merge_duplicate_media(store, groups, refs, progress=None, cancelled=lambda: False):
+    """내용이 같은 그림 묶음마다 한 파일만 남기고, 다른 파일을 가리키던 노트의 링크를 남긴 파일로 고친다.
+    groups = [[경로, …], …], refs = {파일 이름: [그 파일을 쓰는 노트, …]} (duplicate_media 결과와 노트 훑기 결과).
+    파일은 지우지 않는다(링크를 고치면 '안 쓰는 미디어 정리'에서 지울 수 있다). 노트는 고치기 전 내용이 버전에 남고 수정 시각은 그대로다.
+    → (고친 노트 수, 고친 링크 수, 합친 묶음 수, 실패 [(경로, 이유)])"""
+    import os
+    todo = {}   # 노트 경로 → (노트, [(옛 이름, 남길 이름)])
+    merged = 0
+    for g in groups:
+        names = [os.path.basename(p) for p in g]
+        keep = keep_name(names, refs)
+        merged += 1
+        for name in names:
+            if name == keep:
+                continue
+            for note in refs.get(name, []):
+                todo.setdefault(note["path"], (note, []))[1].append((name, keep))
+    changed = links = 0
+    failed = []
+    for i, (path, (note, pairs)) in enumerate(todo.items()):
+        if cancelled():
+            break
+        if progress:
+            progress(i, len(todo))
+        try:
+            with open(path, "rb") as fh:
+                text = st.decode(fh.read())
+            new, count = text, 0
+            for old, keep in pairs:   # 파일 이름 바로 앞이 '/' 이고 뒤가 이름의 일부가 아닐 때만(이름이 더 긴 다른 파일은 건드리지 않는다)
+                new, n = re.subn(r"(?<=/)" + re.escape(old) + r"(?![\w%.\-])", lambda m, k=keep: k, new, flags=re.I)
+                count += n
+            if count and new != text:
+                store.save(path, new, versioned=True, force=True, touch=False, ev="image")
+                changed += 1
+                links += count
+        except Exception as e:  # 한 노트가 실패해도 나머지는 계속한다
+            failed.append((path, str(e)))
+    return changed, links, merged, failed
