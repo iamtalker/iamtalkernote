@@ -119,6 +119,9 @@ class SearchBoxMixin:
                             c[t] = c.get(t, 0) + 1
                     for t, k in self.docs.tag_counts().items():
                         c[t] = c.get(t, 0) + k
+                    for tags in self.docs.folder_tags().values():   # 폴더에 붙인 태그도 자동완성에 나온다
+                        for t in tags:
+                            c[t] = c.get(t, 0) + 1
                     self.ac_tagc = (time.time(), c)
                 except Exception:  # noqa: BLE001  (센 도중 목록이 바뀌어도 다음에 다시 센다)
                     pass

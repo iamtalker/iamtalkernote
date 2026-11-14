@@ -20,6 +20,7 @@ from tagedit import TagEditMixin  # noqa: E402   (태그 편집(맨 아래 태�
 from docfolders import DocFoldersMixin  # noqa: E402   (가져온 폴더 읽기·색인: docfolders.py)
 from favoritesui import FavoritesMixin  # noqa: E402   (즐겨찾기의: favoritesui.py)
 from notelist import NoteListMixin  # noqa: E402   (노트: notelist.py)
+from foldertags import FolderTagPage  # noqa: E402   (노트 칸의 폴더 태그 입력 화면)
 from savedsearch import SavedSearchMixin  # noqa: E402   (저장된: savedsearch.py)
 from notebooks import NotebooksMixin  # noqa: E402   (노트북과: notebooks.py)
 from toolsmenu import ToolsMenuMixin  # noqa: E402   (도구: toolsmenu.py)
@@ -754,18 +755,56 @@ class App(EmbeddedMixin, DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin
                                                    lambda k, v: st.write_config(**{"cal_" + k: v}), self.planner_changed)
                 self.planner_view.refresh()
                 self.planner_view.pack(fill="both", expand=True)
+            elif self.folder_tag_ok():                      # 노트북·가져온 폴더를 골랐으면 노트 자리에 폴더 태그 입력 칸
+                self.empty.pack_forget()
+                if getattr(self, "folder_page", None) is None:
+                    self.folder_page = FolderTagPage(self.editf, C, self.ui, self.nb_label,
+                                                     lambda k: self.docs.folder_tags().get(k, []),
+                                                     self.docs.set_folder_tags, self.folder_tags_changed,
+                                                     self.ac_tags, Btn, ime.composing, ime.cancel,
+                                                     path_of=self.folder_path_of, get_memo=lambda k: self.docs.folder_memos().get(k, ""),
+                                                     set_memo=self.docs.set_folder_memo)
+                self.folder_page.show(self.nb)
+                self.folder_page.pack(fill="both", expand=True)
             else:
                 if self.planner_view is not None:
                     self.planner_view.pack_forget()
+                if getattr(self, "folder_page", None) is not None:
+                    self.folder_page.pack_forget()
                 self.empty.pack(fill="both", expand=True)
         else:
             self.empty.pack_forget()
             if self.planner_view is not None:
                 self.planner_view.pack_forget()
+            if getattr(self, "folder_page", None) is not None:
+                self.folder_page.pack_forget()
             if self.trash_view is not None:
                 self.trash_view.destroy()
                 self.trash_view = None
             self.main.pack(fill="both", expand=True)
+
+    def folder_tags_changed(self):
+        """폴더 태그를 고친 뒤: 태그 목록과 자동완성 개수를 새로 센다"""
+        self.ac_tagc = (0.0, self.ac_tagc[1])
+        self.reload_tags()
+
+    def folder_path_of(self, key):
+        """폴더 키 → 이 컴퓨터의 경로(노트북은 노트 폴더 아래 경로, 가져온 폴더는 원래 경로)"""
+        if key.startswith("@doc:"):
+            fid, rel = self.doc_key_parts(key)
+            f = next((f for f in self.docs.folders() if f["id"] == fid), None)
+            base = f["path"] if f else ""
+            return os.path.join(base, *rel.split("/")) if rel and base else base
+        return os.path.join(self.store.root, *key.split("/")) if key else self.store.root
+
+    def folder_tag_ok(self):
+        """노트 칸에 폴더 태그 화면을 보일 노트북인가: 노트북(저장 폴더 아래)이나 가져온 폴더(하위 폴더 포함)"""
+        nb = self.nb
+        if not nb or nb in (ALL, QUICK, FAVS, CAL, TRASH, "@docs", "@smarts") or nb.startswith("@smart"):
+            return False
+        if nb.startswith("@doc:"):
+            return True
+        return not nb.startswith("@") and nb in getattr(self, "nb_keys", [])
 
     def planner_changed(self):
         """달력·할일을 고친 뒤: 새로 생기거나 바뀐 달력 파일이 노트 목록에 보이게 잠시 뒤 목록을 다시 읽는다(연달아 고치면 한 번만)"""

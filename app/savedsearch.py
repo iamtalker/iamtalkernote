@@ -210,6 +210,15 @@ class SavedSearchMixin:
                 counts[t] = counts.get(t, 0) + 1
         for t, c in doc_counts.items():
             counts[t] = counts.get(t, 0) + c
+        self.note_tag_set = set(counts)   # 노트·가져온 파일에 붙은 태그(이 태그는 누르면 노트를 거른다)
+        # 폴더 태그: 그 태그가 붙은 폴더 수(폴더 자체에 붙은 것이라 노트·파일 수에는 더하지 않는다)
+        self.ftag_map = {}
+        for key, tags in self.docs.folder_tags().items():
+            if key not in getattr(self, "nb_keys", []):
+                continue
+            for t in tags:
+                self.ftag_map.setdefault(t, []).append(key)
+                counts[t] = counts.get(t, 0) + 1
         self.tag_keys = [None] + tagac.ordered_tags(counts, getattr(self, "tag_sort", "frequency"))
         self.quiet = True
         self.tagtree.delete(*self.tagtree.get_children())
@@ -263,6 +272,8 @@ class SavedSearchMixin:
         if not row or e.state & 0x5:   # Ctrl/Shift+클릭은 여러 개 고르기라서 노트를 거르지 않는다
             return
         tag = self.tag_keys[int(row[2:])]
+        if tag is not None and tag in getattr(self, "ftag_map", {}) and tag not in getattr(self, "note_tag_set", ()):
+            return self.show_folder_tag_menu(tag, e)   # 폴더에 붙은 태그: 그 폴더들을 고르게 한다(노트 거르기는 하지 않는다)
         if tag is None:
             self.tag_none = not self.tag_none
             self.tag = None
@@ -272,6 +283,16 @@ class SavedSearchMixin:
         if self.tag is None and not self.tag_none:
             self.tagtree.selection_remove(*self.tagtree.selection())
         self.refresh()
+
+    def show_folder_tag_menu(self, tag, e):
+        """폴더 태그를 누르면 그 태그가 붙은 노트북·가져온 폴더를 메뉴로 보여 주고, 고르면 그 폴더로 간다"""
+        menu = tk.Menu(self.root, tearoff=0)
+        for key in self.ftag_map.get(tag, []):
+            menu.add_command(label=self.nb_label(key), command=lambda k=key: self.go_nb(k))
+        try:
+            menu.tk_popup(e.x_root, e.y_root)
+        finally:
+            menu.grab_release()
 
     def on_nb_toggle(self, opened):
         """노트북 목록에서 삼각형을 눌러 펼치거나 접은 것을 기억한다(목록을 다시 그려도 그대로 두려고)"""

@@ -338,7 +338,11 @@ class NoteListMixin:
         """고른 노트북 바로 아래의 하위 노트북을 노트 목록 맨 위에 폴더 줄로 보인다(저장 폴더를 고르면 ScrapBook 같은 노트북들)"""
         box = self.folder_box
         kids = []
-        if self.nb == "" or (self.nb and not self.nb.startswith("@") and self.nb != ALL):
+        if self.nb == "@docs":   # 가져온 폴더 전체: 가져온 폴더 하나하나
+            kids = [k for k in self.nb_keys if k.startswith("@doc:") and "/" not in k[5:]]
+        elif self.nb.startswith("@doc:"):   # 가져온 폴더 안: 바로 아래 하위 폴더
+            kids = [k for k in self.nb_keys if k.startswith(self.nb + "/") and "/" not in k[len(self.nb) + 1:]]
+        elif self.nb == "" or (self.nb and not self.nb.startswith("@") and self.nb != ALL):
             depth = self.nb.count("/") + 1 if self.nb else 0
             kids = [k for k in self.nb_keys if k and not k.startswith("@") and k != ALL and k.count("/") == depth
                     and (not self.nb or k.startswith(self.nb + "/")) and not (self.feat["outl"] and (k == OUTL or k.startswith(OUTL + "/")))]
@@ -353,8 +357,14 @@ class NoteListMixin:
             return
         box.pack(fill="x", before=self.list_body, pady=(4, 2))
         for k in kids[:12]:
-            n = sum(c for kk, c in self.nb_direct.items() if kk == k or kk.startswith(k + "/"))
-            lb = tk.Label(box, text=f"📁  {self.nb_short(k)}", anchor="w", bg=C["bg"], fg=C["accent"], font=(self.ui, 10), padx=18, pady=3, cursor="hand2")
+            if k.startswith("@doc:"):   # 가져온 폴더: 색인된 파일 수
+                counts = self.docs.counts()
+                n = counts.get(k[5:] if "/" not in k[5:] else k, 0)
+                name = self.nb_label(k)
+            else:
+                n = sum(c for kk, c in self.nb_direct.items() if kk == k or kk.startswith(k + "/"))
+                name = self.nb_short(k)
+            lb = tk.Label(box, text=f"📁  {name}", anchor="w", bg=C["bg"], fg=C["accent"], font=(self.ui, 10), padx=18, pady=3, cursor="hand2")
             lb.pack(fill="x", side="top")
             tk.Label(lb, text=f"{n:,}", bg=C["bg"], fg=C["muted"], font=(self.ui, 9)).pack(side="right", padx=14)
             lb.bind("<Button-1>", lambda e, k=k: self.go_nb(k))

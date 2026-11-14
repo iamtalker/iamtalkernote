@@ -348,6 +348,9 @@ class DocIndex:
         conn.execute("DELETE FROM removed_folders WHERE expires<=?", (time.time(),))
         # 내가 붙인 태그·메모. 원본 파일은 건드리지 않고 여기에만 적으며, docs 표를 다시 만들어도(색인 판이 바뀌어도) 남는다
         conn.execute("CREATE TABLE IF NOT EXISTS annot (path TEXT PRIMARY KEY, tags TEXT, memo TEXT)")
+        # 폴더에 붙인 태그(노트북·가져온 폴더). 폴더 자체에만 붙고 안의 노트·파일에는 붙지 않는다. key 는 노트북·가져온 폴더 목록의 키
+        conn.execute("CREATE TABLE IF NOT EXISTS ftag (key TEXT PRIMARY KEY, tags TEXT)")
+        conn.execute("CREATE TABLE IF NOT EXISTS fmemo (key TEXT PRIMARY KEY, memo TEXT)")   # 폴더 메모(노트 본문처럼 글을 적는 칸)
         if conn.execute("SELECT v FROM meta WHERE k='title_only_search'").fetchone() != ("1",):
             rows = [(self.title_hay(title, ext), path)
                     for path, title, ext in conn.execute("SELECT path, title, ext FROM docs")]
@@ -408,6 +411,47 @@ class DocIndex:
                          (self.make_hay(row[1], rel, text, tags, memo), self.title_hay(row[1], row[3]), path))
             conn.commit()
             return True
+        finally:
+            conn.close()
+
+    def folder_tags(self):
+        """{폴더 키: [태그]} (노트북·가져온 폴더에 붙인 태그)"""
+        conn = self._db()
+        try:
+            return {k: json.loads(t or "[]") for k, t in conn.execute("SELECT key, tags FROM ftag")}
+        finally:
+            conn.close()
+
+    def folder_memos(self):
+        conn = self._db()
+        try:
+            return {k: m or "" for k, m in conn.execute("SELECT key, memo FROM fmemo")}
+        finally:
+            conn.close()
+
+    def set_folder_memo(self, key, memo):
+        """폴더 메모를 바꾼다. 비면 기록을 지운다"""
+        memo = (memo or "").strip()
+        conn = self._db()
+        try:
+            if memo:
+                conn.execute("INSERT OR REPLACE INTO fmemo VALUES (?,?)", (key, memo))
+            else:
+                conn.execute("DELETE FROM fmemo WHERE key=?", (key,))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def set_folder_tags(self, key, tags):
+        """폴더 태그를 바꾼다. 비면 기록을 지운다"""
+        tags = list(dict.fromkeys(tags))
+        conn = self._db()
+        try:
+            if tags:
+                conn.execute("INSERT OR REPLACE INTO ftag VALUES (?,?)", (key, json.dumps(tags, ensure_ascii=False)))
+            else:
+                conn.execute("DELETE FROM ftag WHERE key=?", (key,))
+            conn.commit()
         finally:
             conn.close()
 

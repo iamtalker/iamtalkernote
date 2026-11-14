@@ -65,4 +65,9 @@ EN_MORE = {
     "그림·영상·음악": "Images · videos · music",
     "음악": "Music",
     "▶ 음악 재생": "▶ Play music",
+    "폴더 태그…": "Folder tags…",
+    "폴더 태그": "Folder tags",
+    "폴더 메모": "Folder memo",
+    "폴더 태그·메모는 폴더 자체에만 붙고, 안의 노트·파일에는 붙지 않습니다": "Folder tags and memos belong to the folder itself, not to the notes or files inside",
+    "이 폴더에 붙일 태그 (쉼표나 공백으로 구분, 안의 노트·파일에는 붙지 않습니다)": "Tags for this folder (separate with commas or spaces; notes and files inside do not get them)",
 }
