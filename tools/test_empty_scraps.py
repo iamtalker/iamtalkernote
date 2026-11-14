@@ -56,12 +56,23 @@ notes = [
     note("빈7 긴 주소 짝 없음", "---\nsource: >-\n  http://other.example.com/view?no=1\n---\n\n"),
     note("그림만", fm("http://img.example.com/1", "![](../.resources/a.jpg)\n")),
     note("출처 없음", "본문만 있는 노트\n"),
+    note("송하나 코스프레녀 - 후방주의 - 알린넷", fm("http://www.alrin.example.com/ao/2691977")),
+    note("송하나 코스프레녀 - 후방주의 - 꾸르", fm("https://ggoorr.example.net/ao/2691977", BODY)),
+    note("트위터-2", fm("https://twitter.example.com/u/status/1143538773386416199?s=09")),
+    note("X에서 누군가 님", fm("https://x.example.com/u/status/1143538773386416199", BODY)),
+    note("관계없는 빈 글", fm("http://a.example.com/p/12345")),
+    note("완전히 다른 제목", fm("http://b.example.com/p/12345", BODY)),
+    note("다만", fm("다만")),
+    note("내 컴퓨터 위키", fm("http://localhost:8800/doku.php?id=a")),
+    note("그림 주소만 출처", fm("https://pbs.example.com/media/Bif5V.jpg:large")),
 ]
 empties, repaired = cleanup.empty_scraps(notes)
 empty_titles = {n["title"] for n, _u in empties}
 pairs = {old["title"]: new["title"] for old, new in repaired}
 
-check("빈 노트 11개를 찾는다", empty_titles == {"빈1 http", "AA __ 전쟁 당시의 노점상들", "트위터-1", "게시판 글 하나", "카페 옛 글 제목", "11", "빈3 www", "빈4 짝 없음", "빈5 긴 주소", "빈6 질의 없음", "빈7 긴 주소 짝 없음"})
+check("빈 노트 14개를 찾는다", empty_titles == {"빈1 http", "AA __ 전쟁 당시의 노점상들", "트위터-1", "게시판 글 하나", "카페 옛 글 제목", "11", "빈3 www", "빈4 짝 없음", "빈5 긴 주소", "빈6 질의 없음", "빈7 긴 주소 짝 없음",
+                                  "송하나 코스프레녀 - 후방주의 - 알린넷", "트위터-2", "관계없는 빈 글"})
+check("주소가 아닌 출처·localhost·그림 파일 주소는 다시 받을 수 없어 목록에서 뺀다", not ({"다만", "내 컴퓨터 위키", "그림 주소만 출처"} & empty_titles))
 check("그림만 있는 노트·출처 없는 노트는 빈 스크랩이 아니다", not ({"그림만", "출처 없음"} & empty_titles))
 check("http → https 로 바뀐 주소도 짝", pairs.get("빈1 http") == "채움1 https")
 check("경로만 바뀌고 글 번호(질의)가 같고 제목이 비슷하면 짝", pairs.get("AA __ 전쟁 당시의 노점상들") == "전쟁 당시의 노점상들.jpg")
@@ -75,5 +86,8 @@ check("머리말의 긴 주소(source: >-)를 읽어 짝", pairs.get("빈5 긴 �
 check("질의가 없는데 경로가 다르면 짝이 아니다", "빈6 질의 없음" not in pairs)
 check("긴 주소끼리 서로 다른 글이면 짝이 아니다('>-' 글자로 잘못 묶지 않는다)", "빈7 긴 주소 짝 없음" not in pairs)
 check("긴 주소는 주소 자체로 읽는다", dict((n["title"], u) for n, u in empties)["빈5 긴 주소"] == "http://long.example.com/view?no=77")
+check("사이트 주소가 바뀌어도(알린넷 → 꾸르) 글 번호와 제목 앞부분이 같으면 짝", pairs.get("송하나 코스프레녀 - 후방주의 - 알린넷") == "송하나 코스프레녀 - 후방주의 - 꾸르")
+check("트윗처럼 글 번호가 아주 길면 호스트·제목이 달라도 짝", pairs.get("트위터-2") == "X에서 누군가 님")
+check("짧은 글 번호가 같아도 제목이 다르면 짝이 아니다", "관계없는 빈 글" not in pairs)
 print("FAILS:", fails)
 sys.exit(1 if fails else 0)

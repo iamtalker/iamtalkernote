@@ -682,13 +682,49 @@ def _titles_alike(a, b):
     return size >= max(4, 0.6 * min(len(ka), len(kb)))
 
 
+_MEDIA_URL = re.compile(r"\.(?:jpe?g|png|gif|webp|bmp|svg|mp4|webm|mov|mp3|m4a)(?::\w+)?$", re.I)
+
+
+def _refetchable(url):
+    """다시 받아 볼 수 있는 출처인가: 웹 주소(http·https, 점이 든 호스트)이고 내 컴퓨터(localhost)나 그림·동영상 파일 주소가 아니다.
+    '다만'·전화번호 같은 값이 출처 칸에 든 노트나 그림 파일 주소만 출처인 노트는 다시 받아도 글이 채워지지 않는다."""
+    s = urlsplit((url or "").strip())
+    host = s.hostname or ""
+    if s.scheme not in ("http", "https") or "." not in host:
+        return False
+    if host in ("localhost", "127.0.0.1") or host.startswith(("192.168.", "10.")):
+        return False
+    return not _MEDIA_URL.search(s.path)
+
+
+def _post_id(url):
+    """출처 주소에서 글 번호: 질의의 5자리 이상 숫자 값(wr_id=4179873)이나 경로 마지막의 5자리 이상 숫자(/ao/2691977, /status/114…). 없으면 None"""
+    s = urlsplit((url or "").strip())
+    for _k, v in parse_qsl(s.query):
+        if re.fullmatch(r"\d{5,}", v):
+            return v
+    for seg in reversed([x for x in s.path.split("/") if x]):
+        if re.fullmatch(r"\d{5,}", seg):
+            return seg
+        break
+    return None
+
+
+def _title_core(title):
+    """제목에서 사이트 이름·게시판 이름을 뗀 앞부분(' - ', ' _ ', ' | ' 앞). 사이트가 이름을 바꿔도(꾸르 ↔ 알린넷) 같다"""
+    return re.split(r"\s[-_|]\s|\s::\s", title or "")[0]
+
+
 def empty_scraps(notes, progress=None, cancelled=lambda: False):
     """출처 주소(source:)가 있는 스크랩 중 본문이 거의 없는 노트와, 같은 글을 다시 받아 내용이 채워진 노트 짝을 찾는다.
     → (빈 노트 [(노트, 주소)…], 다시 채워진 짝 [(빈 노트, 채워진 노트)…])
     짝은 ① 호스트·경로·질의가 같을 때. 다만 주소가 글 하나를 가리키지 않으면(질의도 없고 경로에 숫자도 없는 카페 첫 화면 등) 제목도 비슷해야 한다.
-    ② 사이트가 주소 모양을 바꿔 경로만 달라졌을 때: 호스트와 글 번호가 든 질의가 같고 제목도 비슷해야 한다."""
+    ② 사이트가 주소 모양을 바꿔 경로만 달라졌을 때: 호스트와 글 번호가 든 질의가 같고 제목도 비슷해야 한다.
+    ③ 사이트 주소가 바뀌었을 때(alrin.org → ggoorr.net, m.dcinside → gall.dcinside, twitter.com → x.com): 글 번호가 같고, 제목의 앞부분(사이트 이름을 뗀 것)이 비슷해야 한다.
+       번호가 12자리 이상(트윗 번호 등)이면 제목이 달라도 같은 글로 본다.
+    출처가 웹 주소가 아니거나(localhost·그림 파일 주소 포함) 다시 받아도 채워질 수 없는 노트는 빈 노트 목록에 넣지 않는다."""
     empties = []
-    exact, by_query = {}, {}
+    exact, by_query, by_id = {}, {}, {}
     total = len(notes) or 1
     for i, n in enumerate(notes):
         if cancelled():
@@ -704,13 +740,17 @@ def empty_scraps(notes, progress=None, cancelled=lambda: False):
         if not url:
             continue
         if _words_without_images(text) <= 2 and not _image_refs(text):
-            empties.append((n, url))
+            if _refetchable(url):
+                empties.append((n, url))
         else:
             host, path, query = scrap_url_key(url)
             if host:
                 exact.setdefault((host, path, query), []).append(n)
                 if _id_like_query(query):
                     by_query.setdefault((host, query), []).append(n)
+                pid = _post_id(url)
+                if pid:
+                    by_id.setdefault(pid, []).append((n, host))
     repaired = []
     for n, url in empties:
         host, path, query = scrap_url_key(url)
@@ -720,6 +760,12 @@ def empty_scraps(notes, progress=None, cancelled=lambda: False):
         twin = next((x for x in exact.get((host, path, query), []) if specific or _titles_alike(n["title"], x["title"])), None)
         if twin is None and _id_like_query(query):
             twin = next((x for x in by_query.get((host, query), []) if _titles_alike(n["title"], x["title"])), None)
+        if twin is None:   # ③ 사이트 주소가 바뀐 경우: 같은 글 번호 + 비슷한 제목(번호가 아주 길면 제목 없이도)
+            pid = _post_id(url)
+            for x, xhost in by_id.get(pid, []) if pid else []:
+                if xhost != host and (len(pid) >= 12 or _titles_alike(_title_core(n["title"]), _title_core(x["title"]))):
+                    twin = x
+                    break
         if twin is not None:
             repaired.append((n, twin))
     return empties, repaired

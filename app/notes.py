@@ -968,6 +968,11 @@ def main():
             ctypes.windll.shcore.SetProcessDpiAwareness(1)
         except Exception:  # noqa: BLE001
             pass
+        try:   # 창을 만들기 전에: pyw 로 띄워도 작업표시줄이 파이썬 묶음·아이콘이 아니라 이 앱의 창 아이콘을 쓰게 한다
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("iamtalker.iamtalkernote")
+        except Exception:  # noqa: BLE001
+            pass
     if not os.environ.get("IAT_NO_SINGLE") and not single.acquire():   # (IAT_NO_SINGLE: 시험용 — 실행 중인 앱을 건드리지 않고 따로 띄운다) 이미 실행 중(창이 열려 있거나 트레이에 있음): 그 앱에 창을 열어 달라고 알렸으니 여기서는 끝낸다
         return
     App().run()
