@@ -442,6 +442,17 @@ class DocIndex:
         finally:
             conn.close()
 
+    def drop_folder_meta(self, keys):
+        """없어진 폴더의 태그·메모 기록을 지운다"""
+        conn = self._db()
+        try:
+            for k in keys:
+                conn.execute("DELETE FROM ftag WHERE key=?", (k,))
+                conn.execute("DELETE FROM fmemo WHERE key=?", (k,))
+            conn.commit()
+        finally:
+            conn.close()
+
     def set_folder_tags(self, key, tags):
         """폴더 태그를 바꾼다. 비면 기록을 지운다"""
         tags = list(dict.fromkeys(tags))

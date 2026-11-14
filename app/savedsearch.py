@@ -131,6 +131,7 @@ class SavedSearchMixin:
         if self.nb == FAVS and not self.feat["favs"]:
             self.nb = ALL
         self.nb_keys = [ALL] + ([QUICK] + quick if quick else []) + [""] + [n for n in names if n not in outl_names] + doc_keys + smart_keys + [TRASH]
+        self.prune_folder_meta()
         direct = {}
         for n in self.all_notes:
             direct[n["nb"]] = direct.get(n["nb"], 0) + 1
@@ -311,6 +312,31 @@ class SavedSearchMixin:
                     self.nb_open[self.nb_keys[int(c[2:])]] = opened
                 walk(c)
         walk()
+
+    def folder_gone(self, key):
+        """폴더 태그·메모의 폴더가 디스크에서 없어졌는가(탐색기에서 옮기거나 지운 경우). 저장 폴더·가져온 폴더의 최상위가 안 보이는 때(드라이브 빠짐, 동기화 중 등)는 없어진 것으로 보지 않는다"""
+        try:
+            if key.startswith("@doc:"):
+                fid, rel = self.doc_key_parts(key)
+                f = next((f for f in self.docs.folders() if f["id"] == fid), None)
+                if not rel or not f or not os.path.isdir(f["path"]):
+                    return False
+                return not os.path.isdir(os.path.join(f["path"], *rel.split("/")))
+            if not key or key.startswith("@") or not os.path.isdir(self.store.root):
+                return False
+            return not os.path.isdir(os.path.join(self.store.root, *key.split("/")))
+        except OSError:
+            return False
+
+    def prune_folder_meta(self):
+        """없어진 폴더에 붙어 있던 태그·메모 기록을 지운다(탐색기에서 옮기면 옛 경로에 매달려 남던 것)"""
+        try:
+            keys = set(self.docs.folder_tags()) | set(self.docs.folder_memos())
+            gone = [k for k in keys if self.folder_gone(k)]
+            if gone:
+                self.docs.drop_folder_meta(gone)
+        except Exception:  # noqa: BLE001  (정리는 못 해도 화면에는 영향이 없다)
+            pass
 
     def open_folder_in_explorer(self, key):
         """노트북·가져온 폴더의 실제 위치를 탐색기로 연다"""
