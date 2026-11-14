@@ -399,7 +399,7 @@ class Reader:
         if yt:
             return ["video", "youtube", yt]
         if is_video_file(src):   # ![](clip.mp4) 도 영상 파일로 읽는다(그림으로 두면 재생되지 않는다)
-            return ["video", "file", src]
+            return ["video", "file", src, alt]
         return ["img", src, alt]
 
     def html_link(self, m):
@@ -424,7 +424,7 @@ class Reader:
             if not vid and lab and youtube_id(href) and text_of(lab).strip().rstrip("/") == href.strip().rstrip("/"):
                 vid = ["video", "youtube", youtube_id(href)]
             if not vid and is_video_file(href):   # [글](https://…/clip.mp4) 는 노트 안에서 재생한다
-                vid = ["video", "file", href]
+                vid = ["video", "file", href, text_of(lab) if lab else ""]
             return vid or ["url", href, lab]
         path, _, anchor = href.partition("#")
         path = urllib.parse.unquote(path)
@@ -432,7 +432,7 @@ class Reader:
             page = md_title(path.rsplit("/", 1)[-1]) if path else self.title
             return ["link", page, lab, anchor]
         if is_video_file(path):   # [글](clip.mp4) 처럼 이 컴퓨터의 영상 파일도 노트 안에서 재생한다
-            return ["video", "file", href]
+            return ["video", "file", href, text_of(lab) if lab else ""]
         return ["url", href, lab]
 
     # ---------------- 블록

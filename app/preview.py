@@ -175,8 +175,11 @@ class Layout:
                 if n[1] == "youtube":
                     self.emit("[▶ 유튜브 영상]", tags + ("chip",), ("img", f"https://i.ytimg.com/vi/{n[2]}/mqdefault.jpg", "", 0))
                     self.emit("\n", tags)
+                if n[1] == "file" and len(n) > 3 and n[3]:   # 파일 이름(가져올 때 바꾼 이름 대신 링크에 쓴 글)을 재생 화면 위에 보인다
+                    self.emit(n[3] + "\n", tags)
+                    start = len(self.out)
                 if n[1] == "file":   # 직접 든 영상 파일: 노트 칸 안에 재생 화면을 넣을 수 있게 주소를 조각에 실어 둔다(못 넣으면 글자 링크)
-                    self.emit(video_label(n[1]), tags + ("link",), ("video", n[2], video_label(n[1])))
+                    self.emit(video_label(n[1], n[2]), tags + ("link",), ("video", n[2], video_label(n[1], n[2])))
                 else:
                     self.emit(video_label(n[1]), tags + ("link",))
                     self.attach(start, ("link", "url", video_url(n[1], n[2])))

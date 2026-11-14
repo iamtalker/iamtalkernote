@@ -465,19 +465,21 @@ class OutlinerMixin:
             return False
         if re.match(r"(?i)^https?://", target):
             ext = os.path.splitext(target.split("?", 1)[0].split("#", 1)[0])[1].lower().lstrip(".")
-            if ext not in winwebview.VIDEO_EXT:   # .mov·.mkv 등은 WebView2 가 못 재생하므로 링크로 둔다
+            if ext not in winwebview.MEDIA_EXT:   # .mov·.mkv 등은 WebView2 가 못 재생하므로 링크로 둔다
                 return False
             url = target
+            path = None
         else:
             path = self.local_file(target)
-            if not path or os.path.splitext(path)[1].lower().lstrip(".") not in winwebview.VIDEO_EXT:
+            if not path or os.path.splitext(path)[1].lower().lstrip(".") not in winwebview.MEDIA_EXT:
                 return False
             url = winwebview.file_url(path)
         used = self._video_used
         if url in used or len(self.video_players) >= self.VIDEO_MAX:   # 같은 영상이 두 번 나오거나 한도를 넘으면 글자 링크
             return False
         w = self.img_avail()          # 본문 칸 너비만큼 채운다(16:9)
-        h = w * 9 // 16
+        audio = os.path.splitext(url.split("?", 1)[0])[1].lower().lstrip(".") in winwebview.AUDIO_EXT
+        h = 220 if audio else w * 9 // 16   # 소리는 재생 화면(목록 포함)이 들어갈 만큼만, 영상은 16:9
         frame = tk.Frame(self.view, bg="#000000", width=w, height=h)
         frame.pack_propagate(False)
         player = winwebview.WebView()
@@ -488,7 +490,9 @@ class OutlinerMixin:
             frame.destroy()          # 아직 글에 들어가지 않았다
             return False
         try:
-            ok = player.show_url(frame.winfo_id(), url, w, h)
+            # 이 컴퓨터의 파일은 가져오기 재생 화면(재생 목록 포함)을 그대로 쓴다. 웹 주소 영상만 작은 재생 화면으로 감싼다
+            src = winwebview.page_url(path) if path else winwebview.inline_page(url)
+            ok = player.show_url(frame.winfo_id(), src, w, h)
         except tk.TclError:
             ok = False
         if not ok:
@@ -536,6 +540,10 @@ class OutlinerMixin:
             raw = self.find_local_image(target)
             msg = tr("보안을 위해 실행 파일은 열지 않습니다. 파일 위치 열기로 직접 여세요.") if raw else tr("연결된 파일을 찾을 수 없습니다.")
             return messagebox.showinfo(APP, msg, parent=self.root)
+        ext = os.path.splitext(path)[1].lower().lstrip(".")
+        if sys.platform == "win32" and ext in winwebview.MEDIA_EXT and winwebview.available():
+            # 소리·영상은 가져오기 화면과 같은 노트 칸 재생 화면으로 연다(자동 재생 안 함, 재생 목록·폴더 고르기 포함)
+            return self.open_doc({"path": path, "title": os.path.basename(path), "ext": ext, "nb": ""}, record=False)
         try:
             os.startfile(path) if sys.platform == "win32" else webbrowser.open("file://" + path)
         except OSError as ex:

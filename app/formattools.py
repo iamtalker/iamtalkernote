@@ -64,6 +64,7 @@ class FormatToolsMixin:
 
     IMAGE_EXT = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg")
     VIDEO_EXT = (".mp4", ".webm", ".m4v", ".ogv")   # WebView2 가 재생하는 영상 형식
+    AUDIO_EXT = (".mp3", ".flac", ".m4a", ".ogg", ".wav", ".opus")   # 노트 안에서 재생하는 소리 형식
 
     def attach_files(self):
         """그림(또는 다른 파일)을 골라 노트에 넣는다: 파일은 리소스 폴더로 복사되고 노트에는 그 상대 경로 링크가 들어간다"""
@@ -73,9 +74,10 @@ class FormatToolsMixin:
             self.set_mode("split")
         down = os.path.join(os.path.expanduser("~"), "Downloads")
         paths = filedialog.askopenfilenames(parent=self.root, title=tr("노트에 넣을 그림·영상·파일 고르기"), initialdir=down if os.path.isdir(down) else None,
-                                            filetypes=[(tr("그림·영상"), " ".join("*" + e for e in self.IMAGE_EXT + self.VIDEO_EXT)),
+                                            filetypes=[(tr("그림·영상·음악"), " ".join("*" + e for e in self.IMAGE_EXT + self.VIDEO_EXT + self.AUDIO_EXT)),
                                                        (tr("그림"), " ".join("*" + e for e in self.IMAGE_EXT)),
                                                        (tr("영상"), " ".join("*" + e for e in self.VIDEO_EXT)),
+                                                       (tr("음악"), " ".join("*" + e for e in self.AUDIO_EXT)),
                                                        (tr("모든 파일"), "*.*")])
         if not paths:
             return
@@ -88,7 +90,7 @@ class FormatToolsMixin:
                 continue
             base = os.path.basename(p)
             # 그림·영상은 ![..](..) 로 넣는다. 영상 파일은 노트 안에서 재생 화면으로 보인다(markdown.py 가 읽는다)
-            out.append(f"![{os.path.splitext(base)[0]}]({rel})" if p.lower().endswith(self.IMAGE_EXT + self.VIDEO_EXT) else f"[{base}]({rel})")
+            out.append(f"![{os.path.splitext(base)[0]}]({rel})" if p.lower().endswith(self.IMAGE_EXT + self.VIDEO_EXT + self.AUDIO_EXT) else f"[{base}]({rel})")
         if not out:
             return
         a, b = self.sel_range()

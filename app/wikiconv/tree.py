@@ -57,20 +57,30 @@ def youtube_id(url):
 VIDEO_EXT = (".mp4", ".webm", ".mov", ".m4v", ".mkv", ".ogv")
 
 
+AUDIO_EXT = (".mp3", ".flac", ".m4a", ".ogg", ".wav", ".opus")   # 노트 안에서 재생하는 소리 파일(가져오기와 같은 형식)
+
+
+def is_audio_file(url):
+    return url.strip().lower().split("?")[0].split("#")[0].endswith(AUDIO_EXT)
+
+
 def is_video_file(url):
-    """주소가 영상 파일(.mp4 …)을 가리키는가(? 뒤의 값은 무시)"""
-    return url.strip().lower().split("?")[0].split("#")[0].endswith(VIDEO_EXT)
+    """주소가 노트 안에서 재생하는 미디어 파일(영상 .mp4 …, 소리 .mp3 …)을 가리키는가(? 뒤의 값은 무시).
+    소리도 같은 자리에서 재생하므로 이름은 그대로 두고 소리 파일도 포함한다."""
+    return url.strip().lower().split("?")[0].split("#")[0].endswith(VIDEO_EXT + AUDIO_EXT)
 
 
-def video_label(service):
-    return "▶ 동영상 재생" if service == "file" else f"▶ {VIDEOS[service][0]}에서 보기"
+def video_label(service, url=""):
+    if service == "file":
+        return "▶ 음악 재생" if is_audio_file(url) else "▶ 동영상 재생"
+    return f"▶ {VIDEOS[service][0]}에서 보기"
 
 
 def video_from_link(url, label):
     """['video', 서비스, ID] 를 링크로 쓴 것(주소와 '▶ …에서 보기' 글이 맞을 때)을 영상으로 되돌린다. 아니면 None."""
     for svc, (name, fmt) in VIDEOS.items():
         if svc == "file":
-            if label == video_label(svc) and is_video_file(url):
+            if label in (video_label(svc), video_label(svc, url)) and is_video_file(url):
                 return ["video", "file", url]
             continue
         head, tail = fmt.split("{}")

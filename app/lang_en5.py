@@ -62,4 +62,7 @@ EN_MORE = {
     "링크 (Ctrl+K)": "Link (Ctrl+K)",
     "그림·영상·파일 넣기 (리소스 폴더로 복사, 영상은 노트 안에서 재생)": "Insert images, videos, or files (copied to the resource folder; videos play inside the note)",
     "자동완성": "Autocomplete",
+    "그림·영상·음악": "Images · videos · music",
+    "음악": "Music",
+    "▶ 음악 재생": "▶ Play music",
 }

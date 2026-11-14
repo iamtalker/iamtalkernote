@@ -6,6 +6,7 @@ Windows 전용.
 
 Viewer 는 winpreview.Preview 와 같은 모양(show·resize·unload)이라 App.pv 자리에 그대로 들어간다."""
 import ctypes
+import hashlib
 import html
 import json
 import os
@@ -388,6 +389,20 @@ def write_player(path):
             .replace("__TRACKS__", dump(tracks)).replace("__DIRS__", dump(dirs)).replace("__START__", str(start))
             .replace("__BASE__", dump(os.path.normcase(base).replace("\\", "/").rstrip("/"))))
     out = os.path.join(data_dir(), "player.html")
+    with open(out, "w", encoding="utf-8") as f:
+        f.write(page)
+    return file_url(out)
+
+
+def inline_page(url):
+    """노트 칸 안에 넣을 영상 화면. 가져온 파일의 재생 화면과 같이 자동으로 재생하지 않는다(재생 단추를 눌러야 나온다).
+    주소를 그대로 열면 브라우저가 바로 재생할 수 있어서, 조절기가 있는 작은 페이지로 감싸 그 주소를 넣는다."""
+    tag = "video" if re.search(r"(?i)\.(mp4|webm|m4v|ogv)([?#]|$)", url) else "audio"
+    page = ('<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;height:100%;background:#000;overflow:hidden}'
+            f'{tag}{{display:block;width:100%;height:100%;background:#000}}</style></head><body>'
+            f'<{tag} controls preload="metadata" src="{html.escape(url, quote=True)}"></{tag}></body></html>')
+    key = hashlib.md5(url.encode("utf-8")).hexdigest()[:16]
+    out = os.path.join(data_dir(), f"inline_{key}.html")
     with open(out, "w", encoding="utf-8") as f:
         f.write(page)
     return file_url(out)
