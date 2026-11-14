@@ -68,6 +68,8 @@ EN_MORE = {
     "폴더 태그…": "Folder tags…",
     "폴더 태그": "Folder tags",
     "폴더 메모": "Folder memo",
+    "탐색기에서 폴더 열기": "Open folder in Explorer",
+    "폴더를 찾을 수 없습니다.": "Folder not found.",
     "폴더 태그·메모는 폴더 자체에만 붙고, 안의 노트·파일에는 붙지 않습니다": "Folder tags and memos belong to the folder itself, not to the notes or files inside",
     "이 폴더에 붙일 태그 (쉼표나 공백으로 구분, 안의 노트·파일에는 붙지 않습니다)": "Tags for this folder (separate with commas or spaces; notes and files inside do not get them)",
 }

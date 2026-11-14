@@ -98,7 +98,10 @@ async function init() {
   const { defaultMode, defaultFolderId } = await chrome.storage.local.get(["defaultMode", "defaultFolderId"]);
   if (defaultMode) setMode(defaultMode);
 
+  // 폴더 목록이 오기 전에 Clip 을 누르면 노트북이 안 정해져 저장 폴더 바로 아래에 스크랩된다(앱을 막 켠 직후 목록이 늦게 온다). 올 때까지 막는다.
+  clipBtn.disabled = true;
   chrome.runtime.sendMessage({ type: "listFolders" }, (res) => {
+    clipBtn.disabled = false;
     notebookEl.innerHTML = "";
     if (!res || !res.ok) {
       notebookEl.innerHTML = '<option value="">(default notebook)</option>';

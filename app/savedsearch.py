@@ -312,6 +312,26 @@ class SavedSearchMixin:
                 walk(c)
         walk()
 
+    def open_folder_in_explorer(self, key):
+        """노트북·가져온 폴더의 실제 위치를 탐색기로 연다"""
+        path = self.folder_path_of(key)
+        if not path or not os.path.isdir(path):
+            return messagebox.showinfo(APP, tr("폴더를 찾을 수 없습니다.") + "\n" + (path or ""), parent=self.root)
+        try:
+            os.startfile(path)
+        except OSError as ex:
+            messagebox.showerror(APP, str(ex), parent=self.root)
+
+    def on_nb_click(self, e):
+        """이미 고른 폴더를 다시 누르면(노트를 열어 둔 상태) 노트를 닫고 폴더 화면으로 돌아온다. 고른 항목이 바뀌면 on_nb_select 가 처리한다"""
+        row = self.nbtree.identify_row(e.y)
+        if not row or self.nbtree.identify_region(e.x, e.y) == "tree" and self.nbtree.identify_element(e.x, e.y).endswith("indicator"):
+            return   # 펼침 삼각형을 누른 것은 건드리지 않는다
+        key = self.nb_keys[int(row[2:])]
+        if key == self.nb and self.cur and self.folder_tag_ok():
+            self.flush()
+            self.close_note()
+
     def on_nb_select(self, e=None):
         if self.quiet:
             return
@@ -353,6 +373,7 @@ class SavedSearchMixin:
         if key.startswith("@doc"):   # 가져온 폴더: 원본 파일은 건드리지 않는다
             if key.startswith("@doc:"):
                 fid, rel = self.doc_key_parts(key)
+                m.add_command(label=tr("탐색기에서 폴더 열기"), command=lambda: self.open_folder_in_explorer(key))
                 m.add_command(label=tr("다시 읽기"), command=lambda: self.scan_docs(fid))
                 if not rel:
                     m.add_command(label=tr("목록에서 빼기 (원본 파일은 그대로)"), command=lambda: self.remove_doc_folder(fid))
@@ -365,6 +386,7 @@ class SavedSearchMixin:
         else:            # 저장 폴더(최상위)도 노트북처럼 상위가 될 수 있다
             m.add_command(label=tr("하위 노트북 만들기"), command=lambda: self.add_notebook(parent=key, show_parent=True))
         if key != ALL:
+            m.add_command(label=tr("탐색기에서 폴더 열기"), command=lambda: self.open_folder_in_explorer(key))
             m.add_command(label=tr("저장 폴더 전체 삭제(휴지통)") if key == "" else tr("노트북 삭제(휴지통)"), command=self.delete_notebook)
         m.tk_popup(e.x_root, e.y_root)
 

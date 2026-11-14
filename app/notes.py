@@ -304,6 +304,7 @@ class App(EmbeddedMixin, DialogsMixin, SearchBoxMixin, TagEditMixin, WikiUIMixin
         self.nbtree.bind("<<TreeviewSelect>>", self.on_nb_select)
         self.nbtree.bind("<<TreeviewOpen>>", lambda e: self.on_nb_toggle(True))
         self.nbtree.bind("<<TreeviewClose>>", lambda e: self.on_nb_toggle(False))
+        self.nbtree.bind("<Button-1>", self.on_nb_click, add="+")
         self.nbtree.bind("<Delete>", lambda e: self.delete_notebook())
         self.nbtree.bind("<Button-3>", self.on_nb_menu)
         self.nbmenu = tk.Menu(self.root, tearoff=0)
