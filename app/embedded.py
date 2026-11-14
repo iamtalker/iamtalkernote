@@ -82,13 +82,13 @@ class EmbeddedMixin:
         def work(notes, prog, cancel):
             groups = cleanup.duplicate_media(self.store, prog, cancel)
             if not groups:
-                return [], {}
+                return [], {}, []
             media_re = re.escape(os.path.basename(self.store.media_dir)) + r"/([^)\s\"'<>]+)"   # 리소스 폴더 이름(.resources · _resources) 뒤의 파일 이름
             wanted = {os.path.basename(p): None for g in groups for p in g}
             refs = {k: [] for k in wanted}
             for n in notes:
                 if cancel():
-                    return [], {}
+                    return [], {}, []
                 try:
                     with open(n["path"], "rb") as fh:
                         text = st.decode(fh.read())
@@ -100,11 +100,11 @@ class EmbeddedMixin:
             # 아무 노트도 쓰지 않는 파일(휴지통 노트만 쓰던 파일 포함)은 중복 대상이 아니다 → 안 쓰는 미디어 정리 대상
             groups = [[p for p in g if refs.get(os.path.basename(p))] for g in groups]
             groups = [g for g in groups if len(g) > 1]
-            return groups, refs
+            return groups, refs, notes
         self.scan_notes(tr("중복 이미지 찾기"), work, self.duplicate_media_dialog)
 
     def duplicate_media_dialog(self, result):
-        groups, refs = result
+        groups, refs, notes = result
         if not groups:
             return messagebox.showinfo(APP, tr("내용이 같은 그림 파일이 없습니다."), parent=self.root)
         def mb(n):
@@ -116,7 +116,7 @@ class EmbeddedMixin:
         head.pack(fill="x", padx=16, pady=(12, 4))
         tk.Label(head, text=tr("내용이 같은 그림 {0:,}묶음 · 줄이면 남는 파일 {1:,}개 (약 {2}) · 줄일 용량이 큰 묶음부터").format(len(groups), extra, mb(wasted)),
                  bg=C["bg"], fg=C["text"], font=(self.ui, 10), anchor="w").pack(side="left")
-        tk.Label(top, text=tr("그림을 누르면 오른쪽에 미리 봅니다. ▸를 누르면 그 그림을 쓰는 노트가 펼쳐지고, 노트 이름을 누르면 그 노트로 갑니다. 합치면 묶음마다 파일 하나만 남기고 노트의 링크를 그 파일로 고칩니다(쓰는 노트가 가장 많은 파일을 남깁니다)."),
+        tk.Label(top, text=tr("그림을 누르면 오른쪽에 미리 봅니다. ▸를 누르면 그 그림을 쓰는 노트가 펼쳐지고, 노트 이름을 누르면 그 노트로 갑니다. 합치면 묶음마다 파일 하나만 남기고 노트의 링크를 그 파일로 고친 뒤, 안 쓰게 된 나머지 파일은 휴지통으로 보냅니다(쓰는 노트가 가장 많은 파일을 남깁니다)."),
                  bg=C["bg"], fg=C["muted"], font=(self.ui, 9), anchor="w", justify="left", wraplength=960, padx=16).pack(fill="x", pady=(0, 6))
         bar = tk.Frame(top, bg=C["bg"])
         bar.pack(side="bottom", fill="x", padx=16, pady=(0, 12))
@@ -198,11 +198,11 @@ class EmbeddedMixin:
                 names = [os.path.basename(q) for q in g]
                 keep = cleanup.keep_name(names, refs)
                 fix += sum(len(refs.get(n, [])) for n in names if n != keep)
-            if not messagebox.askyesno(APP, tr("{0}: 그림 {1:,}묶음을 한 파일로 합치고, 노트 {2:,}곳의 링크를 고칩니다.\n바뀌기 전 내용은 노트 버전에 남고 수정 시각은 그대로 둡니다. 파일은 지우지 않습니다.\n\n진행할까요?").format(label, len(todo), fix), parent=top):
+            if not messagebox.askyesno(APP, tr("{0}: 그림 {1:,}묶음을 한 파일로 합치고, 노트 {2:,}곳의 링크를 고친 뒤 안 쓰게 된 나머지 파일을 휴지통으로 보냅니다.\n바뀌기 전 노트 내용은 노트 버전에 남고 수정 시각은 그대로입니다. 보낸 파일은 {3}일 동안 휴지통에서 복원할 수 있습니다.\n\n진행할까요?").format(label, len(todo), fix, self.store.trash_days), parent=top):
                 return
             top.destroy()
             self.flush()
-            self.run_task(tr("그림 합치는 중"), lambda prog, cancel: cleanup.merge_duplicate_media(self.store, todo, refs, prog, cancel),
+            self.run_task(tr("그림 합치는 중"), lambda prog, cancel: cleanup.merge_and_remove(self.store, todo, refs, notes, prog, cancel),
                           self.merge_media_done, text=tr("노트의 그림 링크를 고치는 중…"))
 
         def merge_selected():
@@ -219,13 +219,14 @@ class EmbeddedMixin:
             tree.selection_set(first[0])
 
     def merge_media_done(self, result):
-        changed, links, merged, failed = result
-        text = tr("노트 {0:,}개의 링크 {1:,}곳을 고쳤습니다.").format(changed, links)
+        changed, links, merged, failed, trashed, left = result
+        text = tr("노트 {0:,}개의 링크 {1:,}곳을 고치고, 중복 파일 {2:,}개를 휴지통으로 보냈습니다. (파일 → 휴지통에서 복원)").format(changed, links, trashed)
+        if left:
+            text += "\n\n" + tr("{0:,}개 파일은 아직 다른 곳에서 쓰고 있어 그대로 두었습니다. (휴지통 노트의 링크나 인코딩된 링크 등)").format(left)
         if failed:
             text += "\n\n" + tr("실패 {0}개:").format(len(failed)) + "\n" + "\n".join(f"{p}: {e}" for p, e in failed[:10])
         self.reload_notes(keep_scroll=True)
-        if messagebox.askyesno(APP, text + "\n\n" + tr("이제 아무 노트도 쓰지 않는 그림 파일은 '안 쓰는 미디어 파일 정리'에서 지울 수 있습니다. 지금 열까요?"), parent=self.root):
-            self.show_unused_media()
+        messagebox.showinfo(APP, text, parent=self.root)
 
     # ------------------------------------------------------------ 중복 이미지 창: 그림만 있는 노트 정리
     def image_only_cleanup(self):

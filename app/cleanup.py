@@ -768,3 +768,27 @@ def merge_duplicate_media(store, groups, refs, progress=None, cancelled=lambda: 
         except Exception as e:  # 한 노트가 실패해도 나머지는 계속한다
             failed.append((path, str(e)))
     return changed, links, merged, failed
+
+
+def merge_and_remove(store, groups, refs, notes, progress=None, cancelled=lambda: False):
+    """합치기(링크 고치기) 뒤에 남은 중복 파일을 휴지통으로 보낸다. 지울 파일은 링크를 고친 뒤에도 어떤 노트(휴지통의 노트 포함)도
+    가리키지 않는 것으로 다시 확인한 것만이다(퍼센트 인코딩 등으로 못 고친 링크가 남은 파일은 그대로 둔다). 휴지통에서 복원할 수 있다.
+    → (고친 노트 수, 고친 링크 수, 합친 묶음 수, 실패 [(경로, 이유)], 휴지통으로 보낸 파일 수, 아직 쓰여서 남긴 파일 수)"""
+    import os
+    changed, links, merged, failed = merge_duplicate_media(store, groups, refs, progress, cancelled)
+    if cancelled():
+        return changed, links, merged, failed, 0, 0
+    extras = []
+    for g in groups:
+        names = [os.path.basename(p) for p in g]
+        keep = keep_name(names, refs)
+        extras += [p for p in g if os.path.basename(p) != keep]
+    unused = {p for p, _size in unused_media(store, notes, progress, cancelled)}
+    drop = [p for p in extras if p in unused]
+    trashed = 0
+    if drop and not cancelled():
+        try:
+            trashed = store.trash_files(drop, store.media_dir, label="합친 중복 그림")
+        except OSError as e:
+            failed.append((store.media_dir, str(e)))
+    return changed, links, merged, failed, trashed, len(extras) - len(drop)

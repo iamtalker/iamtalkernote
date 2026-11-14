@@ -63,6 +63,30 @@ check("n2 untouched (xb.png kept)", "xb.png" in after["n2"] and after["n2"].coun
 check("a.png file not deleted", os.path.isfile(os.path.join(media, "a.png")))
 check("second run changes nothing", cleanup.merge_duplicate_media(s, groups, refs)[:2] == (0, 0))
 
+# 합치고 남은 파일은 휴지통으로: 아직 글자로 쓰이는 파일은 남긴다
+buf2 = io.BytesIO()
+Image.new("RGB", (5, 5), (10, 200, 10)).save(buf2, "PNG")
+for name in ("c.png", "d.png", "e.png"):
+    with open(os.path.join(media, name), "wb") as f:
+        f.write(buf2.getvalue())
+more = {"n4": "![](.resources/c.png)\n![](.resources/c.png)\n", "n5": "![](.resources/d.png)\n", "n6": "![](.resources/e.png)\n", "n7": "참고: d.png 파일 이름만 글로 적음\n"}
+for key, t in more.items():
+    p = os.path.join(vault, key + ".md")
+    with open(p, "w", encoding="utf-8", newline="") as f:
+        f.write(t)
+    notes.append({"nb": "", "title": key, "path": p})
+groups2 = [g for g in cleanup.duplicate_media(s) if any(os.path.basename(q) == "c.png" for q in g)]
+refs2 = {os.path.basename(q): [] for g in groups2 for q in g}
+for n in notes:
+    for name in set(re.findall(r"\.resources/([^)\s\"'<>]+)", open(n["path"], encoding="utf-8").read())) & set(refs2):
+        refs2[name].append(n)
+res = cleanup.merge_and_remove(s, groups2, refs2, notes)
+ch, ln, mg, fl, trashed, left = res
+check("kept c.png (most used), fixed n5 and n6", ch == 2 and ln == 2 and mg == 1 and not fl)
+check("e.png trashed, d.png left (still named in n7)", trashed == 1 and left == 1 and not os.path.exists(os.path.join(media, "e.png")) and os.path.exists(os.path.join(media, "d.png")))
+check("c.png still there and n6 points at it", os.path.exists(os.path.join(media, "c.png")) and "c.png" in open(os.path.join(vault, "n6.md"), encoding="utf-8").read())
+check("trash holds the file for restore", any(it.get("into") for it in s.trash_items()))
+
 # 창: 미리보기가 그림을 보여 주는지
 try:
     import tkinter as tk
@@ -86,7 +110,7 @@ try:
     fake = Fake()
     if fake.tool_window is None:
         raise RuntimeError("no tool_window mixin")
-    fake.duplicate_media_dialog((groups, refs))
+    fake.duplicate_media_dialog((groups, refs, notes))
     root.update()
     tops = [w for w in root.winfo_children() if isinstance(w, tk.Toplevel)]
     check("dialog opened", len(tops) == 1)

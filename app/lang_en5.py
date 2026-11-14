@@ -86,4 +86,8 @@ EN_MORE = {
     "고른 묶음 합치기": "Merge selected group",
     "노트 {0:,}개의 링크 {1:,}곳을 고쳤습니다.": "Fixed {1:,} links in {0:,} notes.",
     "이제 아무 노트도 쓰지 않는 그림 파일은 '안 쓰는 미디어 파일 정리'에서 지울 수 있습니다. 지금 열까요?": "Image files no note uses any more can now be removed in 'Clean up unused media'. Open it now?",
+    "그림을 누르면 오른쪽에 미리 봅니다. ▸를 누르면 그 그림을 쓰는 노트가 펼쳐지고, 노트 이름을 누르면 그 노트로 갑니다. 합치면 묶음마다 파일 하나만 남기고 노트의 링크를 그 파일로 고친 뒤, 안 쓰게 된 나머지 파일은 휴지통으로 보냅니다(쓰는 노트가 가장 많은 파일을 남깁니다).": "Click an image to preview it on the right. ▸ expands the notes that use it; click a note name to go to it. Merging keeps one file per group, points the notes' links at it, then sends the files no longer used to the trash (the file used by the most notes is kept).",
+    "{0}: 그림 {1:,}묶음을 한 파일로 합치고, 노트 {2:,}곳의 링크를 고친 뒤 안 쓰게 된 나머지 파일을 휴지통으로 보냅니다.\n바뀌기 전 노트 내용은 노트 버전에 남고 수정 시각은 그대로입니다. 보낸 파일은 {3}일 동안 휴지통에서 복원할 수 있습니다.\n\n진행할까요?": "{0}: merge {1:,} groups into one file each, fix links in {2:,} places, then send the files no longer used to the trash.\nNote content before the change stays in note versions and the modified time is kept. Files sent to the trash can be restored for {3} days.\n\nProceed?",
+    "노트 {0:,}개의 링크 {1:,}곳을 고치고, 중복 파일 {2:,}개를 휴지통으로 보냈습니다. (파일 → 휴지통에서 복원)": "Fixed {1:,} links in {0:,} notes and sent {2:,} duplicate files to the trash. (Restore from File → Trash)",
+    "{0:,}개 파일은 아직 다른 곳에서 쓰고 있어 그대로 두었습니다. (휴지통 노트의 링크나 인코딩된 링크 등)": "{0:,} files are still used elsewhere and were left in place (links in trashed notes, encoded links, etc.).",
 }
