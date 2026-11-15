@@ -316,7 +316,7 @@ class EmbeddedMixin:
         if not empties:
             return messagebox.showinfo(APP, tr("본문이 빈 옛 스크랩이 없습니다."), parent=self.root)
         top = self.tool_window(tr("빈 스크랩 다시 받기 — {0:,}개").format(len(empties)), "860x560", native=True)
-        tk.Label(top, text=tr("출처 주소는 있는데 본문이 없는 노트 {0:,}개입니다. 먼저 '주소 확인 · 죽은 글 정리'로 없어진 웹페이지의 빈 노트를 휴지통으로 보내고, '다음 10개 열기'로 살아 있는 글만 브라우저에서 열어 조플린 클리퍼로 다시 스크랩하세요. 같은 주소로 내용이 채워진 노트가 생기면 '다시 채워진 빈 노트 정리'로 옛 빈 노트를 휴지통에 보냅니다.").format(len(empties)),
+        tk.Label(top, text=tr("출처 주소는 있는데 본문이 없는 노트 {0:,}개입니다. 다시 받을 필요가 없으면 '빈 노트 모두 휴지통으로'로 한 번에 정리하세요. 골라서 받으려면 먼저 '주소 확인 · 죽은 글 정리'로 없어진 웹페이지의 빈 노트를 휴지통으로 보내고, '다음 10개 열기'로 살아 있는 글만 브라우저에서 열어 조플린 클리퍼로 다시 스크랩하세요. 같은 주소로 내용이 채워진 노트가 생기면 '다시 채워진 빈 노트 정리'로 옛 빈 노트를 휴지통에 보냅니다.").format(len(empties)),
                  bg=C["bg"], fg=C["muted"], font=(self.ui, 9), anchor="w", justify="left", padx=16, pady=10, wraplength=800).pack(fill="x")
         wrap = tk.Frame(top, bg=C["bg"])
         wrap.pack(fill="both", expand=True, padx=16)
@@ -407,12 +407,26 @@ class EmbeddedMixin:
                 rescan()
             self.run_task(tr("주소 확인"), lambda prog, cancel: cleanup.check_urls([url for _n, url in todo], prog, cancel), done_check, text=tr("출처 주소를 확인하는 중…"))
 
+        def trash_all():
+            """다시 받지 않고 빈 노트를 전부 휴지통으로 보낸다(다시 받는 수고에 비해 잃을 것이 적을 때)"""
+            items = list(state["empties"])
+            if not items:
+                return messagebox.showinfo(APP, tr("정리할 빈 노트가 없습니다."), parent=top)
+            shown = "\n".join(f"· {n['title'][:40]}" for n, _u in items[:10])
+            if len(items) > 10:
+                shown += "\n" + tr("… 외 {0:,}개").format(len(items) - 10)
+            if not messagebox.askyesno(APP, tr("출처 주소만 남은 빈 노트 {0:,}개를 모두 휴지통으로 보냅니다.\n{1}일 동안 휴지통에서 복원할 수 있습니다.\n\n{2}\n\n진행할까요?").format(len(items), self.store.trash_days, shown), parent=top):
+                return
+            self.trash_notes([n["path"] for n, _u in items])
+            rescan()
+
         bar = tk.Frame(top, bg=C["bg"])
         bar.pack(side="bottom", fill="x", padx=16, pady=12)
         info.pack(side="bottom", fill="x")
         Btn(bar, tr("다음 10개 열기"), open_next, pady=5).pack(side="left")
         Btn(bar, tr("목록 새로 고침"), rescan, pady=5).pack(side="left", padx=(8, 0))
         Btn(bar, tr("주소 확인 · 죽은 글 정리"), check_dead, pady=5).pack(side="left", padx=(8, 0))
+        Btn(bar, tr("빈 노트 모두 휴지통으로"), trash_all, kind="danger", pady=5).pack(side="right", padx=(0, 8))
         Btn(bar, tr("다시 채워진 빈 노트 정리…"), lambda: rescan(clean_now), pady=5).pack(side="right")
         render()
 

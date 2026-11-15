@@ -104,4 +104,8 @@ EN_MORE = {
     "주소 확인": "Check addresses",
     "출처 주소를 확인하는 중…": "Checking source addresses…",
     "주소 확인 · 죽은 글 정리": "Check addresses · remove dead",
+    "출처 주소는 있는데 본문이 없는 노트 {0:,}개입니다. 다시 받을 필요가 없으면 '빈 노트 모두 휴지통으로'로 한 번에 정리하세요. 골라서 받으려면 먼저 '주소 확인 · 죽은 글 정리'로 없어진 웹페이지의 빈 노트를 휴지통으로 보내고, '다음 10개 열기'로 살아 있는 글만 브라우저에서 열어 조플린 클리퍼로 다시 스크랩하세요. 같은 주소로 내용이 채워진 노트가 생기면 '다시 채워진 빈 노트 정리'로 옛 빈 노트를 휴지통에 보냅니다.": "{0:,} notes have a source address but an empty body. If you do not need to re-fetch them, clean them all up at once with 'All empty notes to trash'. To pick and re-fetch instead, first use 'Check addresses · remove dead' to send notes whose web page is gone to the trash, then use 'Open next 10' to open only the live pages in your browser and re-clip them with the Joplin clipper. When a note filled from the same address appears, 'Clean up refilled empty notes' sends the old empty note to the trash.",
+    "정리할 빈 노트가 없습니다.": "There are no empty notes to clean up.",
+    "출처 주소만 남은 빈 노트 {0:,}개를 모두 휴지통으로 보냅니다.\n{1}일 동안 휴지통에서 복원할 수 있습니다.\n\n{2}\n\n진행할까요?": "This sends all {0:,} empty notes that only have a source address to the trash.\nYou can restore them from the trash for {1} days.\n\n{2}\n\nProceed?",
+    "빈 노트 모두 휴지통으로": "All empty notes to trash",
 }

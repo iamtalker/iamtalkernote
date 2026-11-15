@@ -95,6 +95,7 @@ try:
         with open(p, "w", encoding="utf-8", newline="") as f:
             f.write("---\nsource: %s%s\n---\n\n" % (base, path))
         notes.append({"nb": "", "title": key, "path": p})
+    cleanup._refetchable = lambda url: True   # 시험 서버는 127.0.0.1 이라 '다시 받을 수 없는 주소' 거르기를 끈다
     empties, repaired = cleanup.empty_scraps(notes)
     check("four empty notes found", len(empties) == 4)
 
@@ -111,7 +112,7 @@ try:
         tool_window = toolsmenu.ToolsMenuMixin.tool_window
 
         def __init__(self):
-            self.root = root
+            self.root, self.store = root, s
 
         def run_task(self, title, work, done, text=None, cancellable=True):
             done(work(lambda a, b: None, lambda: False))
@@ -143,6 +144,13 @@ try:
     root.update()
     check("asked twice (connect, trash)", len(asked) == 2)
     check("only the gone note and the home-redirect note were trashed", sorted(trashed) == ["없어짐.md", "첫화면.md"])
+    # 빈 노트 모두 휴지통으로: 다시 받지 않고 한 번에 정리
+    trashed.clear()
+    asked.clear()
+    btn_all = next(b for b in btns if b.label.cget("text") == "빈 노트 모두 휴지통으로")
+    btn_all.command()
+    root.update()
+    check("trash-all asks once and sends every empty note", len(asked) == 1 and sorted(trashed) == sorted(["없어짐.md", "로그인.md", "살아있음.md", "첫화면.md"]))
     root.destroy()
 except Exception as e:  # noqa: BLE001
     import traceback
