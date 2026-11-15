@@ -336,9 +336,9 @@ class Reader:
                 (re.compile(r"\[\[((?:\\.|[^\]\\]|\](?!\]))+?)\]\]"), self.wikilink),
                 (re.compile(r"\[\^([^\]\s]+)\](?!:)"),
                  lambda m: ["fn", "" if m.group(1).isdigit() else m.group(1), self.notes.get(m.group(1)) or []]),
-                (re.compile(r"!\[([^\]]*)\]\((?:<([^>]*)>|([^)\s]*))" + MD_TITLE + r"\)"),
+                (re.compile(r"!\[((?:\\.|[^\]\\])*)\]\((?:<([^>]*)>|([^)\s]*))" + MD_TITLE + r"\)"),
                  lambda m: self.image(m.group(2) if m.group(2) is not None else m.group(3), m.group(1))),
-                (re.compile(r"\[((?:\\.|!\[[^\]]*\]\((?:<[^>]*>|[^)\s]*)" + MD_TITLE + r"\)|[^\[\]\\])*)\]\((?:<([^>]*)>|([^)\s]*))" + MD_TITLE + r"\)"),
+                (re.compile(r"\[((?:\\.|!\[(?:\\.|[^\]\\])*\]\((?:<[^>]*>|[^)\s]*)" + MD_TITLE + r"\)|[^\[\]\\])*)\]\((?:<([^>]*)>|([^)\s]*))" + MD_TITLE + r"\)"),
                  self.link),
                 (re.compile(r"^[ \t]*<?(https?://(?:www\.|m\.)?(?:youtube\.com/(?:watch\?|shorts/|embed/)|youtu\.be/)[^\s<>]+)>?[ \t]*$", re.M),
                  lambda m: self.yt_video(m.group(1))),
@@ -395,6 +395,7 @@ class Reader:
 
     @staticmethod
     def image(src, alt):
+        alt = re.sub(r"\\([\\`*_\[\]<>~$|{}#+\-.!()])", r"\1", alt or "")
         yt = youtube_id(src)   # ![](유튜브 주소) 는 Joplin 등에서 재생기가 되는 표기라 영상으로 읽는다
         if yt:
             return ["video", "youtube", yt]
