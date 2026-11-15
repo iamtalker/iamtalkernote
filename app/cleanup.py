@@ -233,6 +233,10 @@ def line_key(line):
     lab = re.match(r"^([^\s:：\d][^\s:：]{0,7})\s*[:：]\s*\S", plain)
     if lab and len(plain) <= 80:   # "조회수 : 1256", "게시물ID : …" 같은 항목 줄: 값은 노트마다 달라서 항목 이름으로 비교
         return "LBL:" + lab.group(1)
+    if re.search(r"\d", plain):   # 숫자만 노트마다 다른 줄("총 12개의 사이트에서 34 개의 댓글이…", "조회 56 추천 7", "글번호 *12*"): 강조 기호를 걷고 숫자를 # 로 바꿔 비교
+        var = re.sub(r"\s+", " ", re.sub(r"\d+(?:[.,:]\d+)*", "#", re.sub(r"[*_`]+", "", plain))).strip()
+        if len(re.findall(r"[A-Za-z가-힣]", var)) >= 3 and len(var) <= 120:   # 글자가 거의 없는 줄(날짜·시각·번호뿐)은 비교하지 않는다
+            return "NUM:" + var
     if not (2 <= len(plain) <= 120) or re.fullmatch(r"[\d\W_]+", plain):
         return None
     return plain
@@ -320,6 +324,9 @@ def nav_lines(lines):
 
 
 RES_REF = re.compile(r"[._]resources?(?![A-Za-z])", re.I)
+MEDIA_EXT = r"\.(?:jpe?g|png|gif|webp|bmp|svg|avif|ico|mp3|mp4|m4a|m4v|webm|mov|wav|flac|ogg|opus|mkv|avi|wmv)(?![A-Za-z0-9])"
+# 그림·음악·영상을 담은 줄(리소스 파일, 웹 그림 ![](…)·<img>, mp3·mp4 같은 파일 링크, <video>·<audio>·<iframe> 삽입, 유튜브·비메오)은 어떤 규칙으로도 지우지 않는다
+MEDIA_REF = re.compile(r"!\[|<(?:img|video|audio|source|iframe|embed)\b|" + MEDIA_EXT + r"|youtube\.com|youtu\.be|vimeo\.com", re.I)
 
 
 def clean_body(body, site_lines=frozenset()):
@@ -352,9 +359,9 @@ def clean_body(body, site_lines=frozenset()):
                 why = "메뉴 덩어리"
             elif plain and len(plain) <= 40 and JUNK_RE.match(plain):
                 why = "흔한 군더더기"
-            if why and KEEP and keep_key(line) in KEEP:   # 사용자가 지우지 않기로 한 줄
+            if why and KEEP and (keep_key(line) in KEEP or plain in KEEP):   # 사용자가 지우지 않기로 한 줄(숫자를 # 로 비교하기 전에 저장된 줄의 글도 인식)
                 why = None
-            if why and RES_REF.search(line):   # 리소스 폴더(.resources·_resources)의 그림·첨부를 가리키는 줄은 지우지 않는다
+            if why and (RES_REF.search(line) or MEDIA_REF.search(line)):   # 리소스 폴더(.resources·_resources)의 그림·첨부, 웹 그림, mp3·mp4 같은 미디어를 가리키는 줄은 지우지 않는다
                 why = None
             if why:
                 removed.append((base + i + 1, line, why))
@@ -444,7 +451,9 @@ def scan_junk(notes, progress=None, cancelled=lambda: False, opts=None):
         if progress and i % 200 == 0:
             progress(i, total, tr("2/2단계 — 노트마다 지울 줄 찾는 중…"))
         body, tables = unwrap_single_column(n.read())
-        new, removed = settle_body(body, sites.get(site_map.get(n["path"], ""), frozenset()))
+        site = site_map.get(n["path"], "")
+        # 출처 주소가 없는 노트(내가 쓴 글)는 줄을 지우지 않는다: '- 로그인'·'- 광고' 같은 내 글머리 항목이나 북마크 목록이 군더더기로 오인되기 때문
+        new, removed = settle_body(body, sites.get(site, frozenset())) if site else (body, [])
         if tables:
             removed = [(0, f"(칸이 하나뿐인 표 {tables}개를 일반 글로 풀기)", "표 풀기")] + removed
         if removed:
